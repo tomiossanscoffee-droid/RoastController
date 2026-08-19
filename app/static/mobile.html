@@ -1,0 +1,1970 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Roast Studio (Mobile)</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg: #1c1917; --panel: #26221e; --panel-2: #2f2a25; --border: #3d3630;
+    --text: #ede7dd; --text-muted: #9c948a; --amber: #ce8b3e; --amber-dim: #8a6538;
+    --slate: #7c8b99; --sage: #7a9b76; --danger: #e0705a;   /* コントラスト確保のため明るくした(PC版と同色) */
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:'Inter',sans-serif; padding-bottom:24px;
+    /* 日本語が「3回焙/煎」のように語の途中で折り返されるのを防ぐ(PC版と同じ方針)。
+       文章中の半角スペースや句読点でだけ改行し、1行に収まらない場合だけ
+       break-wordが働くのではみ出しは起きない。 */
+    word-break:keep-all; overflow-wrap:break-word;
+  }
+  /* 区切り文字(・など)以外では改行させたくないまとまりに付ける。 */
+  .nb{ white-space:nowrap; }
+  h1{ font-family:'Oswald',sans-serif; text-transform:uppercase; letter-spacing:0.04em; }
+  .mono{ font-family:'IBM Plex Mono',monospace; }
+
+  header{
+    position:sticky; top:0; z-index:10; background:var(--panel);
+    border-bottom:1px solid var(--border); padding:12px 16px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  header h1{ font-size:15px; margin:0; color:var(--amber); }
+  .status-dot{ display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--danger); margin-right:6px; }
+  .status-dot.ok{ background:var(--sage); }
+  #statusText{ font-size:12px; color:var(--text-muted); }
+
+  .section{ padding:14px 16px; }
+  .section-title{ font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px; }
+
+  .settings-toggle-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    font-size:14px; color:var(--text); padding:6px 0;
+  }
+  .settings-toggle-row input[type="checkbox"]{
+    accent-color:var(--amber); width:22px; height:22px; flex-shrink:0;
+    padding:0; margin-bottom:0; background:none; border:none;
+  }
+
+  .tabs{ display:flex; gap:6px; margin-bottom:10px; }
+  /* 焙煎中は手がふさがっていたり急いでいたりするため、指で確実に押せるよう
+     高さを確保する(推奨44px。padding 10px→13px で約34px→40px、min-heightで44px)。 */
+  .tab-btn{
+    flex:1; padding:13px 4px; text-align:center; font-size:12px; border-radius:6px;
+    border:1px solid var(--border); background:var(--panel); color:var(--text-muted);
+    min-height:44px; display:flex; align-items:center; justify-content:center;
+  }
+  .tab-btn.active{ background:var(--amber-dim); color:#1c1917; font-weight:600; border-color:var(--amber); }
+
+  select, input{
+    width:100%; padding:12px; background:var(--panel); border:1px solid var(--border);
+    color:var(--text); border-radius:6px; font-size:15px; margin-bottom:8px;
+  }
+
+  .profile-list{ max-height:38vh; overflow-y:auto; border:1px solid var(--border); border-radius:8px; }
+  .profile-item{
+    padding:12px 14px; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:flex-start;
+  }
+  .profile-item:last-child{ border-bottom:none; }
+  .profile-item.active{ background:var(--panel-2); border-left:3px solid var(--amber); }
+  .profile-item.active .item-main{ color:var(--amber); font-weight:600; }
+
+  .profile-item .item-main{ flex:1; min-width:0; font-size:14px; }
+  .profile-item .roaster{ color:var(--text-muted); font-size:11.5px; margin-top:2px; }
+  .profile-item .item-meta{ color:var(--text-muted); font-size:11px; margin-top:3px; }
+  .fav-btn{ background:none; border:none; font-size:18px; color:var(--text-muted); padding:2px 6px; }
+  .fav-btn.on{ color:var(--amber); }
+
+  .selected-box{
+    background:var(--panel); border:1px solid var(--amber-dim); border-radius:8px;
+    padding:14px; margin-top:12px;
+  }
+  .selected-box h2{ font-size:16px; margin:0 0 6px; }
+
+  .taste-panel-hint{ font-size:11.5px; color:var(--text-muted); margin-bottom:10px; }
+  /* 味の質3軸のコンパクトなドットセグメント(-2〜+2、中央=プリセット標準) */
+  .taste-axis-row{ display:flex; align-items:center; gap:6px; margin-bottom:10px; font-size:12px; color:var(--text-muted); flex-wrap:wrap; }
+  .taste-axis-name{ flex-shrink:0; width:70px; color:var(--text); font-weight:500; }
+  .taste-axis-end{ flex-shrink:0; font-size:10.5px; }
+  .taste-axis-end.left{ text-align:right; width:58px; }
+  .taste-dots{ display:flex; gap:6px; }
+  .taste-dot{
+    width:30px; height:30px; border-radius:50%; border:1px solid var(--border);
+    background:var(--bg); cursor:pointer; padding:0;
+  }
+  .taste-dot.center{ border-style:dashed; }
+  .taste-dot.active{ background:var(--amber); border-color:var(--amber); }
+  .taste-dot.active.center{ border-style:solid; }
+  .taste-boost-row{
+    display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-muted);
+    margin-bottom:10px; user-select:none;
+  }
+  .taste-boost-row input{ accent-color:var(--amber); width:18px; height:18px; }
+  .taste-panel-status{ font-size:11px; color:var(--text-muted); min-height:14px; margin:2px 0 8px; }
+
+  .btn{
+    display:block; width:100%; padding:16px; border-radius:8px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); font-size:16px; font-weight:600;
+    margin-bottom:8px; text-align:center;
+  }
+  .btn.primary{ background:var(--amber-dim); border-color:var(--amber); color:#1c1917; }
+  .btn.small{ padding:11px; font-size:13px; font-weight:500; }
+  .btn:disabled{ opacity:0.4; }
+
+  .roaster-state{
+    font-family:'IBM Plex Mono',monospace; font-size:16px; color:var(--amber);
+    background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    padding:12px 14px; margin-bottom:12px; min-height:20px;
+  }
+  .roaster-state.error{ color:var(--danger); font-weight:bold; }
+
+  .chart-wrap{
+    background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;
+  }
+
+  .metrics-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .metric-card{ background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px; }
+  /* 焙煎中に見る値のラベル。10pxは小さすぎるため11pxにする(PC版と同等)。 */
+  .metric-card .metric-label{ font-size:11px; color:var(--text-muted); text-transform:uppercase; }
+  .metric-card .metric-value{ font-family:'IBM Plex Mono',monospace; font-size:22px; color:var(--amber); margin-top:4px; }
+
+  .pc-link{ text-align:center; font-size:11px; color:var(--text-muted); margin-top:16px; }
+  .pc-link a{ color:var(--slate); }
+
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.55);
+    display:flex; align-items:center; justify-content:center; z-index:1000; padding:16px;
+  }
+  .modal-box{
+    background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    padding:18px; max-width:420px; width:100%; font-size:13px; line-height:1.6;
+  }
+  .modal-box h3{ margin:0 0 10px; font-size:15px; }
+  .modal-actions{ display:flex; flex-direction:column; gap:8px; margin-top:16px; }
+  .modal-actions .btn{ width:100%; }
+  .dup-confirm-item{ color:var(--text-muted); font-size:12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Roast Studio</h1>
+  <div><span class="status-dot" id="statusDot"></span><span id="statusText">未接続</span></div>
+</header>
+
+<div class="roaster-state" id="roasterState" style="display:none; margin:0 16px 12px;">-</div>
+
+<!-- 1. プロファイルを送信 -->
+<div class="section" style="padding-bottom:0;">
+  <button class="btn primary" id="btnSend" disabled>プロファイルを送信</button>
+  <button class="btn small" id="btnResendLast" style="display:none;"></button>
+  <button class="btn small" id="btnExit">⏻ 終了</button>
+</div>
+
+<!-- 2. 選択中のプロファイル名と調整 -->
+<div class="section">
+  <div class="selected-box" id="selectedBox" style="display:none; margin-top:0;">
+    <h2 id="profileTitle">-</h2>
+
+    <button class="btn small" id="btnTasteToggle" style="display:none;">味の好みで調整 ▾</button>
+    <div id="tastePanel" style="display:none;">
+      <div class="taste-panel-hint" id="tasteRoastLevelHint"></div>
+      <div id="tasteAxesWrap">
+        <!-- 3軸のドットセグメントはJS(buildTasteAxesUI)で生成する -->
+      </div>
+      <label class="taste-boost-row">
+        <input type="checkbox" id="tasteSweetBoost">
+        <span>甘さ重視(全体をやや長く)</span>
+      </label>
+      <div class="taste-panel-status" id="tasteStatus"></div>
+      <button class="btn small" id="btnTasteRevert">↺ 元に戻す</button>
+    </div>
+  </div>
+</div>
+
+<!-- 3. ハゼボタン(焙煎セッション中のみ表示) -->
+<div class="section" style="padding-top:0;">
+  <button class="btn primary" id="btnFirstCrack" style="display:none;">1ハゼ確認</button>
+</div>
+
+<!-- 4. 経過時間・残り時間・実測温度・RoR・DevTime(焙煎機のステータス自体は
+     上部に移動済み)。プロファイル送信後〜焙煎完了して別プロファイルを選ぶまでの
+     間だけ表示する。 -->
+<div class="section" style="padding-top:0;">
+  <div id="mobileRoastingInfo" style="display:none;">
+  <div class="metrics-grid">
+    <div class="metric-card" id="mElapsedCard">
+      <div class="metric-label">経過時間</div>
+      <div class="metric-value mono" id="mElapsed">--:--</div>
+    </div>
+    <div class="metric-card" id="mRemainingCard">
+      <div class="metric-label">残り時間(目安)</div>
+      <div class="metric-value mono" id="mRemaining">--:--</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">実測 流入空気温度</div>
+      <div class="metric-value mono" id="mBT">--</div>
+    </div>
+    <div class="metric-card" id="mRoRCard">
+      <div class="metric-label">RoR (℃/分)</div>
+      <div class="metric-value mono" id="mRoR">--</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">実測 風量</div>
+      <div class="metric-value mono" id="mFan">--</div>
+    </div>
+    <div class="metric-card" id="mDTRCard">
+      <div class="metric-label">Development Time</div>
+      <div class="metric-value mono" id="mDTR">未設定</div>
+    </div>
+  </div>
+  </div><!-- /mobileRoastingInfo -->
+</div>
+
+<!-- 残りはその下に: 焙煎グラフ、プロファイル選択、ログ、設定 -->
+<div class="section">
+  <div class="chart-wrap">
+    <canvas id="roastChart" height="220"></canvas>
+  </div>
+</div>
+
+<!-- プロファイル送信後〜焙煎完了(または未接続)までは、誤って別のプロファイルを
+     選び直してしまわないよう、選択UIごと非表示にする(setProfileSelectLocked参照)。 -->
+<div class="section" id="profileSelectionArea">
+  <div class="tabs">
+    <div class="tab-btn active" id="tabPreset" onclick="switchTab('preset')">プリセット</div>
+    <div class="tab-btn" id="tabCustom" onclick="switchTab('custom')">保存済み</div>
+    <div class="tab-btn" id="tabIkawa" onclick="switchTab('ikawa')">IKAWA</div>
+  </div>
+
+  <select id="categoryFilter" style="display:none;"></select>
+  <select id="roastLevelFilter" style="display:none;"></select>
+  <select id="varietyFilter" style="display:none;"></select>
+  <select id="processFilter" style="display:none;"></select>
+  <select id="altitudeFilter" style="display:none;"></select>
+  <select id="roasterFilter" style="display:none;"></select>
+  <input id="searchBox" placeholder="検索…">
+  <select id="sortFilter">
+    <option value="favorite">並び順: お気に入り優先</option>
+    <option value="roast_count_desc">並び順: 焙煎回数の多い順</option>
+    <option value="duration_desc">並び順: 焙煎時間(長)</option>
+    <option value="duration_asc">並び順: 焙煎時間(短)</option>
+    <option value="max_temp_desc">並び順: 最高温度(高)</option>
+    <option value="max_temp_asc">並び順: 最高温度(低)</option>
+  </select>
+
+  <div class="profile-list" id="profileList"></div>
+</div>
+
+<div class="section">
+  <div class="pc-link">細かいカーブ編集はPC版から: <a href="/">/ (PC版を開く)</a></div>
+</div>
+
+<div class="section">
+  <div class="section-title">設定</div>
+  <label class="settings-toggle-row" for="notifyToggle">
+    <span>焙煎完了の通知</span>
+    <input type="checkbox" id="notifyToggle" checked>
+  </label>
+  <button class="btn small" id="btnTestPush" style="margin-top:8px;">テスト通知を送信</button>
+  <div class="taste-panel-status" id="pushTestStatus"></div>
+</div>
+
+<!-- 同一日・同一プロファイルの重複確認ダイアログ(PC版と同じ仕組みで同期される) -->
+<div class="modal-overlay" id="duplicateConfirmOverlay" style="display:none;">
+  <div class="modal-box">
+    <h3>本日すでに焙煎記録があります</h3>
+    <div id="duplicateConfirmBody"></div>
+    <div class="modal-actions">
+      <button class="btn small" id="btnDuplicateConfirmSkip">今回は保存しない</button>
+      <button class="btn small primary" id="btnDuplicateConfirmSave">追加で保存する</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+const WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+
+let ws = null;
+let lastSentProfile = null;
+// この端末を識別するID。編集中カーブを他端末へ同期する際、サーバーからの
+// ブロードキャストが自分自身にも返ってくるため、自分の変更を無視するのに使う。
+const clientId = 'm-' + Math.random().toString(36).slice(2);
+let currentTab = 'preset';
+let currentProfile = null;
+let currentProfileSource = null;
+let editedRoast = [], editedFan = [], cooldownPoint = null;
+let tasteRoastLevel = null;   // 選択中プロファイルから推測した焙煎度(セッション中固定・選択式ではない)
+let tasteBaseline = null;     // 元のカーブ+推測味覚値のディープコピー(「元に戻す」用)
+let tasteDebounceTimer = null;
+let liveSamples = [];
+// RoR表示のチェックボックスは撤去し、凡例の各RoR項目をクリックした際の
+// 表示/非表示(strikethrough)で個別に制御する(PC版と同じ考え方)。
+let rorLiveVisible = false;     // RoR(実測)
+let rorProfileVisible = false;  // RoR(プロファイル)
+function anyRoRVisible(){ return rorLiveVisible || rorProfileVisible; }
+const ROR_DATASET_KIND_BY_INDEX = {3: 'live', 4: 'profile'};
+let roastStartTime = null;
+let hasStartedRoasting = false;
+let preheatDotValue = null;
+let chart = null;
+// 焙煎セッション中(プロファイル送信後〜焙煎完了して別プロファイルを選ぶまで)だけ、
+// 状態・経過時間・流入空気温度・RoR・残り時間・DevTime・「ハゼた!」ボタンを表示する。
+let roastingSessionActive = false;
+
+function updateRoastingUIVisibility(){
+  const show = roastingSessionActive;
+  document.getElementById('mobileRoastingInfo').style.display = show ? '' : 'none';
+  document.getElementById('btnFirstCrack').style.display = show ? '' : 'none';
+  document.getElementById('roasterState').style.display = show ? '' : 'none';
+  updatePreheatMetricsVisibility();
+}
+
+// 予熱中(hasStartedRoasting=false)は、まだ焙煎の時間軸が始まっていないため
+// 経過時間・残り時間・RoR・Development Timeは意味を持たない。温度・風量の
+// 実測値だけを表示し、それ以外の欄は焙煎が始まってから表示する。
+function updatePreheatMetricsVisibility(){
+  const show = hasStartedRoasting;
+  document.getElementById('mElapsedCard').style.display = show ? '' : 'none';
+  document.getElementById('mRemainingCard').style.display = show ? '' : 'none';
+  document.getElementById('mRoRCard').style.display = show ? '' : 'none';
+  document.getElementById('mDTRCard').style.display = show ? '' : 'none';
+}
+
+// プロファイル送信後は、他のプロファイルを選び直すことがないため、焙煎完了
+// (または強制冷却・未接続)になるまで、プロファイル選択UIごと非表示にする。
+let profileSelectLocked = false;
+function setProfileSelectLocked(locked){
+  profileSelectLocked = locked;
+  document.getElementById('profileSelectionArea').style.display = locked ? 'none' : '';
+}
+// サーバーからのroaster_state(sync時の復元も含む)を見て、ロックの解除だけを行う
+// (ロック自体は送信時にのみ行うため、ここでは解除方向のみ扱う)。
+function updateProfileLockFromState(state){
+  if(state === '焙煎完了・冷却中' || state === '強制冷却中' || state === '未接続'){
+    setProfileSelectLocked(false);
+  }
+}
+function startRoastingSession(){ roastingSessionActive = true; updateRoastingUIVisibility(); }
+function endRoastingSession(){ roastingSessionActive = false; updateRoastingUIVisibility(); }
+
+// モバイル版には通信ログの表示欄を置かない(Bluetooth等の通信状況を画面に出さない)。
+// 呼び出し側は多数あるため、関数自体は残しコンソール出力のみにする。
+function log(msg){
+  console.log(msg);
+}
+
+function fmtMMSS(totalSeconds){
+  const sign = totalSeconds < 0 ? '-' : '';
+  const s = Math.abs(Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${sign}${m}:${String(ss).padStart(2,'0')}`;
+}
+
+function fmtFanValue(fan){
+  if(fan === null || fan === undefined) return '--';
+  return fan.toFixed(0) + '%';
+}
+
+// ------------------------------------------------------------
+// プロファイル検索・選択(タブ・カテゴリ・並び順)
+// ------------------------------------------------------------
+function endpointFor(source){
+  if(source === 'custom') return '/api/custom_profiles';
+  if(source === 'ikawa') return '/api/ikawa_profiles';
+  return '/api/profiles';
+}
+
+function switchTab(tab){
+  currentTab = tab;
+  document.getElementById('tabPreset').classList.toggle('active', tab === 'preset');
+  document.getElementById('tabCustom').classList.toggle('active', tab === 'custom');
+  document.getElementById('tabIkawa').classList.toggle('active', tab === 'ikawa');
+  // プリセットはプルダウンだけで絞り込めるため、自由文字検索の窓は表示しない
+  const searchBox = document.getElementById('searchBox');
+  searchBox.value = '';
+  searchBox.style.display = tab === 'preset' ? 'none' : '';
+  populateCategoryFilter(tab);
+  searchProfiles();
+}
+
+const EXTRA_FILTER_IDS = ['roasterFilter', 'roastLevelFilter', 'altitudeFilter', 'varietyFilter', 'processFilter'];
+
+function fillSelect(id, label, values){
+  const el = document.getElementById(id);
+  // 候補は他の絞り込みに連動して作り直されるため、今選んでいる値は維持する
+  // (選択中の値は、その項目自身を除いて集計しているので必ず候補に含まれる)。
+  const current = el.value;
+  el.innerHTML = `<option value="">${label}</option>`
+    + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+  if(current && values.includes(current)) el.value = current;
+  el.style.display = '';
+}
+
+function hideSelect(id){
+  const el = document.getElementById(id);
+  el.style.display = 'none';
+  el.innerHTML = '';
+}
+
+// SafariはfetchのGETをChromeより積極的にキャッシュすることがあるため、
+// 一覧・絞り込み系のAPI呼び出しは明示的にキャッシュを使わないようにする。
+async function fetchJSON(url){
+  const res = await fetch(url, {cache: 'no-store'});
+  return await res.json();
+}
+
+// 絞り込みプルダウンの候補を、いまの絞り込み状態に合わせて取得する。
+// 「その項目以外の絞り込みを適用した結果に実際に存在する値」だけが返るため、
+// 選んでも0件になる候補が出なくなる(サーバー側 *_filter_options 参照)。
+async function fetchProfileFilterOptions(tab){
+  const params = new URLSearchParams();
+  const searchEl = document.getElementById('searchBox');
+  // プリセットタブでは検索欄を隠しているため、その場合は検索語を条件に含めない。
+  if(searchEl && searchEl.style.display !== 'none' && searchEl.value){
+    params.set('q', searchEl.value);
+  }
+  const country = document.getElementById('categoryFilter').value;
+  if(country) params.set('country', country);
+  const roast = document.getElementById('roastLevelFilter').value;
+  if(roast) params.set('roast_level', roast);
+  const variety = document.getElementById('varietyFilter').value;
+  if(variety) params.set('variety', variety);
+  const process = document.getElementById('processFilter').value;
+  if(process) params.set('process', process);
+  if(tab === 'preset'){
+    const roaster = document.getElementById('roasterFilter').value;
+    if(roaster) params.set('roaster', roaster);
+    const altitude = document.getElementById('altitudeFilter').value;
+    if(altitude) params.set('altitude', altitude);
+  }
+  const ep = tab === 'preset' ? '/api/preset_filter_options' : '/api/custom_filter_options';
+  const opts = await fetchJSON(`${API}${ep}?${params.toString()}`);
+  return {
+    country: opts.country || [], roast_level: opts.roast_level || [],
+    altitude: opts.altitude || [], variety: opts.variety || [],
+    process: opts.process || [], roaster: opts.roaster || [],
+  };
+}
+
+// 絞り込みを変更した後、他のプルダウンの候補を今の状態に合わせて作り直す
+// (プリセット/保存済みのみ。IKAWAはジャンルの1つだけなので対象外)。
+async function refreshProfileFilterOptions(){
+  if(currentTab !== 'preset' && currentTab !== 'custom') return;
+  const opts = await fetchProfileFilterOptions(currentTab);
+  fillSelect('categoryFilter', 'すべての国', opts.country);
+  fillSelect('roastLevelFilter', 'すべての焙煎度', opts.roast_level);
+  fillSelect('varietyFilter', 'すべての品種', opts.variety);
+  fillSelect('processFilter', 'すべての精製方法', opts.process);
+  if(currentTab === 'preset'){
+    fillSelect('roasterFilter', 'すべての焙煎士', opts.roaster);
+    fillSelect('altitudeFilter', 'すべての標高', opts.altitude);
+  }
+}
+
+async function populateCategoryFilter(tab){
+  const sel = document.getElementById('categoryFilter');
+  if(tab === 'ikawa'){
+    const categories = await fetchJSON(`${API}/api/ikawa_categories`);
+    sel.innerHTML = '<option value="">すべてのジャンル</option>' + categories.map(c => `<option value="${c}">${c}</option>`).join('');
+    sel.style.display = '';
+    for(const id of EXTRA_FILTER_IDS) hideSelect(id);
+  } else if(tab === 'preset' || tab === 'custom'){
+    // プリセットは国名・焙煎士・焙煎度・標高・品種・精製方法の6種、保存済みは
+    // 焙煎士・標高を除く4種で絞り込める(保存済みの標高は自由記述で値がバラバラに
+    // なりやすいため対象外)。
+    // 候補は「他の絞り込みを適用した結果に実際に存在する値」だけを返す連動版の
+    // エンドポイントから取る(選んでも0件になる候補を出さないため。PC版と同じ)。
+    const opts = await fetchProfileFilterOptions(tab);
+    fillSelect('categoryFilter', 'すべての国', opts.country);
+    fillSelect('roastLevelFilter', 'すべての焙煎度', opts.roast_level);
+    fillSelect('varietyFilter', 'すべての品種', opts.variety);
+    fillSelect('processFilter', 'すべての精製方法', opts.process);
+    if(tab === 'preset'){
+      fillSelect('roasterFilter', 'すべての焙煎士', opts.roaster);
+      fillSelect('altitudeFilter', 'すべての標高', opts.altitude);
+    } else {
+      hideSelect('roasterFilter');
+      hideSelect('altitudeFilter');
+    }
+  } else {
+    sel.style.display = 'none';
+    sel.innerHTML = '';
+    for(const id of EXTRA_FILTER_IDS) hideSelect(id);
+  }
+}
+
+function escapeHtml(s){
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function sortItems(items, sortKey){
+  const arr = [...items];
+  if(sortKey === 'duration_desc') arr.sort((a,b) => (b.duration ?? -1) - (a.duration ?? -1));
+  else if(sortKey === 'duration_asc') arr.sort((a,b) => (a.duration ?? -1) - (b.duration ?? -1));
+  else if(sortKey === 'max_temp_desc') arr.sort((a,b) => (b.max_temp ?? -1) - (a.max_temp ?? -1));
+  else if(sortKey === 'max_temp_asc') arr.sort((a,b) => (a.max_temp ?? -1) - (b.max_temp ?? -1));
+  else if(sortKey === 'roast_count_desc') arr.sort((a,b) => (b.roast_count ?? 0) - (a.roast_count ?? 0));
+  // favorite優先(既定値)はサーバー側の並び順をそのまま使う
+  return arr;
+}
+
+async function searchProfiles(){
+  const q = document.getElementById('searchBox').value;
+  const source = currentTab;
+  const endpoint = endpointFor(source);
+  const params = new URLSearchParams({q});
+  const filterVal = document.getElementById('categoryFilter').value;
+  if(filterVal){
+    if(source === 'ikawa') params.set('category', filterVal);
+    else if(source === 'preset' || source === 'custom') params.set('country', filterVal);
+  }
+  if(source === 'preset' || source === 'custom'){
+    const roasterVal = document.getElementById('roasterFilter').value;
+    const roastVal = document.getElementById('roastLevelFilter').value;
+    const altitudeVal = document.getElementById('altitudeFilter').value;
+    const varietyVal = document.getElementById('varietyFilter').value;
+    const processVal = document.getElementById('processFilter').value;
+    if(source === 'preset' && roasterVal) params.set('roaster', roasterVal);
+    if(roastVal) params.set('roast_level', roastVal);
+    if(source === 'preset' && altitudeVal) params.set('altitude', altitudeVal);
+    if(varietyVal) params.set('variety', varietyVal);
+    if(processVal) params.set('process', processVal);
+  }
+  const res = await fetch(`${API}${endpoint}?${params.toString()}`, {cache: 'no-store'});
+  let items = await res.json();
+  items = sortItems(items, document.getElementById('sortFilter').value);
+
+  const list = document.getElementById('profileList');
+  list.innerHTML = '';
+  for(const p of items){
+    const div = document.createElement('div');
+    div.className = 'profile-item';
+    div.dataset.profileId = p.id;
+    const metaParts = [];
+    if(p.duration !== null && p.duration !== undefined) metaParts.push(`焙煎時間 ${fmtMMSS(p.duration)}`);
+    if(p.max_temp !== null && p.max_temp !== undefined) metaParts.push(`最高 ${Math.round(p.max_temp)}℃`);
+    // 各項目を.nbで囲み、語の途中ではなく区切り「・」の位置で改行させる。
+    const metaLine = metaParts.length
+      ? `<div class="item-meta">${metaParts.map(s => `<span class="nb">${s}</span>`).join(' ・ ')}</div>`
+      : '';
+
+    const main = document.createElement('div');
+    main.className = 'item-main';
+    const isPreset = source === 'preset';
+    // プリセットは実機のファイル名ではなく、国名・農園(豆)名・焙煎度の3点で表示する。
+    const title = (isPreset && (p.country || p.bean || p.roast_level))
+      ? [p.country, p.bean, p.roast_level].filter(Boolean).join(' ')
+      : p.name;
+    const subParts = (isPreset ? [p.roaster] : [p.country, p.roast_level, p.roaster]).filter(Boolean);
+    main.title = p.name;
+    main.innerHTML = `${escapeHtml(title)}<div class="roaster">`
+      + `${subParts.map(s => `<span class="nb">${escapeHtml(s)}</span>`).join(' ・ ')}</div>${metaLine}`;
+    main.onclick = () => selectProfile(p.id, source, div);
+    div.appendChild(main);
+
+    const favBtn = document.createElement('button');
+    favBtn.className = 'fav-btn' + (p.favorite ? ' on' : '');
+    favBtn.textContent = p.favorite ? '★' : '☆';
+    favBtn.onclick = async (ev) => {
+      ev.stopPropagation();
+      if(p.favorite) await fetch(`${API}/api/favorites/${source}/${p.id}`, {method:'DELETE'});
+      else await fetch(`${API}/api/favorites`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source, id:p.id})});
+      searchProfiles();
+    };
+    div.appendChild(favBtn);
+    list.appendChild(div);
+  }
+}
+
+function highlightProfileInList(id){
+  document.querySelectorAll('#profileList .profile-item').forEach(e => {
+    e.classList.toggle('active', String(e.dataset.profileId) === String(id));
+  });
+}
+
+async function selectProfile(id, source, el, opts = {}){
+  // ユーザー自身が別のプロファイルを選び直したら、前の焙煎セッションの表示は畳む
+  // (他端末からの同期選択(remote)では畳まない。焙煎中の同期を消さないため)。
+  if(!opts.remote) endRoastingSession();
+  document.querySelectorAll('#profileList .profile-item').forEach(e => e.classList.remove('active'));
+  if(el) el.classList.add('active');
+  const endpoint = endpointFor(source);
+  const res = await fetch(`${API}${endpoint}/${id}`, {cache: 'no-store'});
+  const data = await res.json();
+  currentProfile = data;
+  currentProfileSource = source;
+  editedRoast = data.roast.map(p => [...p]);
+  editedFan = data.fan.map(p => [...p]);
+  cooldownPoint = data.cooldown ? [...data.cooldown] : null;
+
+  document.getElementById('profileTitle').textContent = profileDisplayName(data, source);
+  document.getElementById('selectedBox').style.display = 'block';
+  document.getElementById('btnSend').disabled = false;
+  renderChart();
+  await initTastePanel();
+  if(!el) highlightProfileInList(id);
+  if(!opts.remote){
+    document.getElementById('selectedBox').scrollIntoView({behavior:'smooth', block:'nearest'});
+    if(ws && ws.readyState === WebSocket.OPEN){
+      try { sendWS({action: 'select_profile', id, source}); } catch(e){ /* 同期は失敗しても致命的ではない */ }
+    }
+  }
+}
+
+// 絞り込みを変えたら、一覧の再取得に加えて、他のプルダウンの候補も
+// 今の絞り込みに合わせて作り直す(選んでも0件になる候補を残さないため)。
+function onProfileFilterChanged(){
+  searchProfiles();
+  refreshProfileFilterOptions();
+}
+let filterOptionsRefreshTimer = null;
+document.getElementById('searchBox').addEventListener('input', () => {
+  searchProfiles();
+  // 検索語も候補の絞り込みに反映する。入力のたびに投げると重いので少し待つ。
+  clearTimeout(filterOptionsRefreshTimer);
+  filterOptionsRefreshTimer = setTimeout(refreshProfileFilterOptions, 350);
+});
+document.getElementById('categoryFilter').addEventListener('change', onProfileFilterChanged);
+// 並び順は絞り込みではないため、候補の作り直しは不要。
+document.getElementById('sortFilter').addEventListener('change', searchProfiles);
+for(const id of EXTRA_FILTER_IDS){
+  document.getElementById(id).addEventListener('change', onProfileFilterChanged);
+}
+
+// ------------------------------------------------------------
+// 温度ガイド線(カラーチェンジ・1ハゼ・2ハゼ)。PC版で設定した値をサーバー
+// (guide_temps.json)から読み取って表示するだけの読み取り専用機能で、
+// モバイル版に編集用のUIは追加しない(ミニマムに保つ)。
+// ------------------------------------------------------------
+let guideTemps = { colorChange: null, firstCrack: null, secondCrack: null };
+
+async function loadGuideTemps(){
+  try {
+    const res = await fetch(`${API}/api/guide_temps`, {cache: 'no-store'});
+    if(res.ok) guideTemps = await res.json();
+  } catch(e){ /* 取得できなくてもグラフ自体は問題なく表示する */ }
+  if(chart) chart.update('none');
+}
+loadGuideTemps();
+
+const tempGuideLinesPlugin = {
+  id: 'tempGuideLines',
+  afterDraw(c){
+    const yScale = c.scales.yTemp;
+    const area = c.chartArea;
+    const ctx = c.ctx;
+    const lines = [
+      [guideTemps.colorChange, 'カラーチェンジ', '#c9a227'],
+      [guideTemps.firstCrack, '1ハゼ', '#c76b3f'],
+      [guideTemps.secondCrack, '2ハゼ', '#8a3a2a'],
+    ];
+    ctx.save();
+    for(const [temp, label, color] of lines){
+      if(temp === null || temp === undefined) continue;
+      const py = yScale.getPixelForValue(temp);
+      if(py < area.top || py > area.bottom) continue;
+      ctx.strokeStyle = color; ctx.setLineDash([5,3]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(area.left, py); ctx.lineTo(area.right, py); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = color; ctx.font = '10px Inter, sans-serif';
+      ctx.fillText(`${label} ${temp}℃`, area.left + 4, py - 3);
+    }
+    ctx.restore();
+  }
+};
+
+// ------------------------------------------------------------
+// グラフ(閲覧専用。ドラッグ編集はPC版のみ)
+// Development Time区間(実測1ハゼ〜焙煎完了、または焙煎完了前なら現在まで)を
+// 背景の色分けで示す。データを書き換えず、あくまで表示上のオーバーレイ(PC版と同じ)。
+const devTimePlugin = {
+  id: 'devTimeSpan',
+  beforeDatasetsDraw(c){
+    if(actualFcTime === null || actualFcTime === undefined) return;
+    const endX = (roastDoneAtTime !== null && roastDoneAtTime !== undefined)
+      ? roastDoneAtTime
+      : (liveSamples.length ? liveSamples[liveSamples.length - 1].t : null);
+    if(endX === null || endX <= actualFcTime) return;
+    const xScale = c.scales.x;
+    const area = c.chartArea;
+    const x0 = Math.max(xScale.getPixelForValue(actualFcTime), area.left);
+    const x1 = Math.min(xScale.getPixelForValue(endX), area.right);
+    if(x1 <= x0) return;
+    const ctx = c.ctx;
+    ctx.save();
+    ctx.fillStyle = 'rgba(122,155,118,0.15)';
+    ctx.fillRect(x0, area.top, x1 - x0, area.bottom - area.top);
+    ctx.fillStyle = '#7a9b76';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.fillText(`DT${fcTimeIsInferred ? '(1ハゼ推定)' : ''}`, x0 + 4, area.bottom - 6);
+    ctx.restore();
+  }
+};
+
+// ------------------------------------------------------------
+// 実測温度(t,bt)の列から、RoR(Rate of Rise、℃/分)を末尾window秒の傾きとして計算する。
+// ログとして保存するのは実測温度のみで、RoRは表示のたびにこの関数で都度計算する。
+// 2026-07: window秒の2点間の傾きをそのまま出すと、参照点が1サンプルずれるだけで
+// 値が飛び跳ねて見づらいため、その都度の傾きではなく直近smoothSec秒間の傾きの
+// 平均値を返すようにして、変化の傾向を見やすくする(PC版と同じ)。
+function computeRoR(points, windowSec = 30, smoothSec = 5){
+  const raw = [];
+  let j = 0;
+  for(let i = 0; i < points.length; i++){
+    const t = points[i][0];
+    while(j < i && t - points[j][0] > windowSec) j++;
+    if(j === i) continue;
+    const dt = t - points[j][0];
+    if(dt <= 0) continue;
+    const ror = (points[i][1] - points[j][1]) / dt * 60;
+    raw.push([t, ror]);
+  }
+  const result = [];
+  let k = 0;
+  for(let i = 0; i < raw.length; i++){
+    const t = raw[i][0];
+    while(k < i && t - raw[k][0] > smoothSec) k++;
+    let sum = 0, count = 0;
+    for(let m = k; m <= i; m++){ sum += raw[m][1]; count++; }
+    result.push([t, sum / count]);
+  }
+  return result;
+}
+
+// RoR縦軸の固定範囲。PC版と同じ値(純正プリセット174件の実測集計より、
+// 急変プロファイルを除いたRoRが概ね収まる範囲)。
+const ROR_AXIS_MIN = -10;
+const ROR_AXIS_MAX = 65;
+
+// 温度縦軸の下限。PC版と同じ値。冷却完了後などこれを下回った実測値は、
+// 折れ線がグラフ外に消えてしまうため、下限位置のドット表示に切り替える。
+const TEMP_AXIS_MIN = 50;
+
+// プロファイル(疎な制御点)のRoR。投入→ターニングポイントの急降下は
+// 意味を持たないため、最低温以降だけを1秒補間して30秒窓RoRを取る(PC版と同じ)。
+function computeProfileRoR(points){
+  if(!points || points.length < 2) return [];
+  let dipIdx = 0;
+  for(let i = 1; i < points.length; i++){ if(points[i][1] < points[dipIdx][1]) dipIdx = i; }
+  const dipT = points[dipIdx][0];
+  const endT = points[points.length - 1][0];
+  const series = [];
+  let seg = 0;
+  for(let t = Math.round(dipT); t <= endT; t++){
+    while(seg < points.length - 2 && points[seg + 1][0] < t) seg++;
+    const [x0, y0] = points[seg], [x1, y1] = points[seg + 1];
+    series.push([t, x1 === x0 ? y0 : y0 + (y1 - y0) * (t - x0) / (x1 - x0)]);
+  }
+  return computeRoR(series);
+}
+
+function renderChart(){
+  const ctx = document.getElementById('roastChart').getContext('2d');
+  const profileCurve = currentProfile ? currentProfile.roast : editedRoast;
+  const refData = profileCurve.map(p => ({x:p[0], y:p[1]}));
+  const liveData = liveSamples.map(s => ({x:s.t, y:s.bt}));
+  const liveFanData = liveSamples
+    .filter(s => s.fan !== null && s.fan !== undefined)
+    .map(s => ({x:s.t, y:s.fan}));
+  const rorData = computeRoR(liveSamples.map(s => [s.t, s.bt])).map(p => ({x:p[0], y:p[1]}));
+  const profileRorData = computeProfileRoR(profileCurve).map(p => ({x:p[0], y:p[1]}));
+  const preheatDotData = (preheatDotValue !== null) ? [{x:0, y:preheatDotValue}] : [];
+
+  // X軸の右端は、常に「冷却完了予定時刻」まで見えるようにする(実測値がそれより
+  // 長く伸びている場合は、そちらに合わせて広げる。PC版と同じ考え方)。
+  const candidateMaxTimes = [
+    cooldownPoint ? cooldownPoint[0] : 0,
+    profileCurve.length ? profileCurve[profileCurve.length-1][0] : 0,
+    liveSamples.length ? liveSamples[liveSamples.length-1].t : 0,
+  ];
+  const xAxisMax = Math.max(60, ...candidateMaxTimes);
+
+  if(chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'line',
+    plugins: [devTimePlugin, tempGuideLinesPlugin],
+    data: {
+      datasets: [
+        // 2026-07再訂正: 温度プロファイルも風量と同様、滑らかな曲線補間(monotone)
+        // ではなく直線補間で描画する(詳細はindex.htmlの同箇所のコメント参照。
+        // 急激な制御点変化に隣接する区間で、monotone補間は実測と大きく乖離する
+        // ことが実機ログで確認された)。
+        { label:'プロファイル', data:refData, borderColor:'#7c8b99', borderDash:[4,4],
+          pointRadius:0, borderWidth:1.5, tension:0, yAxisID:'yTemp' },
+        { label:'実測 流入空気温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
+          borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
+          segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? '#ffcc00' : undefined } },
+        { label:'予熱中(実測)', data:preheatDotData, borderColor:'#e0483a', backgroundColor:'#e0483a',
+          pointRadius:8, showLine:false, yAxisID:'yTemp' },
+        { label:'RoR(実測)', data:rorData, borderColor:'#9b6bce', pointRadius:0,
+          borderWidth:2, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorLiveVisible },
+        { label:'RoR(プロファイル)', data:profileRorData, borderColor:'#b98fe0', borderDash:[5,3], pointRadius:0,
+          borderWidth:1.5, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorProfileVisible },
+        // 2026-07再訂正: 制御点間はステップ状ではなく直線的に変化することが判明した
+        // ため、実測風量もステップではなく実測BTと同じ滑らかな補間で描画する
+        // (詳細はindex.htmlの同箇所のコメント参照)。
+        { label:'実測風量', data:liveFanData, borderColor:'#e0483a', borderDash:[2,3], pointRadius:0,
+          borderWidth:2, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yFan' },
+      ]
+    },
+    options: {
+      responsive:true, animation:false, interaction:{mode:'nearest', intersect:false},
+      scales:{
+        x:{ type:'linear', min:0, max:xAxisMax,
+            ticks:{color:'#9c948a', stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:'#3d3630'} },
+        yTemp:{ position:'left', ticks:{color:'#9c948a'}, grid:{color:'#3d3630'}, min:TEMP_AXIS_MIN, max:280 },
+        yRoR:{ position:'right', display:anyRoRVisible(), ticks:{color:'#9c948a'}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
+        yFan:{ position:'right', ticks:{color:'#9c948a'}, grid:{display:false}, min:50, max:100 },
+      },
+      plugins:{ legend:{ labels:{ color:'#ede7dd', font:{size:10},
+        // 凡例は「今の文脈で実際に使われている」項目だけに絞り込む(PC版と同じ考え方)。
+        // プロファイル自体(常に意味を持つ)は例外として常に表示する。
+        filter: (item, data) => {
+          if(item.datasetIndex === 0) return true;
+          const ds = data.datasets[item.datasetIndex];
+          return !!(ds && ds.data && ds.data.length > 0);
+        },
+      },
+      // RoR表示のチェックボックスは撤去し、この凡例クリックだけでRoR系
+      // データセットを表示できるようにする(PC版と同じ考え方)。
+      onClick: (e, legendItem, legend) => {
+        const ci = legend.chart;
+        const idx = legendItem.datasetIndex;
+        if(ci.isDatasetVisible(idx)){ ci.hide(idx); } else { ci.show(idx); }
+        const kind = ROR_DATASET_KIND_BY_INDEX[idx];
+        if(kind === 'live') rorLiveVisible = ci.isDatasetVisible(idx);
+        else if(kind === 'profile') rorProfileVisible = ci.isDatasetVisible(idx);
+        if(kind){
+          ci.options.scales.yRoR.display = anyRoRVisible();
+          ci.update();
+        }
+      },
+      } },
+    }
+  });
+}
+
+// ------------------------------------------------------------
+// 味の好みで調整(選択中プロファイルのカーブから「味の質」3軸を推測し、
+// その3軸でPC版の自動生成と同様にカーブを再生成する。3軸はHu理論のレバー
+// (ボディ=A/酸の質=B内RoR/甘さの系統=B⇔C配分)と1:1対応。
+// 焙煎度・産地・標高・精製方法はモバイルでは選択式にせず、推測結果に固定)
+// ------------------------------------------------------------
+const TASTE_AXES_DEF = [
+  {key: 'acid_quality', name: '酸の質', low: 'まろやか', high: '明るい'},
+  {key: 'sweet_direction', name: '甘さの系統', low: 'フルーティ', high: 'チョコ・カラメル'},
+  {key: 'body', name: 'ボディ', low: '軽やか', high: '濃厚'},
+];
+let tasteAxes = {acid_quality: 0, sweet_direction: 0, body: 0};
+
+function buildTasteAxesUI(){
+  const wrap = document.getElementById('tasteAxesWrap');
+  wrap.innerHTML = '';
+  for(const axis of TASTE_AXES_DEF){
+    const row = document.createElement('div');
+    row.className = 'taste-axis-row';
+    const name = document.createElement('span');
+    name.className = 'taste-axis-name';
+    name.textContent = axis.name;
+    row.appendChild(name);
+    const left = document.createElement('span');
+    left.className = 'taste-axis-end left';
+    left.textContent = axis.low;
+    row.appendChild(left);
+    const dots = document.createElement('div');
+    dots.className = 'taste-dots';
+    for(let v = -2; v <= 2; v++){
+      const dot = document.createElement('button');
+      dot.className = 'taste-dot' + (v === 0 ? ' center' : '');
+      dot.dataset.axis = axis.key;
+      dot.dataset.value = v;
+      dot.onclick = () => {
+        tasteAxes[axis.key] = v;
+        updateTasteAxesUI();
+        scheduleTastePreview();
+      };
+      dots.appendChild(dot);
+    }
+    row.appendChild(dots);
+    const right = document.createElement('span');
+    right.className = 'taste-axis-end';
+    right.textContent = axis.high;
+    row.appendChild(right);
+    wrap.appendChild(row);
+  }
+  updateTasteAxesUI();
+}
+
+function updateTasteAxesUI(){
+  document.querySelectorAll('#tasteAxesWrap .taste-dot').forEach(dot => {
+    dot.classList.toggle('active', Number(dot.dataset.value) === tasteAxes[dot.dataset.axis]);
+  });
+}
+
+async function initTastePanel(){
+  const toggleBtn = document.getElementById('btnTasteToggle');
+  const panel = document.getElementById('tastePanel');
+  // 新しいプロファイルを選ぶたびに、前のプロファイルの調整結果が残って
+  // 見えないよう、いったん閉じた状態にリセットしてから再取得する。
+  panel.style.display = 'none';
+  toggleBtn.textContent = '味の好みで調整 ▾';
+  // プロファイル送信後、実際に焙煎が始まってからはカーブを調整しても実機には
+  // 反映されない(既に送信済みのため)。誤操作・混乱を避けるため、焙煎中は
+  // 調整機能自体を非表示にする。
+  if(hasStartedRoasting){
+    toggleBtn.style.display = 'none';
+    return;
+  }
+  if(!editedRoast || editedRoast.length < 2){
+    toggleBtn.style.display = 'none';
+    tasteRoastLevel = null; tasteBaseline = null;
+    return;
+  }
+  toggleBtn.style.display = '';
+  try {
+    const res = await fetch(`${API}/api/infer_taste_profile`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({roast: editedRoast}),
+    });
+    if(!res.ok) return;
+    const data = await res.json();
+    tasteRoastLevel = data.roast_level || '中煎り';
+    document.getElementById('tasteRoastLevelHint').textContent = `焙煎度の目安: ${tasteRoastLevel}`;
+    applyTasteToSliders(data);
+    document.getElementById('tasteSweetBoost').checked = false;
+    tasteBaseline = {
+      editedRoast: editedRoast.map(p => [...p]),
+      editedFan: editedFan.map(p => [...p]),
+      cooldownPoint: cooldownPoint ? [...cooldownPoint] : null,
+      taste: data.axes || {},
+    };
+  } catch(e){
+    // 推測に失敗しても、プロファイル選択自体はブロックしない。
+  }
+}
+
+function applyTasteToSliders(data){
+  const axes = data.axes || data || {};
+  tasteAxes = {
+    acid_quality: axes.acid_quality ?? 0,
+    sweet_direction: axes.sweet_direction ?? 0,
+    body: axes.body ?? 0,
+  };
+  updateTasteAxesUI();
+}
+
+function scheduleTastePreview(){
+  clearTimeout(tasteDebounceTimer);
+  tasteDebounceTimer = setTimeout(runTastePreview, 200);
+}
+
+async function runTastePreview(){
+  if(!tasteRoastLevel) return;
+  const status = document.getElementById('tasteStatus');
+  status.textContent = '生成中…';
+  const body = {
+    roast_level: tasteRoastLevel, altitude_bucket: '', process: '', country: '',
+    acid_quality: tasteAxes.acid_quality,
+    sweet_direction: tasteAxes.sweet_direction,
+    body: tasteAxes.body,
+    sweet_boost: document.getElementById('tasteSweetBoost').checked,
+  };
+  try {
+    const res = await fetch(`${API}/api/generate_profile_axes`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if(!res.ok || data.error){ status.textContent = '生成に失敗しました: ' + (data.error || res.status); return; }
+    editedRoast = data.roast.map(p => [...p]);
+    editedFan = data.fan.map(p => [...p]);
+    cooldownPoint = data.cooldown ? [...data.cooldown] : null;
+    // renderChart()はcurrentProfile.roastを見て破線カーブを描くため、
+    // editedRoastだけでなくcurrentProfile.roastも更新する必要がある
+    // (name/uuidは送信時に使う元プロファイルの識別子なので触れない)。
+    currentProfile.roast = editedRoast;
+    renderChart();
+    broadcastCurve();
+    status.textContent = '';
+  } catch(e){
+    status.textContent = '生成に失敗しました: ' + e;
+  }
+}
+
+// 味の好み調整で作り直したカーブを、同じサーバーに繋がっているPC版にも反映する。
+// (まだ焙煎機には送信していない、閲覧・編集中の状態の同期)
+function broadcastCurve(){
+  if(!currentProfile || !ws || ws.readyState !== WebSocket.OPEN) return;
+  try {
+    sendWS({
+      action: 'update_curve', client_id: clientId, name: currentProfile.name,
+      roast: editedRoast, fan: editedFan, cooldown: cooldownPoint,
+    });
+  } catch(e){ /* 同期は失敗しても致命的ではない */ }
+}
+
+document.getElementById('btnTasteToggle').onclick = () => {
+  const panel = document.getElementById('tastePanel');
+  const show = panel.style.display === 'none';
+  panel.style.display = show ? '' : 'none';
+  document.getElementById('btnTasteToggle').textContent = show ? '味の好みで調整 ▴' : '味の好みで調整 ▾';
+};
+
+document.getElementById('btnTasteRevert').onclick = () => {
+  if(!tasteBaseline) return;
+  editedRoast = tasteBaseline.editedRoast.map(p => [...p]);
+  editedFan = tasteBaseline.editedFan.map(p => [...p]);
+  cooldownPoint = tasteBaseline.cooldownPoint ? [...tasteBaseline.cooldownPoint] : null;
+  currentProfile.roast = editedRoast;
+  applyTasteToSliders(tasteBaseline.taste);
+  renderChart();
+  broadcastCurve();
+  document.getElementById('tasteStatus').textContent = '';
+};
+
+document.getElementById('tasteSweetBoost').addEventListener('change', scheduleTastePreview);
+buildTasteAxesUI();
+
+// ------------------------------------------------------------
+// 状態管理(焙煎中の判定でグラフをリセット等)
+// ------------------------------------------------------------
+let actualFcTime = null; // 実測: 「ハゼた」ボタンを押した時点の、焙煎開始からの経過秒
+let fcTimeIsInferred = false; // trueなら、ボタンが押されなかったため1ハゼ設定温度への到達から推定した値
+let roastDoneAtTime = null; // 実測: 「焙煎完了・冷却中」に遷移した時点の、焙煎開始からの経過秒(DTのカウントをここで止める)
+// 焙煎中に容器エラー等(推定ステータスが"エラー:"始まり)が発生していた区間
+// (焙煎開始からの経過秒)。[{"start":.., "end":..|null}, ...]。グラフの色分けに使う(PC版と同じ)。
+let errorSpans = [];
+let lastAutoRoastRecordId = null;
+
+// liveSamples(t昇順)から、ディップ(最低温=ターニングポイント)以降の上昇局面で
+// targetの温度を最初に上向きに通過した時刻を線形補間で求める。予熱温度が1ハゼ
+// 設定温度より高い場合、投入直後の下降局面でもtargetを横切りうるため、必ず
+// ディップ以降だけを見る(2026-07: 焙煎開始直後を1ハゼ到達と誤判定する不具合の修正)。
+function findRisingCrossing(samples, target){
+  if(samples.length < 2) return null;
+  let loIdx = 0;
+  for(let i = 1; i < samples.length; i++){
+    if(samples[i].bt < samples[loIdx].bt) loIdx = i;
+  }
+  for(let i = Math.max(1, loIdx + 1); i < samples.length; i++){
+    const a = samples[i - 1], b = samples[i];
+    if(a.bt < target && b.bt >= target){
+      const frac = (b.bt === a.bt) ? 0 : (target - a.bt) / (b.bt - a.bt);
+      return a.t + (b.t - a.t) * frac;
+    }
+  }
+  return null;
+}
+
+// 「ハゼた!」ボタンが押されなかった場合のDevelopment Time起点(1ハゼ設定温度への到達時刻)。
+function inferFirstCrackTime(){
+  if(guideTemps.firstCrack === null || guideTemps.firstCrack === undefined) return null;
+  return findRisingCrossing(liveSamples, guideTemps.firstCrack);
+}
+
+// 指定した経過秒(t)が、記録済みのエラー区間のいずれかに含まれるか。
+function isTimeInErrorSpan(t){
+  return errorSpans.some(sp => t >= sp.start && (sp.end === null || sp.end === undefined || t <= sp.end));
+}
+
+function updateActualDTR(t){
+  if(actualFcTime === null){
+    document.getElementById('mDTR').textContent = '未設定';
+    return;
+  }
+  // 焙煎完了(冷却中に入る)後は、そこでカウントを止める。
+  // 全工程(冷却・排出)が終わるまでカウントし続けてしまうと、DTが本来の意味からずれるため。
+  const effectiveT = (roastDoneAtTime !== null) ? Math.min(t, roastDoneAtTime) : t;
+  const devTime = effectiveT - actualFcTime;
+  const pct = effectiveT > 0 ? (devTime / effectiveT * 100) : 0;
+  const label = fcTimeIsInferred ? '1ハゼ推定' : '';
+  document.getElementById('mDTR').textContent = `${fmtMMSS(devTime)}${label ? ' (' + label + ')' : ''} (${pct.toFixed(1)}%)`;
+}
+
+// ------------------------------------------------------------
+// 焙煎完了時の自動記録作成(PC版と同じ/api/roast_recordsを使う)
+// ------------------------------------------------------------
+// プリセットは一覧・編集画面と同じ「国名 農園 焙煎度」表示にする(生のファイル名は分かりにくいため)。
+// data.display_name が既に計算済みの場合(前回送信プロファイルの再送等)はそれを優先する。
+function profileDisplayName(data, source){
+  if(!data) return '';
+  if(data.display_name) return data.display_name;
+  return (source === 'preset' && (data.country || data.bean || data.roast_level))
+    ? [data.country, data.bean, data.roast_level].filter(Boolean).join(' ')
+    : data.name;
+}
+
+// 今まさに焙煎機へ送って焙煎しているプロファイルの identity。送信(自端末・他端末
+// どちらでも)の時点で確定させ、焙煎ログはこれに紐づける。画面で選択中のプロファイル
+// を使うと、もう一方の端末で選び直して送信した場合に古いプロファイルの焙煎ログとして
+// 保存されてしまう(2026-07 修正)。
+let roastingProfileRef = null;
+
+function setRoastingProfileRef(profile){
+  if(!profile || !profile.profile_source || profile.profile_id === null
+     || profile.profile_id === undefined){
+    roastingProfileRef = null;
+    return;
+  }
+  roastingProfileRef = {
+    source: profile.profile_source,
+    id: profile.profile_id,
+    name: profileDisplayName(profile, profile.profile_source),
+  };
+}
+
+// 焙煎ログの紐づけ先。送信時に確定した identity を最優先で使い、無ければ
+// 画面で選択中のプロファイルにフォールバックする。
+function roastRecordTarget(){
+  if(roastingProfileRef) return roastingProfileRef;
+  if(!currentProfile || !currentProfileSource) return null;
+  return {
+    source: currentProfileSource,
+    id: currentProfile.id,
+    name: profileDisplayName(currentProfile, currentProfileSource),
+  };
+}
+
+function roastRecordProfileName(){
+  const target = roastRecordTarget();
+  return target ? target.name : '';
+}
+
+// 焙煎完了時、まずサーバーに自動保存の「権利」を要求する。PC/スマホ複数端末を
+// 開いていても、今回の焙煎につき1端末だけが実際に保存できるようにするため
+// (何もしないと開いている端末の数だけ重複保存されてしまう)。サーバーが
+// 同一日・同一プロファイルの記録を既に持っていれば、代わりに全端末へ
+// 「追加で保存するか」の問い合わせ(duplicate_confirm_needed)が飛んでくる。
+function requestAutoSaveClaim(){
+  const target = roastRecordTarget();
+  if(!target || target.source === 'ikawa') return;
+  if(!liveSamples.length) return;
+  sendWS({
+    action: 'claim_auto_save', client_id: clientId,
+    profile_source: target.source, profile_id: target.id,
+    profile_name: roastRecordProfileName(),
+  });
+}
+
+async function autoCreateRoastRecord(){
+  const target = roastRecordTarget();
+  if(!target || target.source === 'ikawa') return;
+  if(!liveSamples.length) return;
+  const curve = liveSamples.map(s => [Math.round(s.t), Math.round(s.bt)]);
+  const fanCurve = liveSamples.filter(s => s.fan !== null && s.fan !== undefined).map(s => [Math.round(s.t), Math.round(s.fan)]);
+  const maxTemp = Math.max(...curve.map(p => p[1]));
+  const devTime = (actualFcTime !== null && roastDoneAtTime !== null) ? (roastDoneAtTime - actualFcTime) : null;
+  try {
+    const res = await fetch('/api/roast_records', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        profile_source: target.source,
+        profile_id: target.id,
+        profile_name: roastRecordProfileName(),
+        roasted_at: new Date().toISOString(),
+        duration: roastDoneAtTime, max_temp: maxTemp, dev_time: devTime, fc_time: actualFcTime,
+        fc_time_inferred: fcTimeIsInferred, error_spans: errorSpans,
+        roast_curve: curve, fan_curve: fanCurve,
+      }),
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    lastAutoRoastRecordId = data.id;
+    log(`焙煎記録を自動保存しました: ${data.id}(豆・コメントの入力はPC版から行えます)`);
+    if(ws && ws.readyState === WebSocket.OPEN){
+      try { sendWS({action: 'roast_record_saved', id: data.id}); } catch(e){ /* 同期は失敗しても致命的ではない */ }
+    }
+  } catch(e){
+    log('焙煎記録の自動保存に失敗しました: ' + e);
+  }
+}
+
+// 焙煎完了時点(上のautoCreateRoastRecord)では冷却開始までの実測ログしか
+// 含まれていないため、冷却完了を検知できた場合はそこまでの実測ログで
+// 焙煎曲線を延長保存する(検知できない場合も、焙煎完了時点の記録は既に
+// 保存済みなので記録自体は失われない)。
+async function extendRoastRecordWithCooldown(){
+  if(!lastAutoRoastRecordId || !liveSamples.length) return;
+  const curve = liveSamples.map(s => [Math.round(s.t), Math.round(s.bt)]);
+  const fanCurve = liveSamples.filter(s => s.fan !== null && s.fan !== undefined).map(s => [Math.round(s.t), Math.round(s.fan)]);
+  const maxTemp = Math.max(...curve.map(p => p[1]));
+  try {
+    const res = await fetch(`/api/roast_records/${lastAutoRoastRecordId}/extend`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({roast_curve: curve, fan_curve: fanCurve, max_temp: maxTemp}),
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    log('焙煎記録を冷却完了時点まで延長しました。');
+  } catch(e){
+    log('焙煎記録の延長に失敗しました: ' + e);
+  }
+}
+
+// roasted_atはUTCのISO文字列で保存されているため、表示は端末のローカル時刻
+// (日本なら日本時間)へ変換してから出す。
+function fmtRoastedTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+// ------------------------------------------------------------
+// 同一日・同一プロファイルの重複確認ダイアログ(PC版と同じ仕組みで同期される)
+// ------------------------------------------------------------
+let pendingDuplicateConfirm = null;
+
+function showDuplicateConfirmDialog(data){
+  pendingDuplicateConfirm = data;
+  const list = (data.existing || []).map(r => {
+    const time = fmtRoastedTime(r.roasted_at);
+    const bean = r.bean_label || '(豆未設定)';
+    const rating = r.rating ? ` ・評価${r.rating}` : '';
+    return `<div class="dup-confirm-item">・${escapeHtml(time)} ${escapeHtml(bean)}${rating}</div>`;
+  }).join('');
+  document.getElementById('duplicateConfirmBody').innerHTML =
+    `<div>本日、「${escapeHtml(data.profile_name || '')}」で既に${(data.existing || []).length}件の焙煎記録があります。</div>`
+    + list
+    + `<div style="margin-top:10px;">今回の焙煎も追加で記録として保存しますか?</div>`;
+  document.getElementById('duplicateConfirmOverlay').style.display = 'flex';
+}
+
+function hideDuplicateConfirmDialog(){
+  pendingDuplicateConfirm = null;
+  document.getElementById('duplicateConfirmOverlay').style.display = 'none';
+}
+
+function resolveDuplicateConfirm(save){
+  if(!pendingDuplicateConfirm) return;
+  sendWS({action: 'resolve_duplicate_confirm', client_id: clientId, save});
+  hideDuplicateConfirmDialog();
+}
+document.getElementById('btnDuplicateConfirmSave').onclick = () => resolveDuplicateConfirm(true);
+document.getElementById('btnDuplicateConfirmSkip').onclick = () => resolveDuplicateConfirm(false);
+
+// ハゼ記録の反映処理を切り出しておき、自分でタップした時(recordFirstCrack)と
+// 他端末から反映された時(WSのfirst_crack_recorded)の両方から呼べるようにする。
+function applyFirstCrackTime(t){
+  fcTimeIsInferred = false;  // 手動記録は推定より優先し、フラグを解除する
+  actualFcTime = t;
+  document.getElementById('btnFirstCrack').textContent = `記録済み (${fmtMMSS(actualFcTime)}) ・ 再タップで記録し直し`;
+  updateActualDTR(actualFcTime);
+}
+
+function recordFirstCrack(){
+  if(!hasStartedRoasting || liveSamples.length === 0){
+    log('焙煎中(実測データがある状態)でないと記録できません。');
+    return;
+  }
+  const t = liveSamples[liveSamples.length - 1].t;
+  applyFirstCrackTime(t);
+  log(`ハゼを記録しました(経過時間 ${fmtMMSS(t)})`);
+  if(ws && ws.readyState === WebSocket.OPEN){
+    try { sendWS({action: 'record_first_crack', t}); } catch(e){ /* 同期は失敗しても致命的ではない */ }
+  }
+}
+
+function clearLiveTrace(){
+  liveSamples = [];
+  roastStartTime = null;
+  hasStartedRoasting = false;
+  updatePreheatMetricsVisibility();
+  preheatDotValue = null;
+  actualFcTime = null;
+  fcTimeIsInferred = false;
+  roastDoneAtTime = null;
+  errorSpans = [];
+  lastAutoRoastRecordId = null;
+  document.getElementById('mBT').textContent = '--';
+  document.getElementById('mElapsed').textContent = '--:--';
+  document.getElementById('mRoR').textContent = '--';
+  document.getElementById('mFan').textContent = '--';
+  document.getElementById('mRemaining').textContent = '--:--';
+  document.getElementById('mDTR').textContent = '未設定';
+  document.getElementById('btnFirstCrack').textContent = '1ハゼ確認';
+  if(chart){
+    chart.data.datasets[1].data = [];
+    chart.data.datasets[2].data = [];
+    chart.data.datasets[3].data = [];
+    chart.data.datasets[5].data = [];
+    chart.update('none');
+  }
+}
+
+// ------------------------------------------------------------
+// 通知(Web Notifications API)・Wake Lock
+// 注意: Notification APIは「安全なコンテキスト」でのみ動作する仕様のため、
+// Macのlocalhost経由では動作するが、AndroidでLAN内のIPアドレス(http://192.168.x.x)
+// 経由でアクセスした場合はブラウザによって動作しないことがある(未対応でもアプリの
+// 他の機能には影響しないよう、失敗しても静かに諦めるようにしている)。
+// ------------------------------------------------------------
+let notifyEnabled = false;
+let wakeLock = null;
+let swRegistration = null;
+
+// Android Chromeは`new Notification()`を直接サポートしておらず(呼び出しても
+// 例外にならず黙って何も表示しないことがある)、ServiceWorkerRegistration.
+// showNotification()経由でないと通知が表示されない。そのためのService Workerを
+// 事前に登録しておく(対応していない環境では従来通りnew Notification()にフォールバックする)。
+async function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  try {
+    swRegistration = await navigator.serviceWorker.register('/sw.js');
+    log('[通知診断] Service Workerを登録しました。');
+  } catch(e){
+    log('[通知診断] Service Workerの登録に失敗しました: ' + e);
+  }
+}
+registerServiceWorker();
+
+async function enableNotifications(){
+  if(hasNativeNotifyBridge()){
+    notifyEnabled = true;
+    log('ネイティブアプリの通知を使用します(許可はアプリ初回起動時のダイアログで管理されます)。');
+    return;
+  }
+  log(`[通知診断] isSecureContext=${window.isSecureContext} protocol=${location.protocol} host=${location.host}`);
+  if(!('Notification' in window)){
+    log('[通知診断] この環境ではNotification API自体が使えません(安全なコンテキストでない可能性が高いです)。');
+    log('回避策: Android Chromeで chrome://flags/#unsafely-treat-insecure-origin-as-secure を開き、'
+      + `このアドレス(${location.origin})を追加してEnabledにし、Chromeを再起動してください。`);
+    return;
+  }
+  log(`[通知診断] 現在の許可状態: ${Notification.permission}`);
+  try {
+    const perm = await Notification.requestPermission();
+    log(`[通知診断] requestPermissionの結果: ${perm}`);
+    if(perm === 'granted'){
+      notifyEnabled = true;
+      log('通知を有効にしました。');
+      await subscribeToPush();
+    } else {
+      log('通知が許可されませんでした。');
+    }
+  } catch(e){
+    log('通知の設定に失敗しました: ' + e);
+  }
+}
+
+// ------------------------------------------------------------
+// Web Push購読(画面ロック中でもタブが生きていなくても届く本物の通知)。
+// HTTPS(secure context)必須のため、平文HTTPのLANアクセスでは
+// pushManager自体が使えず、静かに諦める(その場合も上のNotification通知は
+// タブが開いている間は従来通り機能する)。
+// ------------------------------------------------------------
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function subscribeToPush(){
+  if(!swRegistration || !('PushManager' in window)) return;
+  try {
+    let sub = await swRegistration.pushManager.getSubscription();
+    if(!sub){
+      const res = await fetch(`${API}/api/push/vapid_public_key`);
+      if(!res.ok) return;
+      const {publicKey} = await res.json();
+      sub = await swRegistration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+    await fetch(`${API}/api/push/subscribe`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(sub),
+    });
+    log('画面ロック中も届くプッシュ通知を有効にしました。');
+  } catch(e){
+    // HTTPS(安全なコンテキスト)でない場合はここで失敗するのが正常なので、
+    // タブが生きている間の通知(上のNotification API)には影響させない。
+    log('[通知診断] プッシュ通知の購読に失敗しました(HTTPS接続でない場合は正常です): ' + e);
+  }
+}
+
+async function unsubscribeFromPush(){
+  if(!swRegistration || !('PushManager' in window)) return;
+  try {
+    const sub = await swRegistration.pushManager.getSubscription();
+    if(!sub) return;
+    const endpoint = sub.endpoint;
+    await sub.unsubscribe();
+    await fetch(`${API}/api/push/unsubscribe`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({endpoint}),
+    });
+  } catch(e){ /* 解除に失敗しても他機能に影響させない */ }
+}
+
+function hasNativeNotifyBridge(){
+  return !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.notify);
+}
+
+function notify(title, body){
+  // 設定でオフにされていれば、ネイティブ/ブラウザいずれの経路でも通知を出さない。
+  if(!notifyEnabled) return;
+  if(hasNativeNotifyBridge()){
+    try { window.webkit.messageHandlers.notify.postMessage({title, body}); } catch(e){ /* 失敗しても他機能に影響させない */ }
+    return;
+  }
+  // Android Chromeはnew Notification()を直接サポートしていないため
+  // (例外にならず黙って何も表示しないことがある)、Service Worker経由を優先する。
+  // オプションはアラート扱い(振動あり・重要度高)にする。サイレント/低重要度の通知は
+  // Wear OS(Pixel Watch等)がペア端末へブリッジしないため、これが無いとスマホには
+  // 出てもウォッチに届かない。
+  if(swRegistration){
+    swRegistration.showNotification(title, { body, ...NOTIFY_OPTIONS }).catch(e => log('[通知] 表示に失敗しました: ' + e));
+    return;
+  }
+  try {
+    new Notification(title, { body, ...NOTIFY_OPTIONS });
+  } catch(e){ log('[通知] 表示に失敗しました: ' + e); }
+}
+// 通知オプション(sw.jsのpushハンドラと合わせる)。vibrate指定でウォッチへブリッジされやすくする。
+const NOTIFY_OPTIONS = { tag: 'roast-status', renotify: true, requireInteraction: true, vibrate: [300, 120, 300] };
+
+// ------------------------------------------------------------
+// 通知のオン/オフ設定(サーバー側のapp_settings.jsonに保存し、アプリ再起動後も
+// 引き継がれるようにする)。デフォルトはオンで、起動時に自動的に許可をリクエストする。
+// ------------------------------------------------------------
+async function initNotifySettings(){
+  const toggle = document.getElementById('notifyToggle');
+  let settingEnabled = true;
+  try {
+    const res = await fetch(`${API}/api/app_settings`, {cache: 'no-store'});
+    if(res.ok){
+      const data = await res.json();
+      settingEnabled = data.notifyEnabled !== false;
+    }
+  } catch(e){ /* 取得に失敗してもデフォルト(オン)で続行する */ }
+  toggle.checked = settingEnabled;
+  if(settingEnabled){
+    await enableNotifications();
+  }
+}
+
+document.getElementById('notifyToggle').addEventListener('change', async (e) => {
+  const enabled = e.target.checked;
+  try {
+    await fetch(`${API}/api/app_settings`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({notifyEnabled: enabled}),
+    });
+  } catch(err){ /* 保存に失敗しても、その場の有効/無効の切り替えは反映する */ }
+  if(enabled){
+    await enableNotifications();
+  } else {
+    notifyEnabled = false;
+    log('通知をオフにしました。');
+    await unsubscribeFromPush();
+  }
+});
+initNotifySettings();
+
+document.getElementById('btnTestPush').onclick = async () => {
+  const status = document.getElementById('pushTestStatus');
+  status.textContent = '送信中…';
+  try {
+    const res = await fetch(`${API}/api/push/test`, {method: 'POST'});
+    const data = await res.json();
+    status.textContent = data.sent > 0
+      ? `送信しました(${data.sent}件)。画面をロックしても届くか確認してください。`
+      : '送信先が登録されていません(先に上のトグルで通知を有効にしてください)。';
+  } catch(e){
+    status.textContent = '送信に失敗しました: ' + e;
+  }
+};
+
+async function acquireWakeLock(){
+  if(!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+  } catch(e){ /* 対応していない・許可されない場合は諦める */ }
+}
+
+function releaseWakeLock(){
+  if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock = null; }
+}
+
+document.getElementById('btnFirstCrack').onclick = recordFirstCrack;
+
+// バックグラウンドから戻ってきた際、スリープ中に見逃した完了に気づけるよう、
+// Wake Lockが解除されていたら再取得し、WebSocketが切断されたままなら
+// すぐに再接続する(2秒間隔の自動再試行を待たず、復帰した瞬間に繋ぎ直す)。
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible'){
+    if(hasStartedRoasting) acquireWakeLock();
+    if(!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING){
+      if(wsReconnectTimer){ clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+      connectWS();
+    }
+  }
+});
+
+function setRoasterStateText(text){
+  const el = document.getElementById('roasterState');
+  el.textContent = text;
+  // サーバー側がSTATE_CONTAINER_ERROR等、先頭に"エラー"を付けて送ってくる
+  // 状態は、一目で分かるよう文字色を変える。
+  el.classList.toggle('error', typeof text === 'string' && text.startsWith('エラー'));
+}
+
+// 状態ごとの通知文言(スリープ復帰時のキャッチアップ通知でも同じ文言を使うため、
+// onRoasterStateから切り出して共有する)
+function notifyForRoasterState(state){
+  if(state === '豆投入操作中'){
+    notify('Roast Studio', '予熱が完了しました。豆を投入してください。');
+  } else if(state === '焙煎完了・冷却中'){
+    notify('Roast Studio', '焙煎が完了し、冷却を開始しました。');
+  } else if(state === '冷却完了(容器交換待ち)'){
+    notify('Roast Studio', '冷却が完了しました。容器を交換してください。');
+  } else if(state === '排出待ち: ガラス容器を外して豆を回収してください'){
+    notify('Roast Studio', '強制冷却が完了しました。ガラス容器を外して豆を回収してください。');
+  } else if(state === '排出完了'){
+    notify('Roast Studio', '排出が完了しました。お疲れ様でした。');
+  }
+}
+
+// プロファイル送信後〜完了(排出完了で連続焙煎の準備ができるまで)の間は、
+// 誤って別のプロファイルを送信して予熱・進行中の焙煎を乱さないよう、
+// 「プロファイルを送信」「前回のプロファイルを送信」を無効にする。
+const ROAST_IN_PROGRESS_STATES = [
+  'プロファイル送信中', 'プロファイル受信', '待機中', '予熱中', '予熱完了(豆投入待ち)',
+  '豆投入操作中', '焙煎中', '焙煎完了・冷却中', '冷却完了(容器交換待ち)', '強制冷却中',
+  '排出待ち: ガラス容器を外して豆を回収してください', '排出中',
+];
+function updateSendButtonsForState(state){
+  const blocked = ROAST_IN_PROGRESS_STATES.includes(state);
+  document.getElementById('btnSend').disabled = blocked || !currentProfile;
+  document.getElementById('btnResendLast').disabled = blocked || !lastSentProfile;
+}
+
+function onRoasterState(state){
+  setRoasterStateText(state);
+  currentRoasterState = state;
+  log(`[状態] ${state}`);
+  updateProfileLockFromState(state);
+  updateSendButtonsForState(state);
+  // 手動接続ボタンを廃止したため、プロファイル送信時の自動接続中であることが
+  // 分かるよう、上部のステータス表示にも「接続中」を出す。
+  if(state === 'ペアリング中'){
+    document.getElementById('statusText').textContent = '接続中…';
+  }
+  notifyForRoasterState(state);
+  // 2026-07: 容器エラーからの復帰時・再接続時にも「焙煎中」が再度送られてくるため、
+  // 既に焙煎中(hasStartedRoasting)の場合はリセットしない(実測ログを消さない)。
+  // 2026-07再訂正: startRoastingSession()の呼び出しが漏れていたため、自分で
+  // プロファイルを送信していない端末(PC側で送信してから開いた・開いたまま
+  // 待っていた場合)では、グラフは更新されるのに経過時間・実測温度・風量等の
+  // 数値(mobileRoastingInfo)がずっと非表示のままになる不具合があった。
+  if(state === '焙煎中' && !hasStartedRoasting){
+    clearLiveTrace();
+    hasStartedRoasting = true;
+    startRoastingSession();
+    acquireWakeLock();
+    // 予熱中に開いたまま残っていた場合に備え、焙煎開始と同時に畳んで非表示にする。
+    initTastePanel();
+  }
+  // 「焙煎完了・冷却中」= 焙煎工程が終わり、冷却が始まったタイミング。
+  // Development Timeは、ここまでの時間で確定させる(以降の冷却・排出時間を含めない)。
+  if(state === '焙煎完了・冷却中' && roastDoneAtTime === null && liveSamples.length > 0){
+    roastDoneAtTime = liveSamples[liveSamples.length - 1].t;
+    // 「ハゼた!」ボタンが押されていなければ、1ハゼ設定温度への到達時刻で代用する
+    if(actualFcTime === null){
+      const inferred = inferFirstCrackTime();
+      if(inferred !== null){
+        actualFcTime = inferred;
+        fcTimeIsInferred = true;
+        document.getElementById('btnFirstCrack').textContent = `1ハゼ推定 (${fmtMMSS(actualFcTime)}) ・ タップで手動記録に変更`;
+      }
+    }
+    updateActualDTR(roastDoneAtTime);
+    if(chart) renderChart();
+    requestAutoSaveClaim();
+  }
+  if(state === '冷却完了(容器交換待ち)'){
+    extendRoastRecordWithCooldown();
+  }
+  if(state === '排出完了'){
+    clearLiveTrace();
+    releaseWakeLock();
+  }
+}
+
+function updateRemainingTime(t){
+  // 「焙煎完了・冷却中」に入っていればcooldownPointの時刻を、それ以外(焙煎中)は
+  // roastPointsの最終時刻を目標にして、残り時間の目安を計算する。
+  // (あくまでプロファイル上の目安であり、実際の時間と一致するとは限らない)
+  let targetTime = null;
+  if(currentRoasterState === '焙煎完了・冷却中' || currentRoasterState === '冷却完了(容器交換待ち)'){
+    if(cooldownPoint) targetTime = cooldownPoint[0];
+  } else if(editedRoast.length > 0){
+    targetTime = editedRoast[editedRoast.length - 1][0];
+  }
+  const el = document.getElementById('mRemaining');
+  if(targetTime === null){ el.textContent = '--:--'; return; }
+  const remaining = targetTime - t;
+  el.textContent = (remaining >= 0 ? '' : '+') + fmtMMSS(Math.abs(remaining));
+}
+
+function onTelemetry(msg){
+  if(msg.bt === null || msg.bt === undefined) return;
+  document.getElementById('mFan').textContent = fmtFanValue(msg.fan);
+
+  if(!hasStartedRoasting){
+    // 予熱中: プロファイルのスタート時点の設定温度(投入温度)を目標として、
+    // 実測値と並べて表示する。
+    const target = editedRoast.length > 0 ? editedRoast[0][1] : null;
+    document.getElementById('mBT').textContent = target !== null
+      ? `${msg.bt.toFixed(0)}℃ / 目標${target}℃`
+      : msg.bt.toFixed(0) + '℃';
+    preheatDotValue = msg.bt;
+    if(chart){
+      chart.data.datasets[2].data = [{x:0, y:preheatDotValue}];
+      chart.update('none');
+    }
+    return;
+  }
+
+  document.getElementById('mBT').textContent = msg.bt.toFixed(0) + '℃';
+
+  if(roastStartTime === null) roastStartTime = msg.t;
+  const t = msg.t - roastStartTime;
+  liveSamples.push({t, bt: msg.bt, fan: msg.fan});
+  if(liveSamples.length > 2000) liveSamples.shift();
+
+  document.getElementById('mElapsed').textContent = fmtMMSS(t);
+  // RoR(実測)のグラフ線と同じcomputeRoR()を使い、数値表示も同じ計算方法に揃える。
+  const recentForRoR = liveSamples.filter(s => s.t >= t - 40);
+  const rorSeries = computeRoR(recentForRoR.map(s => [s.t, s.bt]));
+  if(rorSeries.length){
+    document.getElementById('mRoR').textContent = rorSeries[rorSeries.length - 1][1].toFixed(1);
+  }
+  updateRemainingTime(t);
+  updateActualDTR(t);
+  if(chart){
+    chart.data.datasets[1].data = liveSamples.map(s => ({x:s.t, y:s.bt}));
+    chart.data.datasets[2].data = [];
+    chart.data.datasets[5].data = liveSamples
+      .filter(s => s.fan !== null && s.fan !== undefined)
+      .map(s => ({x:s.t, y:s.fan}));
+    if(rorLiveVisible){
+      chart.data.datasets[3].data = computeRoR(liveSamples.map(s => [s.t, s.bt])).map(p => ({x:p[0], y:p[1]}));
+    }
+    chart.update('none');
+  }
+}
+
+// ------------------------------------------------------------
+// WebSocket通信
+// ------------------------------------------------------------
+function applyRemoteProfile(profile){
+  if(!profile) return;
+  document.getElementById('profileTitle').textContent = profileDisplayName(profile, null);
+  document.getElementById('selectedBox').style.display = 'block';
+  currentProfile = currentProfile || {};
+  currentProfile.roast = profile.roast;
+  currentProfile.name = profile.name;
+  currentProfile.display_name = profile.display_name;
+  editedRoast = profile.roast.map(p => [...p]);
+  editedFan = profile.fan.map(p => [...p]);
+  cooldownPoint = profile.cooldown ? [...profile.cooldown] : null;
+}
+
+let wsReconnectTimer = null;
+// スリープ復帰等で再接続した際にだけキャッチアップ通知を出すためのフラグ
+// (アプリを開いた最初のsyncでは、今の状態を通知として出す必要はないため)
+let hadPriorConnection = false;
+
+// スマホがスリープするとWebSocketが切断されるが、そのままでは復帰後も
+// 再接続されず、グラフや通知がリロードするまで止まったままになってしまう。
+// 切断されたら少し待って自動的に再接続し、復帰時はサーバー側に貯めておいた
+// 実測ログ(sync の telemetry_history)で途切れなくグラフを復元する。
+function scheduleWsReconnect(){
+  if(wsReconnectTimer) return;
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    connectWS();
+  }, 2000);
+}
+
+function connectWS(){
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    log('サーバーに接続しました');
+    if(wsReconnectTimer){ clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  };
+  ws.onclose = () => {
+    log('サーバーとの接続が切れました。再接続します...');
+    scheduleWsReconnect();
+  };
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    if(msg.type === 'status'){ log(msg.message); }
+    else if(msg.type === 'error_spans'){ errorSpans = msg.spans || []; if(chart) renderChart(); }
+    else if(msg.type === 'connected'){ setConnected(msg.ok); }
+    else if(msg.type === 'disconnected'){ setConnected(false); }
+    else if(msg.type === 'sync'){
+      setConnected(msg.connected);
+      if(msg.roaster_state){
+        setRoasterStateText(msg.roaster_state);
+        // スリープ等で切断されていた間に状態が変わっていた場合、再接続した今
+        // 気づけるよう、見逃した分の通知を再現する(初回接続時は対象外)。
+        if(hadPriorConnection && msg.roaster_state !== currentRoasterState){
+          notifyForRoasterState(msg.roaster_state);
+        }
+        currentRoasterState = msg.roaster_state;
+      }
+      hadPriorConnection = true;
+      // 他端末で選択中(閲覧・編集中)のプロファイルがあれば、送信済みプロファイルより
+      // 優先してこちらを反映する(まだ何も選んでいない場合のみ)。
+      if(!currentProfile){
+        if(msg.selected_profile && msg.selected_profile.id != null && msg.selected_profile.source){
+          switchTab(msg.selected_profile.source);
+          selectProfile(msg.selected_profile.id, msg.selected_profile.source, null, {remote: true});
+        } else if(msg.profile){
+          applyRemoteProfile(msg.profile);
+          renderChart();
+          initTastePanel();
+        }
+      }
+      if(msg.fc_time !== null && msg.fc_time !== undefined){
+        applyFirstCrackTime(msg.fc_time);
+      }
+      // 焙煎中(予熱〜排出)なら、焙煎ログの紐づけ先を「実際に送信されたプロファイル」に
+      // 復元しておく。焙煎していない時のmsg.profileは何日も前の「前回送信」のことが
+      // あるため、焙煎中と分かる場合に限る。
+      if(msg.roast_start_t != null || ROAST_IN_PROGRESS_STATES.includes(msg.roaster_state)){
+        setRoastingProfileRef(msg.profile);
+      }
+      if(msg.roast_start_t !== null && msg.roast_start_t !== undefined && msg.last_telemetry){
+        startRoastingSession();
+        setProfileSelectLocked(true);
+        hasStartedRoasting = true;
+        updatePreheatMetricsVisibility();
+        roastStartTime = msg.roast_start_t;
+        if(Array.isArray(msg.error_spans)) errorSpans = msg.error_spans;
+        const t = msg.last_telemetry.t - roastStartTime;
+        document.getElementById('mBT').textContent = msg.last_telemetry.bt.toFixed(0) + '℃';
+        document.getElementById('mFan').textContent = fmtFanValue(msg.last_telemetry.fan);
+        document.getElementById('mElapsed').textContent = fmtMMSS(t);
+        updateRemainingTime(t);
+        // ブラウザのリロード等で切れた接続を再開した場合、サーバー側に貯めておいた
+        // 今回の焙煎の実測ログをまとめて受け取り、グラフの履歴を途切れなく復元する
+        if(Array.isArray(msg.telemetry_history) && msg.telemetry_history.length){
+          liveSamples = msg.telemetry_history
+            .filter(s => s.bt !== null && s.bt !== undefined)
+            .map(s => ({t: s.t - roastStartTime, bt: s.bt, fan: s.fan}));
+          if(msg.auto_record_id){ lastAutoRoastRecordId = msg.auto_record_id; }
+          renderChart();
+          log('前回の状態を復元しました(グラフの履歴も復元されました)');
+        } else {
+          log('前回の状態を復元しました(グラフの履歴は復元されません)');
+        }
+      }
+      // syncの時点で既に焙煎完了・未接続等であれば、ロックしたままにしない。
+      updateProfileLockFromState(currentRoasterState);
+      // 再接続時点で既に焙煎中〜排出中であれば、送信ボタンも無効のままにする。
+      updateSendButtonsForState(currentRoasterState);
+      // 他端末が問い合わせ中(重複確認)のまま、この端末が後から開いた・再接続した
+      // 場合にも、同じダイアログを追いつけるようにする。
+      if(msg.duplicate_confirm){ showDuplicateConfirmDialog(msg.duplicate_confirm); }
+    }
+    else if(msg.type === 'sent'){
+      log('プロファイルを送信しました。応答を監視中...');
+      // どの端末から送られたものでも、これから焙煎するのはこのプロファイル。
+      // 焙煎ログの紐づけ先をここで確定させる(画面で選択中のものは使わない)。
+      setRoastingProfileRef(msg.profile);
+      applyRemoteProfile(msg.profile);
+      clearLiveTrace();
+      renderChart();
+      initTastePanel();
+      startRoastingSession();
+      // 送信後は他のプロファイルを選び直すことがないため、選択UIを畳む。
+      setProfileSelectLocked(true);
+      setLastSentProfile(msg.profile);
+    }
+    else if(msg.type === 'profile_selected'){
+      if(msg.source && msg.id != null
+        && !(currentProfileSource === msg.source && currentProfile && String(currentProfile.id) === String(msg.id))){
+        switchTab(msg.source);
+        selectProfile(msg.id, msg.source, null, {remote: true});
+      }
+    }
+    else if(msg.type === 'first_crack_recorded'){
+      if(msg.t !== null && msg.t !== undefined && msg.t !== actualFcTime){
+        applyFirstCrackTime(msg.t);
+        log(`ハゼ記録が他端末から反映されました(経過時間 ${fmtMMSS(msg.t)})`);
+      }
+    }
+    else if(msg.type === 'auto_save_claim_result'){
+      // 焙煎記録の自動保存は、サーバーが許可した1端末だけが行う(他端末は何もしない)。
+      if(msg.granted) autoCreateRoastRecord();
+      // 設定「同日2回目以降は記録しない」で見送った場合は、黙って消えたように
+      // 見えないよう理由を残す(焙煎回数には加算されている)。
+      else if(msg.skipped_duplicate){
+        log('設定により、同一日・同一プロファイルの2回目以降のため焙煎ログは保存しませんでした(焙煎回数には加算)。');
+      }
+    }
+    else if(msg.type === 'duplicate_confirm_needed'){
+      showDuplicateConfirmDialog(msg);
+    }
+    else if(msg.type === 'duplicate_confirm_resolved'){
+      hideDuplicateConfirmDialog();
+      if(msg.save && msg.resolved_by === clientId){
+        autoCreateRoastRecord();
+      } else if(msg.resolved_by !== clientId){
+        log(msg.save ? '他の端末で「追加で保存する」が選択されたため、そちらで記録されます。'
+                      : '他の端末で「今回は保存しない」が選択されました。');
+      }
+    }
+    else if(msg.type === 'telemetry'){ onTelemetry(msg); }
+    else if(msg.type === 'roaster_state'){ onRoasterState(msg.state); }
+    else if(msg.type === 'error'){ log('エラー: ' + msg.message); }
+  };
+}
+
+let currentRoasterState = '';
+function setConnected(ok){
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  dot.classList.toggle('ok', ok);
+  document.getElementById('btnSend').disabled = !currentProfile;
+  if(!ok){
+    text.textContent = currentRoasterState === '焙煎完了・冷却中'
+      ? '未接続(排出モードの可能性)' : '未接続';
+  } else {
+    text.textContent = '接続済み';
+  }
+}
+
+function sendWS(obj){ ws.send(JSON.stringify(obj)); }
+
+// 未接続でも自動接続してから送信する共通処理(通常送信・前回のプロファイル再送で共用)
+function sendProfilePayload(payload, logMsg){
+  const doSend = () => {
+    sendWS({action:'send_profile', profile: payload});
+    log(logMsg);
+  };
+  if(ws === null || ws.readyState !== 1){
+    connectWS();
+    ws.addEventListener('open', doSend, {once:true});
+  } else {
+    doSend();
+  }
+}
+
+document.getElementById('btnSend').onclick = () => {
+  if(!currentProfile) return;
+  // profile_source/profile_idも一緒に送る。焙煎ログを「実際に焙煎機へ送った
+  // プロファイル」に紐づけるために、他端末(PC)側でも識別できる必要があるため。
+  sendProfilePayload({
+    name: currentProfile.name, display_name: profileDisplayName(currentProfile, currentProfileSource),
+    uuid: currentProfile.uuid, roast: editedRoast, fan: editedFan, cooldown: cooldownPoint,
+    profile_source: currentProfileSource, profile_id: currentProfile.id,
+  }, '送信をリクエストしました...');
+};
+
+// 「前回のプロファイルを送信」ボタン: サーバーに保存された最後に送信した
+// プロファイルをそのまま再送する(同じ豆を続けて焙煎する際、毎回リストから
+// 選び直さずに済むようにするため)。
+function updateResendButton(){
+  const btn = document.getElementById('btnResendLast');
+  if(!lastSentProfile){
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = '';
+  btn.textContent = `前回のプロファイルを送信(${profileDisplayName(lastSentProfile, null)})`;
+  // lastSentProfileが後から届いた場合も、現在の焙煎機の状態に合わせて
+  // 有効/無効を正しく反映する。
+  updateSendButtonsForState(currentRoasterState);
+}
+
+function setLastSentProfile(profile){
+  if(!profile) return;
+  lastSentProfile = profile;
+  updateResendButton();
+}
+
+async function fetchLastSentProfile(){
+  try {
+    const data = await fetchJSON(`${API}/api/last_sent_profile`);
+    if(data && data.name){ setLastSentProfile(data); }
+  } catch(e){ /* 取得に失敗しても、通常の送信機能には影響させない */ }
+}
+
+// 再送前に、選択中のプロファイル表示も前回のプロファイルへ切り替える
+// (そうしないと、別のプロファイルを表示したまま前回のものを送ってしまい、
+// 画面表示と実際に送信される内容がずれてしまうため)。
+function selectLastSentProfileInEditor(){
+  endRoastingSession();
+  document.querySelectorAll('#profileList .profile-item').forEach(e => e.classList.remove('active'));
+  currentProfile = lastSentProfile;
+  currentProfileSource = null;
+  editedRoast = lastSentProfile.roast.map(p => [...p]);
+  editedFan = lastSentProfile.fan.map(p => [...p]);
+  cooldownPoint = lastSentProfile.cooldown ? [...lastSentProfile.cooldown] : null;
+
+  document.getElementById('profileTitle').textContent = profileDisplayName(lastSentProfile, null);
+  document.getElementById('selectedBox').style.display = 'block';
+  document.getElementById('btnSend').disabled = false;
+  renderChart();
+  initTastePanel();
+}
+
+document.getElementById('btnResendLast').onclick = () => {
+  if(!lastSentProfile) return;
+  selectLastSentProfileInEditor();
+  sendProfilePayload(lastSentProfile, '前回のプロファイルを再送しました...');
+};
+
+document.getElementById('btnExit').onclick = async () => {
+  if(!window.confirm('サーバーを終了しますか?\n(同じサーバーを使っている他の端末も操作できなくなります)')) return;
+  log('終了処理を開始します...');
+  if(ws && ws.readyState === 1){ sendWS({action:'disconnect_roaster'}); }
+  await new Promise(r => setTimeout(r, 300));
+  try { await fetch('/api/shutdown', {method:'POST'}); } catch(e){ /* サーバーが落ちる際の例外は無視してよい */ }
+  if(hasNativeNotifyBridge()){
+    try { window.webkit.messageHandlers.appControl.postMessage({action:'quit'}); } catch(e){ /* ブリッジが無い場合は無視 */ }
+  } else {
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:-apple-system,sans-serif;color:#ede7dd;background:#1c1917;">サーバーを終了しました。このタブを閉じてください。</div>';
+  }
+};
+
+// 初期表示
+document.getElementById('searchBox').style.display = 'none';
+populateCategoryFilter('preset');
+searchProfiles();
+renderChart();
+fetchLastSentProfile();
+connectWS();
+
+// nhm.sqlite(プリセットの情報源)がリポジトリ直下に無い場合、プリセットタブは
+// 一覧が空にしかならないため非表示にする(PC版と同じ判定)。
+(async () => {
+  try {
+    const res = await fetch(`${API}/api/server_info`, {cache: 'no-store'});
+    if(!res.ok) return;
+    const info = await res.json();
+    if(!info.has_presets){
+      document.getElementById('tabPreset').style.display = 'none';
+      if(currentTab === 'preset') switchTab('custom');
+    }
+    // ikawa_profiles.jsonが無い(未生成)場合も同様にIKAWAタブを非表示にする。
+    if(!info.has_ikawa){
+      document.getElementById('tabIkawa').style.display = 'none';
+      if(currentTab === 'ikawa') switchTab('custom');
+    }
+  } catch(e){ /* 取得できない場合は何もしない */ }
+})();
+</script>
+</body>
+</html>

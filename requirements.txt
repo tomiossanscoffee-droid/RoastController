@@ -1,0 +1,13 @@
+pandas
+numpy
+matplotlib
+ipywidgets
+pytest
+bleak
+fastapi
+uvicorn[standard]
+pywebpush
+segno
+requests
+beautifulsoup4
+pypdfium2

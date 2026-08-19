@@ -1,0 +1,14 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="roastGrad" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#93a06e"/>
+      <stop offset="55%" stop-color="#a56a34"/>
+      <stop offset="100%" stop-color="#33200f"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="225" fill="#f0dfc4"/>
+  <g transform="translate(512,512) rotate(-18)">
+    <ellipse cx="0" cy="0" rx="240" ry="330" fill="url(#roastGrad)"/>
+    <path d="M 0 -310 C -75 -165 -55 -40 0 0 C 55 40 75 165 0 310" fill="none" stroke="#f0dfc4" stroke-width="28" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>RoastStudio</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.ossanscoffee.roaststudio</string>
+    <key>CFBundleName</key>
+    <string>Roast Studio</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright (c) 2026 Ossan's Coffee / Tomi. PolyForm Noncommercial License 1.0.0. 非公式ツール(Panasonic社・IKAWA社とは無関係)。無保証・自己責任でご利用ください。</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>焙煎機(The Roast Basic)とBluetooth Low Energyで通信し、焙煎プロファイルの送信・温度データの受信を行うために使用します。</string>
+</dict>
+</plist>

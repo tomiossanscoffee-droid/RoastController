@@ -1,0 +1,49 @@
+# ------------------------------------------------------------
+# Roast Studio - .gitignore
+# 個人データ・生成物・秘密情報・メーカー由来データは配布物に含めない。
+# (sample_profiles.json は同梱サンプルなので追跡する = ここでは無視しない)
+# ------------------------------------------------------------
+
+# --- 秘密情報(絶対に公開しない) ---
+vapid_private_key.pem
+push_subscriptions.json
+certs/
+*.pem
+*.key
+
+# --- 利用者の個人データ・実行時に生成されるファイル ---
+custom_profiles.json
+favorites.json
+guide_temps.json
+app_settings.json
+roast_records.json
+bean_purchases.json
+last_sent_profile.json
+unsaved_roast_counts.json
+mobile_host.json
+
+# --- メーカー純正アプリ / IKAWA 由来のデータ(各自が抽出。再配布しない) ---
+nhm.sqlite
+NHMSignalModule.sqlite
+*.sqlite
+THE_ROAST_Extract/
+ikawa_profiles.json
+taste_charts.json
+
+# --- Python ---
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# --- macOS アプリのビルド成果物 ---
+macapp/.build/
+macapp/build/
+
+# --- OS / エディタ ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
