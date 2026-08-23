@@ -206,7 +206,7 @@
       <div class="metric-value mono" id="mRemaining">--:--</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">実測 流入空気温度</div>
+      <div class="metric-label">実測 吸入温度</div>
       <div class="metric-value mono" id="mBT">--</div>
     </div>
     <div class="metric-card" id="mRoRCard">
@@ -323,7 +323,7 @@ let hasStartedRoasting = false;
 let preheatDotValue = null;
 let chart = null;
 // 焙煎セッション中(プロファイル送信後〜焙煎完了して別プロファイルを選ぶまで)だけ、
-// 状態・経過時間・流入空気温度・RoR・残り時間・DevTime・「ハゼた!」ボタンを表示する。
+// 状態・経過時間・吸入温度・RoR・残り時間・DevTime・「ハゼた!」ボタンを表示する。
 let roastingSessionActive = false;
 
 function updateRoastingUIVisibility(){
@@ -809,7 +809,7 @@ function renderChart(){
         // ことが実機ログで確認された)。
         { label:'プロファイル', data:refData, borderColor:'#7c8b99', borderDash:[4,4],
           pointRadius:0, borderWidth:1.5, tension:0, yAxisID:'yTemp' },
-        { label:'実測 流入空気温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
+        { label:'実測 吸入温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
           borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
           segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? '#ffcc00' : undefined } },
         { label:'予熱中(実測)', data:preheatDotData, borderColor:'#e0483a', backgroundColor:'#e0483a',

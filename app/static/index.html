@@ -1078,7 +1078,7 @@
         <div class="metric-value mono" id="mElapsed">--:--</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">実測 流入空気温度</div>
+        <div class="metric-label">実測 吸入温度</div>
         <div class="metric-value mono" id="mBT">--</div>
       </div>
       <div class="metric-card" id="mRoRCard">
@@ -1228,9 +1228,12 @@ function anyRoRVisible(){ return rorLiveVisible || rorProfileVisible || rorHisto
 const ROR_DATASET_KIND_BY_INDEX = {6: 'live', 7: 'profile', 11: 'history'};
 // 推定値(入熱・豆温度)の表示状態。RoRと同じく凡例クリックで切り替える。
 // 積算入熱は専用の軸を持つため、表示中だけ軸の目盛りを出す。
-let energyVisible = true;       // 積算入熱(kcal)
-let beanTempVisible = true;     // 推定豆温度(℃)
-const ENERGY_DATASET_KIND_BY_INDEX = {13: 'beanTemp', 14: 'energy'};
+let energyVisible = true;          // 積算入熱(kcal)
+let beanTempVisible = true;        // 豆温度(推定、プロファイルから)
+let beanTempHistoryVisible = true; // 豆温度(推定、焙煎ログの実測から)
+// 豆温度の帯は、どちらかの豆温度の線が出ていれば描く(線が無いと読みようがない)。
+function anyBeanTempVisible(){ return beanTempVisible || beanTempHistoryVisible; }
+const ENERGY_DATASET_KIND_BY_INDEX = {13: 'beanTemp', 14: 'energy', 15: 'beanTempHistory'};
 let roastStartTime = null;
 let chart = null;
 // グラフの枠(#chartWrap)の高さが変わった時に、キャンバスを枠の大きさに合わせ直す。
@@ -1500,6 +1503,19 @@ function estimateRoastEnergy(roastPoints, fanPoints){
     roastedG: roasted * 1000.0, roastIndex: index, roastIndexLevel: roastIndexLevel(index),
     endBeanTemp: tB, endGap: roastPoints[roastPoints.length-1][1] - tB,
   };
+}
+
+// 任意のカーブ(実測の焙煎ログでも、プロファイルでも)から豆温度の系列を作る。
+// グラフに載せるだけなので、1秒刻みの結果を5秒ごとに間引いて返す。
+// 焙煎ログに使うと「そのプロファイルの設計値」ではなく「実際にどう焼けたか」から
+// 豆温度が出るので、記録ごとに違う値になる。
+function beanTempSeriesFrom(roastPoints, fanPoints){
+  if(!roastPoints || roastPoints.length < 2) return [];
+  const est = estimateRoastEnergy(roastPoints, fanPoints || null);
+  if(!est) return [];
+  return est.series
+    .filter((s, i) => i % 5 === 0 || i === est.series.length - 1)
+    .map(s => ({x: s.t, y: s.bean}));
 }
 
 // 編集中のカーブに対する推定結果。カーブを触るたびに作り直すのは重いので、
@@ -2321,6 +2337,8 @@ function renderRecordMiniChart(curve, record = null){
   if(recordChart) recordChart.destroy();
   const rorData = computeRoR(curve).map(p => ({x: p[0], y: p[1]}));
   const fanData = (record && record.fan_curve) ? record.fan_curve.map(p => ({x: p[0], y: p[1]})) : [];
+  // 実測の吸入温度・風量から豆温度を推定する。1秒刻みだと点が多すぎるので5秒ごとに間引く。
+  const recordBeanTempData = beanTempSeriesFrom(curve, record && record.fan_curve);
   const showRoR = recordRorVisible && rorData.length > 0;
   // 風量の記録が無い記録では、前の記録での表示状態が残っていても軸を出さない。
   const showFan = recordFanVisible && fanData.length > 0;
@@ -2357,7 +2375,7 @@ function renderRecordMiniChart(curve, record = null){
   recordChart = new Chart(ctx, {
     type: 'line',
     data: { datasets: [
-      { label: '実測BT', data: curve.map(p => ({x: p[0], y: p[1]})),
+      { label: '実測 吸入温度', data: curve.map(p => ({x: p[0], y: p[1]})),
         borderColor: '#ce8b3e', backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: 0.15,
         cubicInterpolationMode: 'monotone', yAxisID: 'y' },
       { label: 'RoR', data: rorData, borderColor: '#9b6bce', backgroundColor: 'transparent', pointRadius: 0,
@@ -2368,6 +2386,11 @@ function renderRecordMiniChart(curve, record = null){
       // よるもので、実際の変化自体が階段状というわけではなかった)。
       { label: '風量', data: fanData, borderColor: '#5b9bd5', backgroundColor: 'transparent', pointRadius: 0,
         borderWidth: 2, tension: 0.15, cubicInterpolationMode: 'monotone', yAxisID: 'yFan', hidden: !showFan },
+      // 実測の吸入温度と風量から推定した豆温度。プロファイルではなく「実際に
+      // どう焼けたか」から計算するので、記録ごとに違う値になる。
+      { label: '豆温度(推定)', data: recordBeanTempData, borderColor: '#d9a441', borderDash: [3, 3],
+        backgroundColor: 'transparent', pointRadius: 0, borderWidth: 1.6, tension: 0.15,
+        cubicInterpolationMode: 'monotone', yAxisID: 'y' },
     ]},
     options: {
       responsive: true, animation: false,
@@ -4984,7 +5007,7 @@ const BEAN_TEMP_BANDS = [
 const beanTempBandsPlugin = {
   id: 'beanTempBands',
   beforeDatasetsDraw(c){
-    if(!beanTempVisible) return;
+    if(!anyBeanTempVisible()) return;
     const yScale = c.scales.yTemp;
     if(!yScale) return;
     const area = c.chartArea, ctx = c.ctx;
@@ -5220,6 +5243,10 @@ function renderChart(){
                                     .map(s => ({x:s.t, y:s.bean})) : [];
   const energyData = energyEst ? energyEst.series.filter((s,i) => i % 5 === 0 || i === energyEst.series.length-1)
                                     .map(s => ({x:s.t, y:s.kcal})) : [];
+  // 焙煎ログを重ねている時は、そのログの実測値からも豆温度を推定する。
+  const historyBeanTempData = historyOverlayRecord
+    ? beanTempSeriesFrom(historyOverlayRecord.roast.map(p => [p[0], p[1]]),
+                         (historyOverlayRecord.fan || []).map(p => [p[0], p[1]])) : [];
   const liveData = liveSamples.map(s => ({x:s.t, y:s.bt}));
   const liveFanData = liveSamples
     .filter(s => s.fan !== null && s.fan !== undefined)
@@ -5275,7 +5302,7 @@ function renderChart(){
       datasets: [
         { label:'参照(元プロファイル)', data:refData, borderColor:'#7c8b99', borderDash:[4,4],
           pointRadius:0, borderWidth:1.5, tension:0, yAxisID:'yTemp' },
-        { label:'編集中カーブ(BT)', data:editData, borderColor:'#ce8b3e', backgroundColor:'#ce8b3e',
+        { label:'編集中カーブ(吸入温度)', data:editData, borderColor:'#ce8b3e', backgroundColor:'#ce8b3e',
           pointBackgroundColor:pointColors, pointRadius:pointRadii, pointHoverRadius:8,
           borderWidth:3, tension:0, yAxisID:'yTemp' },
         // 2026-07再訂正: 当初「制御点間はステップ状(手前の値を保持)」と推定し
@@ -5291,7 +5318,7 @@ function renderChart(){
         // 「stepなしより誤差の少ない近似」という位置づけで採用している。
         { label:'風量', data:fanData, borderColor:'#5b9bd5', pointBackgroundColor:'#5b9bd5',
           pointRadius:4, borderWidth:1.6, borderDash:[2,2], tension:0, yAxisID:'yFan' },
-        { label:'実測 流入空気温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
+        { label:'実測 吸入温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
           borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
           // 容器エラー等が発生していた区間は、線の色を変えて一目で分かるようにする。
           segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? '#ffcc00' : undefined } },
@@ -5329,12 +5356,17 @@ function renderChart(){
         // 新しいデータセットは必ず配列の末尾に足すこと(ROR_DATASET_KIND_BY_INDEXと
         // ENERGY_DATASET_KIND_BY_INDEXが並び順に依存しているため、間に挿入すると
         // 番号がずれる)。
-        { label:'推定豆温度', data:beanTempData, borderColor:'#d9a441', borderDash:[3,3],
+        { label:'豆温度(推定)', data:beanTempData, borderColor:'#d9a441', borderDash:[3,3],
           pointRadius:0, borderWidth:1.6, tension:0.15, cubicInterpolationMode:'monotone',
           yAxisID:'yTemp', hidden:!beanTempVisible },
         { label:'積算入熱(推定)', data:energyData, borderColor:'#7fb069', pointRadius:0,
           borderWidth:1.8, tension:0.15, cubicInterpolationMode:'monotone',
           yAxisID:'yEnergy', hidden:!energyVisible },
+        // 焙煎ログの実測吸入温度・実測風量から推定した豆温度。プロファイルから
+        // 計算した豆温度(上)と同系色にし、ログ側は点線で区別する。
+        { label:'豆温度(焙煎ログ・推定)', data:historyBeanTempData, borderColor:'#e0a86a',
+          borderDash:[2,2], pointRadius:0, borderWidth:1.5, tension:0.15,
+          cubicInterpolationMode:'monotone', yAxisID:'yTemp', hidden:!beanTempHistoryVisible },
       ]
     },
     options: {
@@ -5382,10 +5414,11 @@ function renderChart(){
             ci.update();
           }
           const ekind = ENERGY_DATASET_KIND_BY_INDEX[idx];
-          if(ekind === 'beanTemp'){
+          if(ekind === 'beanTemp' || ekind === 'beanTempHistory'){
             // 豆温度の帯(beanTempBandsPlugin)はこのフラグを見て描くので、
             // 切り替えたあとにもう一度描き直す。
-            beanTempVisible = ci.isDatasetVisible(idx);
+            if(ekind === 'beanTemp') beanTempVisible = ci.isDatasetVisible(idx);
+            else beanTempHistoryVisible = ci.isDatasetVisible(idx);
             ci.update();
           }
           else if(ekind === 'energy'){
