@@ -1509,13 +1509,26 @@ function estimateRoastEnergy(roastPoints, fanPoints){
 // グラフに載せるだけなので、1秒刻みの結果を5秒ごとに間引いて返す。
 // 焙煎ログに使うと「そのプロファイルの設計値」ではなく「実際にどう焼けたか」から
 // 豆温度が出るので、記録ごとに違う値になる。
+// 焙煎ログは点数が多く(1秒刻み・冷却込みで900点前後)、1回の計算に5ms以上かかる。
+// ドラッグ中もrenderChart()から呼ばれうるので、同じログなら結果を使い回す。
+let beanTempSeriesCache = {key: null, result: []};
 function beanTempSeriesFrom(roastPoints, fanPoints){
   if(!roastPoints || roastPoints.length < 2) return [];
+  // 全点をJSON化すると点数が多いときに逆に重いので、等間隔に9点だけ拾って鍵にする。
+  // 別の記録が偶然同じ長さ・同じ端点でも、途中が違えば別物と判定できる。
+  let key = roastPoints.length + '/' + (fanPoints ? fanPoints.length : 0) + '/' + ENERGY.MOISTURE;
+  for(let i = 0; i < 9; i++){
+    const p = roastPoints[Math.min(Math.floor(roastPoints.length * i / 8), roastPoints.length - 1)];
+    key += '|' + p[0] + ',' + p[1];
+  }
+  if(beanTempSeriesCache.key === key) return beanTempSeriesCache.result;
   const est = estimateRoastEnergy(roastPoints, fanPoints || null);
-  if(!est) return [];
-  return est.series
-    .filter((s, i) => i % 5 === 0 || i === est.series.length - 1)
-    .map(s => ({x: s.t, y: s.bean}));
+  const result = est
+    ? est.series.filter((s, i) => i % 5 === 0 || i === est.series.length - 1)
+                .map(s => ({x: s.t, y: s.bean}))
+    : [];
+  beanTempSeriesCache = {key, result};
+  return result;
 }
 
 // 編集中のカーブに対する推定結果。カーブを触るたびに作り直すのは重いので、
@@ -5633,8 +5646,24 @@ function onDragMove(e){
   if(draggingDataset === 'roast' && rorProfileVisible){
     chart.data.datasets[7].data = computeProfileRoR(editedRoast).map(p => ({x:p[0], y:p[1]}));
   }
+  // 豆温度・積算入熱もここで作り直す。ドラッグ中はrenderChart()を通らず
+  // データセットを直接書き換えているため、書き忘れるとこの2本だけ古いまま残る。
+  // 温度カーブでも風量カーブでも変わる(入熱は風量に依存する)ので、両方で更新する。
+  refreshEstimateDatasets();
   chart.update('none');
-  if(draggingDataset === 'roast') updateStaticMetrics();
+  // 数値カード(推定入熱・推定焙煎指数)も風量の変更で動くため、こちらも両方で呼ぶ。
+  updateStaticMetrics();
+}
+
+// グラフ上の「豆温度(推定)」「積算入熱(推定)」を、今の編集カーブから作り直す。
+// renderChart()を通らない経路(ドラッグ中)から使う。
+function refreshEstimateDatasets(){
+  if(!chart || !chart.data || !chart.data.datasets[14]) return;
+  const est = currentEnergyEstimate();
+  const thin = (fn) => est
+    ? est.series.filter((s,i) => i % 5 === 0 || i === est.series.length-1).map(fn) : [];
+  chart.data.datasets[13].data = thin(s => ({x:s.t, y:s.bean}));
+  chart.data.datasets[14].data = thin(s => ({x:s.t, y:s.kcal}));
 }
 function onDragEnd(){
   const draggedDataset = draggingIndex !== null ? draggingDataset : null;
