@@ -2071,9 +2071,11 @@ async function saveBeanPurchase(id){
   const res = await fetch(`/api/bean_purchases${id ? '/' + id : ''}`, {
     method: id ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
   });
-  const data = await res.json();
-  status.textContent = res.ok ? '保存しました' : '保存に失敗しました';
-  setTimeout(() => { status.textContent = ''; }, 2000);
+  const data = await res.json().catch(() => ({}));
+  // サーバーが理由を返してきたら、それをそのまま出す(「すべて空の豆は登録できません」等)
+  status.textContent = res.ok ? '保存しました' : (data && data.error ? data.error : '保存に失敗しました');
+  setTimeout(() => { status.textContent = ''; }, res.ok ? 2000 : 5000);
+  if(!res.ok) return;
   await populateBeanFilters();
   loadRecordsList(document.getElementById('recordsSearchBox').value);
   // 保存後は画面を再読み込みする(新規作成時だけでなく、既存の編集時も)。
@@ -2217,7 +2219,8 @@ async function saveManualRoastRecord(beanId){
       cup_comment: document.getElementById('mrrComment').value,
     }),
   });
-  status.textContent = res.ok ? '保存しました' : '保存に失敗しました';
+  const rdata = await res.json().catch(() => ({}));
+  status.textContent = res.ok ? '保存しました' : (rdata && rdata.error ? rdata.error : '保存に失敗しました');
   if(res.ok){
     await loadBeanRoastRecordList(currentRecordOpenBeanGroupKey);
     loadRoastHistoryTab();

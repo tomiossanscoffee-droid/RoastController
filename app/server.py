@@ -2170,12 +2170,24 @@ def get_bean_purchase(pid: str):
     return JSONResponse(_serialize_bean_purchase(pid, p))
 
 
+def _bean_purchase_is_empty(entry: dict) -> bool:
+    """入力項目がすべて空か。中身の無い記録は一覧に出ても何も分からないため作らせない。"""
+    return not any(str(entry.get(f, "") or "").strip() for f in _BEAN_PURCHASE_FIELDS)
+
+
+_BEAN_EMPTY_MESSAGE = "少なくとも1つは入力してください(すべて空の豆は登録できません)"
+
+
 @app.post("/api/bean_purchases")
 async def create_bean_purchase(request: Request):
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "本文はオブジェクトで送ってください"}, status_code=400)
     data = _load_bean_purchases()
     pid = f"bean_{int(time.time() * 1000)}"
     entry = {f: str(body.get(f, "") or "").strip() for f in _BEAN_PURCHASE_FIELDS}
+    if _bean_purchase_is_empty(entry):
+        return JSONResponse({"error": _BEAN_EMPTY_MESSAGE}, status_code=400)
     entry["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     data[pid] = entry
     _save_bean_purchases(data)
@@ -2188,7 +2200,11 @@ async def update_bean_purchase(pid: str, request: Request):
     if pid not in data:
         return JSONResponse({"error": "not found"}, status_code=404)
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "本文はオブジェクトで送ってください"}, status_code=400)
     entry = {f: str(body.get(f, "") or "").strip() for f in _BEAN_PURCHASE_FIELDS}
+    if _bean_purchase_is_empty(entry):
+        return JSONResponse({"error": _BEAN_EMPTY_MESSAGE}, status_code=400)
     entry["created_at"] = data[pid].get("created_at", time.strftime("%Y-%m-%d %H:%M:%S"))
     data[pid] = entry
     _save_bean_purchases(data)
@@ -2329,6 +2345,23 @@ async def create_roast_record(request: Request):
     手動で追加する過去の焙煎記録の両方をここで受け付ける。
     """
     body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "本文はオブジェクトで送ってください"}, status_code=400)
+    # 中身がまったく無い記録は、一覧に出ても何の焙煎か分からないので作らせない。
+    # アプリからの2つの経路(焙煎完了時の自動保存・購入豆画面からの手動追加)は
+    # どちらも必ずプロファイルの情報を送るので、これで弾かれることはない。
+    if not any([
+        str(body.get("profile_source") or "").strip(),
+        body.get("profile_id") not in (None, "", []),
+        str(body.get("profile_name") or "").strip(),
+        body.get("bean_purchase_id"),
+        body.get("roast_curve"),
+        str(body.get("cup_comment") or "").strip(),
+        body.get("rating"),
+    ]):
+        return JSONResponse(
+            {"error": "焙煎したプロファイルか豆を指定してください(空の記録は作れません)"},
+            status_code=400)
     data = _load_roast_records()
     rid = f"roast_{int(time.time() * 1000)}"
     roasted_at = body.get("roasted_at") or time.strftime("%Y-%m-%d %H:%M:%S")

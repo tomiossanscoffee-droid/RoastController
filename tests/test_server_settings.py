@@ -37,3 +37,25 @@ def test_既定値そのものが正規化を通る():
     assert set(DEFAULT_GUIDE_TEMPS) == {"colorChange", "firstCrack", "secondCrack"}
     for key, value in DEFAULT_GUIDE_TEMPS.items():
         assert _clean_guide_temp(value) == value, f"{key} の既定値 {value} が正規化で変わる"
+
+
+# ------------------------------------------------------------
+# 空のレコードを作らせない検証
+# ------------------------------------------------------------
+from app.server import _BEAN_PURCHASE_FIELDS, _bean_purchase_is_empty  # noqa: E402
+
+
+def test_全項目が空の豆は空とみなす():
+    assert _bean_purchase_is_empty({f: "" for f in _BEAN_PURCHASE_FIELDS})
+    assert _bean_purchase_is_empty({})
+    # 空白だけの入力も空扱い
+    assert _bean_purchase_is_empty({f: "   " for f in _BEAN_PURCHASE_FIELDS})
+    # Noneが入っていても落ちない
+    assert _bean_purchase_is_empty({f: None for f in _BEAN_PURCHASE_FIELDS})
+
+
+@pytest.mark.parametrize("field", _BEAN_PURCHASE_FIELDS)
+def test_どれか1項目でも入っていれば空ではない(field):
+    entry = {f: "" for f in _BEAN_PURCHASE_FIELDS}
+    entry[field] = "あ"
+    assert not _bean_purchase_is_empty(entry)
