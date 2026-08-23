@@ -908,6 +908,16 @@
         <div class="metric-label" id="ovDevTimeLabel">Development Time(見込み)</div>
         <div class="metric-value mono" id="ovDevTime">--</div>
       </div>
+      <!-- 温度カーブと風量カーブから計算した推定値。実測ではない。
+           生豆50g・含水率10%を前提としている(roastlib/energy.py参照)。 -->
+      <div class="metric-card" title="温度と風量から計算した、豆が受け取る熱量の推定値です(生豆50g・含水率10%として計算)。実測ではありません">
+        <div class="metric-label">推定入熱</div>
+        <div class="metric-value mono" id="ovEnergy">--</div>
+      </div>
+      <div class="metric-card" title="焙煎指数 = 生豆重量 ÷ 焙煎後重量。浅煎り1.140〜1.170 / 中煎り〜1.195 / 中深煎り〜1.220 / 深煎り1.220以上。推定値です">
+        <div class="metric-label">推定焙煎指数</div>
+        <div class="metric-value mono" id="ovRoastIndex">--</div>
+      </div>
     </div>
 
     <div class="chart-wrap bean-info tab-panel-fill" id="beanInfoPanel" style="display:none;">
@@ -1200,6 +1210,11 @@ function anyRoRVisible(){ return rorLiveVisible || rorProfileVisible || rorHisto
 // renderChart()のdatasets配列でのRoR系データセットの位置(下限温度域(実測)
 // 撤去後の並び。凡例クリック時に、どのRoR系フラグを更新するか判定するのに使う)。
 const ROR_DATASET_KIND_BY_INDEX = {6: 'live', 7: 'profile', 11: 'history'};
+// 推定値(入熱・豆温度)の表示状態。RoRと同じく凡例クリックで切り替える。
+// 積算入熱は専用の軸を持つため、表示中だけ軸の目盛りを出す。
+let energyVisible = true;       // 積算入熱(kcal)
+let beanTempVisible = true;     // 推定豆温度(℃)
+const ENERGY_DATASET_KIND_BY_INDEX = {13: 'beanTemp', 14: 'energy'};
 let roastStartTime = null;
 let chart = null;
 // グラフの枠(#chartWrap)の高さが変わった時に、キャンバスを枠の大きさに合わせ直す。
@@ -1367,6 +1382,116 @@ function parseMMSS(str){
 function fmtFanValue(fan){
   if(fan === null || fan === undefined) return '--';
   return fan.toFixed(0) + '%';
+}
+
+// ------------------------------------------------------------
+// 豆への入熱・豆温度の推定(推定値であって実測ではない)
+// ------------------------------------------------------------
+// roastlib/energy.py と同じ計算。数値が食い違わないよう tests/test_energy.py で
+// 突き合わせているので、片方を変えたら必ずもう片方も変えること。
+// モデルの根拠・検証結果は roastlib/energy.py の先頭コメントを参照。
+const ENERGY = {
+  BEAN_G: 50.0, MOISTURE: 0.10,          // 生豆50g・含水率10%
+  C_DRY: 1.70, C_W: 4.18,                // 比熱 kJ/(kg·K)
+  T_START: 20.0, T_FC_BEAN: 196.0,       // 投入時の豆温度 / 1ハゼの豆温度
+  U0: 0.00512, FAN_REF: 70.0, FAN_EXP: 0.8,
+  // 豆が冷たく濡れている間は熱の入りが鈍い(内部の温度勾配と表面の蒸発冷却)。
+  // 20℃でU0のU_COLD倍、260℃でU0そのもの。これが無いと投入直後に豆が空気温度を
+  // 追い越してしまう。
+  U_COLD: 0.15, U_WARM_TEMP: 260.0,
+  FREE_FRAC: 0.25, K_FREE: 8.0e-5, TAU_FC: 25.0,
+  EA: 65000.0, K_PYRO: 3153.5, H_ENDO: 3024.0, R_GAS: 8.314,
+  DT: 1.0, SUBSTEPS: 4, KJ_PER_KCAL: 4.184,
+};
+
+function energyInterp(points, t){
+  if(!points || !points.length) return 0;
+  if(t <= points[0][0]) return points[0][1];
+  if(t >= points[points.length-1][0]) return points[points.length-1][1];
+  for(let i = 0; i < points.length - 1; i++){
+    const a = points[i], b = points[i+1];
+    if(a[0] <= t && t <= b[0]){
+      if(b[0] === a[0]) return a[1];
+      return a[1] + (b[1] - a[1]) * (t - a[0]) / (b[0] - a[0]);
+    }
+  }
+  return points[points.length-1][1];
+}
+
+// その温度での蒸発潜熱 kJ/kg(Watsonの近似)。高温ほど小さい。
+function energyLatentHeat(tC){
+  const tc = 373.946;
+  const ratio = (tc - Math.min(tC, 370.0)) / (tc - 100.0);
+  return 2257.0 * Math.pow(Math.max(ratio, 0.05), 0.38);
+}
+
+const ROAST_INDEX_BANDS = [['浅煎り',1.140,1.170],['中煎り',1.170,1.195],
+                           ['中深煎り',1.195,1.220],['深煎り',1.220,Infinity]];
+function roastIndexLevel(index){
+  for(const [name, lo, hi] of ROAST_INDEX_BANDS){ if(index >= lo && index < hi) return name; }
+  return index < ROAST_INDEX_BANDS[0][1] ? ROAST_INDEX_BANDS[0][0]
+                                         : ROAST_INDEX_BANDS[ROAST_INDEX_BANDS.length-1][0];
+}
+
+// 戻り値: {series:[{t,air,bean,kcal}], totalKcal, roastedG, roastIndex, roastIndexLevel,
+//          endBeanTemp, endGap} / 計算できない場合は null
+function estimateRoastEnergy(roastPoints, fanPoints){
+  const E = ENERGY;
+  if(!roastPoints || roastPoints.length < 2) return null;
+  const tEnd = roastPoints[roastPoints.length-1][0];
+  if(!(tEnd > 0)) return null;
+  const m = E.BEAN_G / 1000.0;
+  let mDry = m * (1 - E.MOISTURE);
+  let wFree = m * E.MOISTURE * E.FREE_FRAC;
+  let wBound = m * E.MOISTURE * (1 - E.FREE_FRAC);
+  let tB = E.T_START, eIn = 0.0;
+  const series = [];
+  const steps = Math.floor(tEnd / E.DT) + 1;
+  const h = E.DT / E.SUBSTEPS;
+  for(let i = 0; i <= steps; i++){
+    const t = Math.min(i * E.DT, tEnd);
+    series.push({t, air: energyInterp(roastPoints, t), bean: tB, kcal: eIn / E.KJ_PER_KCAL});
+    if(t >= tEnd) break;
+    for(let k = 0; k < E.SUBSTEPS; k++){
+      const tk = Math.min(t + k * h, tEnd);
+      const tAir = energyInterp(roastPoints, tk);
+      const fan = (fanPoints && fanPoints.length) ? energyInterp(fanPoints, tk) : E.FAN_REF;
+      const warm = Math.min(Math.max((tB - E.T_START) / (E.U_WARM_TEMP - E.T_START), 0.0), 1.0);
+      const u = E.U0 * Math.pow(Math.max(fan, 1.0) / E.FAN_REF, E.FAN_EXP) * (E.U_COLD + (1.0 - E.U_COLD) * warm);
+      const q = u * (tAir - tB);
+      // 表面水分は100℃超で徐々に、内部水分は1ハゼ豆温度に達したら一気に抜ける
+      const rFree = wFree > 0 ? Math.min(E.K_FREE * wFree * Math.max(tB - 100.0, 0.0), wFree / h) : 0.0;
+      const rBound = (tB >= E.T_FC_BEAN && wBound > 0) ? Math.min(wBound / E.TAU_FC, wBound / h) : 0.0;
+      const qLat = (rFree + rBound) * energyLatentHeat(tB);
+      // 乾物の分解。生成したガスが熱を持ち去る分は吸熱として扱う。
+      const rPyro = Math.min(E.K_PYRO * mDry * Math.exp(-E.EA / (E.R_GAS * Math.max(tB + 273.15, 200.0))),
+                             mDry * 0.01 / h);
+      const cEff = Math.max(mDry * E.C_DRY + (wFree + wBound) * E.C_W, 1e-4);
+      tB += (q - qLat - rPyro * E.H_ENDO) / cEff * h;
+      wFree -= rFree * h;
+      wBound -= rBound * h;
+      mDry -= rPyro * h;
+      if(q > 0) eIn += q * h;
+    }
+  }
+  const roasted = mDry + wFree + wBound;
+  const index = roasted > 0 ? (m / roasted) : 0;
+  return {
+    series, totalKj: eIn, totalKcal: eIn / E.KJ_PER_KCAL,
+    roastedG: roasted * 1000.0, roastIndex: index, roastIndexLevel: roastIndexLevel(index),
+    endBeanTemp: tB, endGap: roastPoints[roastPoints.length-1][1] - tB,
+  };
+}
+
+// 編集中のカーブに対する推定結果。カーブを触るたびに作り直すのは重いので、
+// 同じ入力なら前回の結果を使い回す。
+let energyCache = {key: null, result: null};
+function currentEnergyEstimate(){
+  if(!editedRoast || editedRoast.length < 2) return null;
+  const key = JSON.stringify(editedRoast) + '|' + JSON.stringify(editedFan || []);
+  if(energyCache.key === key) return energyCache.result;
+  energyCache = {key, result: estimateRoastEnergy(editedRoast, editedFan)};
+  return energyCache.result;
 }
 
 // ------------------------------------------------------------
@@ -5029,6 +5154,12 @@ function renderChart(){
   const refData = originalRoast.map(p => ({x:p[0], y:p[1]}));
   const editData = editedRoast.map(p => ({x:p[0], y:p[1]}));
   const fanData = editedFan.map(p => ({x:p[0], y:p[1]}));
+  // 推定値(入熱・豆温度)。1秒刻みのままだと点が多すぎるので5秒ごとに間引く。
+  const energyEst = currentEnergyEstimate();
+  const beanTempData = energyEst ? energyEst.series.filter((s,i) => i % 5 === 0 || i === energyEst.series.length-1)
+                                    .map(s => ({x:s.t, y:s.bean})) : [];
+  const energyData = energyEst ? energyEst.series.filter((s,i) => i % 5 === 0 || i === energyEst.series.length-1)
+                                    .map(s => ({x:s.t, y:s.kcal})) : [];
   const liveData = liveSamples.map(s => ({x:s.t, y:s.bt}));
   const liveFanData = liveSamples
     .filter(s => s.fan !== null && s.fan !== undefined)
@@ -5132,10 +5263,18 @@ function renderChart(){
           pointRadius:0, borderWidth:1.5, tension:0.2, cubicInterpolationMode:'monotone',
           yAxisID:'yRoR', hidden:!rorHistoryVisible },
         // 比較対象の風量。温度の比較線と同じ色(teal)で、風量軸に重ねる。
-        // ここは必ず配列の末尾に置くこと(ROR_DATASET_KIND_BY_INDEXが
-        // データセットの並び順に依存しているため、間に挿入すると番号がずれる)。
         { label:'比較 風量', data:compareFanData, borderColor:'#4a9b8e', borderDash:[2,3],
           pointRadius:0, borderWidth:1.4, tension:0, yAxisID:'yFan' },
+        // 推定値(実測ではない)。温度・風量から計算した豆温度と積算入熱。
+        // 新しいデータセットは必ず配列の末尾に足すこと(ROR_DATASET_KIND_BY_INDEXと
+        // ENERGY_DATASET_KIND_BY_INDEXが並び順に依存しているため、間に挿入すると
+        // 番号がずれる)。
+        { label:'推定豆温度', data:beanTempData, borderColor:'#d9a441', borderDash:[3,3],
+          pointRadius:0, borderWidth:1.6, tension:0.15, cubicInterpolationMode:'monotone',
+          yAxisID:'yTemp', hidden:!beanTempVisible },
+        { label:'積算入熱(推定)', data:energyData, borderColor:'#7fb069', pointRadius:0,
+          borderWidth:1.8, tension:0.15, cubicInterpolationMode:'monotone',
+          yAxisID:'yEnergy', hidden:!energyVisible },
       ]
     },
     options: {
@@ -5150,6 +5289,9 @@ function renderChart(){
             ticks:{color:'#9c948a'}, grid:{display:false}, min:50, max:100 },
         yRoR:{ position:'right', display:anyRoRVisible(), title:{display:true,text:'RoR(℃/分)',color:'#9c948a'},
             ticks:{color:'#9c948a'}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
+        // 積算入熱は0から単調に増えるだけなので、目盛りは表示中だけ出す(RoRと同じ扱い)。
+        yEnergy:{ position:'right', display:energyVisible, title:{display:true,text:'積算入熱(kcal)',color:'#9c948a'},
+            ticks:{color:'#9c948a'}, grid:{display:false}, min:0 },
       },
       plugins:{
         legend:{ labels:{ color:'#ede7dd', font:{size:11},
@@ -5177,6 +5319,13 @@ function renderChart(){
           else if(kind === 'history') rorHistoryVisible = ci.isDatasetVisible(idx);
           if(kind){
             ci.options.scales.yRoR.display = anyRoRVisible();
+            ci.update();
+          }
+          const ekind = ENERGY_DATASET_KIND_BY_INDEX[idx];
+          if(ekind === 'beanTemp') beanTempVisible = ci.isDatasetVisible(idx);
+          else if(ekind === 'energy'){
+            energyVisible = ci.isDatasetVisible(idx);
+            ci.options.scales.yEnergy.display = energyVisible;
             ci.update();
           }
         },
@@ -5581,6 +5730,11 @@ function updateProfileOverview(){
   document.getElementById('ovPreheatTemp').textContent = first[1] + '℃';
   document.getElementById('ovRoastTime').textContent = fmtMMSS(last[0]);
   document.getElementById('ovFinalTemp').textContent = last[1] + '℃';
+  // 推定入熱・推定焙煎指数(温度カーブと風量カーブから計算した推定値)
+  const est = currentEnergyEstimate();
+  document.getElementById('ovEnergy').textContent = est ? `${est.totalKcal.toFixed(1)} kcal` : '--';
+  document.getElementById('ovRoastIndex').textContent = est
+    ? `${est.roastIndex.toFixed(3)} (${est.roastIndexLevel})` : '--';
   // 「1ハゼ確認」ボタンで実測の1ハゼが記録されている場合は、計画上の推定ではなく
   // 実測値(押した時点 → 焙煎終了=加熱終了・冷却開始)を表示する。実測欄(mDTR)と
   // 別々の数字が出て食い違うのを防ぐため、両方とも同じ基準で計算する。
