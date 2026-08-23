@@ -513,14 +513,29 @@ class TestDynamicPhaseBases:
         assert abs(abc["c_sec_before_d"] - 160) <= 5
 
     def test_phase_bases_none_is_backward_compatible(self):
-        # phase_bases未指定なら従来のハードコード基準(D_BASE=200)に一致
-        p = generate_profile_abc("深煎り", guide_temps={"colorChange": 175, "firstCrack": 220, "secondCrack": 227})
-        abc = analyze_abc_phases(p["roast"], {"colorChange": 175, "firstCrack": 220, "secondCrack": 227})
-        assert abs(abc["d_sec"] - 200) <= 5
+        # phase_bases未指定ならハードコード基準に一致する。基準値は2ハゼ240℃で
+        # プリセットを分割した実測中央値なので、同じ240℃で分割して確かめる。
+        gt = {"colorChange": 175, "firstCrack": 220, "secondCrack": ABC_SECOND_CRACK_TEMP}
+        p = generate_profile_abc("深煎り", guide_temps=gt)
+        abc = analyze_abc_phases(p["roast"], gt)
+        assert abs(abc["d_sec"] - ABC_D_BASE["深煎り"]) <= 5
+
+    def test_2ハゼ既定は1ハゼから十分離れている(self):
+        """1ハゼ設定のすぐ上だと「1ハゼ→2ハゼ」が数十秒しか取れない。
+
+        以前は227℃で、1ハゼ設定(220〜223℃)のわずか4〜7℃上だった。豆温度に
+        直すと約196℃=1ハゼそのもので、Cフェーズが23〜42秒しか無かった。
+        """
+        for fc in (220, 223, 225):
+            assert ABC_SECOND_CRACK_TEMP - fc >= 15, "2ハゼ既定が1ハゼに近すぎる"
+        # C(1ハゼ→2ハゼ)の基準値も、その幅に見合う長さがあること
+        for lv in ("中深煎り", "深煎り"):
+            assert ABC_C_BASE[lv] >= 60, f"{lv}のCフェーズ基準が短すぎる"
 
     def test_effective_bases_fallback(self):
         eff = _effective_abc_bases("深煎り", None)
-        assert eff["c_sec"] == 40 and eff["d_sec"] == 200  # ハードコード既定
+        # ハードコード既定(2ハゼ240℃基準のプリセット実測中央値)
+        assert eff["c_sec"] == ABC_C_BASE["深煎り"] and eff["d_sec"] == ABC_D_BASE["深煎り"]
         eff2 = _effective_abc_bases("深煎り", {"深煎り": {"c_sec": 160, "d_sec": 75}})
         assert eff2["c_sec"] == 160 and eff2["d_sec"] == 75
         # 欠けた項目(a_sec)はハードコードへフォールバック

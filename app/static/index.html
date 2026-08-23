@@ -774,6 +774,10 @@
         <input type="checkbox" id="showIkawaTabToggle" checked>
       </label>
       <div class="settings-note" id="sourceTabNote" style="display:none;"></div>
+      <!-- 焙煎機を見ながら決めた、カラーチェンジ・1ハゼ・2ハゼの空気温度。
+           A/B/C/Dフェーズの境界として、味を推測・ABCモードの計算に使われる。 -->
+      <button class="btn small" id="btnGuideSettings" style="width:100%; margin:2px 0 8px;"
+              title="焙煎機で見て決めた、カラーチェンジ・1ハゼ・2ハゼの温度。フェーズの区切りとして味を推測・ABCモードの計算に使われます">温度ガイド線設定</button>
       <!-- 連続焙煎モードで、排出完了(容器交換まで終わった状態)から次のプロファイルを
            送るまでの待ち時間。豆の計量や容器の清掃にかかる時間に合わせて変えられる。 -->
       <div class="settings-num-row"
@@ -838,7 +842,9 @@
          豆の情報・焙煎履歴のビューでは switchGraphView() でまとめて隠す。 -->
     <div class="main-toolbar" id="mainToolbar">
       <div class="toolbar-group">
-        <button class="btn small" id="btnGuideSettings">温度ガイド線設定</button>
+        <!-- 「温度ガイド線設定」はサイドバーの設定へ移した(2026-08)。焙煎機を見ながら
+             一度決めたら滅多に変えない値であり、カーブ編集の操作とは性質が違うため。
+             パネル(#guidePanel)はグラフのそばに残してあり、設定から開く。 -->
         <button class="btn small" id="btnOffsetToggle">温度オフセット</button>
         <button class="btn small" id="btnAdjustLighter" style="display:none;" title="THE ROAST純正アプリの「浅めに調整」と同じ調整量でカーブを変更します">浅めに調整</button>
         <button class="btn small" id="btnAdjustDeeper" style="display:none;" title="THE ROAST純正アプリの「深めに調整」と同じ調整量でカーブを変更します">深めに調整</button>
@@ -4799,6 +4805,12 @@ for(const id of ['guideColorChange','guideFirstCrack','guideSecondCrack']){
   document.getElementById(id).addEventListener('change', onGuideInputChange);
 }
 document.getElementById('btnGuideSettings').onclick = () => {
+  // ボタンはサイドバーの設定にあるが、パネルはグラフのそばに出る。豆の情報・
+  // 焙煎履歴のビューではパネルが畳まれる仕様なので、まず焙煎グラフに戻す。
+  if(currentGraphView !== 'graph' && currentGraphView !== 'taste'){
+    if(currentTab === 'records') switchTab('custom');
+    leaveGeneratorTo('graph');
+  }
   const panel = document.getElementById('guidePanel');
   panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
 };
@@ -4941,6 +4953,40 @@ document.getElementById('btnMobileQrClose').onclick = () => {
 document.getElementById('mobileQrOverlay').onclick = (e) => {
   if(e.target === document.getElementById('mobileQrOverlay')){
     document.getElementById('mobileQrOverlay').style.display = 'none';
+  }
+};
+
+// 一般に言われる「豆温度」での節目。推定豆温度の線と合わせて読むための目安で、
+// 計算には一切使わない(計算はすべて、下のガイド線=焙煎機の空気温度が基準)。
+// 帯とガイド線は同じ事象を指すが、通る時刻は一致しない(プリセット実測で
+// カラーチェンジ67秒・1ハゼ89秒・2ハゼ39秒ほど帯の方が早い)。そのずれ自体が
+// 「設定した温度が実際の事象より遅いかもしれない」という手掛かりになる。
+const BEAN_TEMP_BANDS = [
+  {lo: 140, hi: 150, label: 'カラーチェンジ(豆)', color: '#c9a227'},
+  {lo: 190, hi: 208, label: '1ハゼ(豆)', color: '#c76b3f'},
+  {lo: 215, hi: 225, label: '2ハゼ(豆)', color: '#8a3a2a'},
+];
+// 推定豆温度の線を出している時だけ帯を描く(線が無いと読みようがないため)。
+const beanTempBandsPlugin = {
+  id: 'beanTempBands',
+  beforeDatasetsDraw(c){
+    if(!beanTempVisible) return;
+    const yScale = c.scales.yTemp;
+    if(!yScale) return;
+    const area = c.chartArea, ctx = c.ctx;
+    ctx.save();
+    for(const b of BEAN_TEMP_BANDS){
+      const yTop = yScale.getPixelForValue(b.hi), yBot = yScale.getPixelForValue(b.lo);
+      const top = Math.max(yTop, area.top), bot = Math.min(yBot, area.bottom);
+      if(bot <= top) continue;
+      ctx.fillStyle = b.color + '1f';   // 透明度を上げて背景に沈める
+      ctx.fillRect(area.left, top, area.right - area.left, bot - top);
+      ctx.fillStyle = b.color + '99';
+      ctx.font = '9px Inter, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${b.label} ${b.lo}〜${b.hi}℃`, area.right - 6, top + 10);
+    }
+    ctx.restore();
   }
 };
 
@@ -5198,7 +5244,7 @@ function renderChart(){
   if(chart) chart.destroy();
   chart = new Chart(ctx, {
     type: 'line',
-    plugins: [devTimePlugin, cooldownLinesPlugin, tempGuideLinesPlugin],
+    plugins: [devTimePlugin, cooldownLinesPlugin, beanTempBandsPlugin, tempGuideLinesPlugin],
     data: {
       // 2026-07再訂正: 以前はcubicInterpolationMode:'monotone'(滑らかな曲線)で
       // 描画していたが、実機ログ(制御点(330,168℃)→(331,240℃)という急激な
@@ -5322,7 +5368,12 @@ function renderChart(){
             ci.update();
           }
           const ekind = ENERGY_DATASET_KIND_BY_INDEX[idx];
-          if(ekind === 'beanTemp') beanTempVisible = ci.isDatasetVisible(idx);
+          if(ekind === 'beanTemp'){
+            // 豆温度の帯(beanTempBandsPlugin)はこのフラグを見て描くので、
+            // 切り替えたあとにもう一度描き直す。
+            beanTempVisible = ci.isDatasetVisible(idx);
+            ci.update();
+          }
           else if(ekind === 'energy'){
             energyVisible = ci.isDatasetVisible(idx);
             ci.options.scales.yEnergy.display = energyVisible;
