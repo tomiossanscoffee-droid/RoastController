@@ -872,11 +872,13 @@
          同じ条件で隠れるカーブ編集ツールバーの直下へ移した。 -->
     <div class="hint edit-hint-row" id="editHint" style="display:none;">
       <span class="nb">ドラッグで点を移動</span> ・ <span class="nb">線上をクリックで点を追加</span> ・
-      <span class="nb">ダブルクリックで点を削除</span> ・ <span class="nb">Shift+クリックでFirst Crack指定</span>
+      <span class="nb">ダブルクリックで点を削除</span> ・ <span class="nb">Shift+クリックでFirst Crack指定</span> ・
+      <span class="nb">Ctrl(⌘)+クリックで複数選択</span> <span class="nb">(まとめてドラッグで移動)</span>
       <span class="nb">(THE ROAST EXPERT仕様:</span> <span class="nb">温度は1℃単位で最大255℃・最大20ポイント、</span>
       <span class="nb">風量は1%単位で50〜100%・最大10ポイント、</span> <span class="nb">焙煎時間は1秒単位で最大15分。</span>
       <span class="nb">隣接する点とは1秒以上の間隔が必要)</span>
     </div>
+    <div class="hint" id="selectionNote" style="display:none; color:var(--amber);"></div>
 
     <div class="offset-row" id="offsetPanel" style="display:none;">
       <span class="offset-label">温度オフセット</span>
@@ -1262,6 +1264,7 @@ function scheduleBeanTasteRadarResize(){
   }, 0);
 }
 let draggingIndex = null, draggingDataset = null;
+let dragBase = null;   // ドラッグ開始時点のカーブのコピー(onDragStart参照)
 let dragStartedHistory = false;
 let undoStack = [], redoStack = [];
 let pointIdCounter = 0;
@@ -3654,6 +3657,7 @@ function baseGeneratedName(){
 // 復帰先)も書き換えない。生成前の状態をundo履歴に積むので、味を推測/ABCでの操作も
 // Undo/Redo/最初に戻すで巻き戻せる。
 function loadGeneratedProfileIntoEditor(data){
+  clearPointSelection(false);   // 別のカーブになるので選択は持ち越さない
   // 生成結果が今のカーブと同じなら、no-opのundoステップを作らない。
   const changed = JSON.stringify(data.roast) !== JSON.stringify(editedRoast)
     || JSON.stringify(data.fan) !== JSON.stringify(editedFan);
@@ -4295,6 +4299,7 @@ function loadProfileIntoEditor(data){
   originalFan = data.fan.map(p => [...p]);
   originalCooldown = data.cooldown ? [...data.cooldown] : null;
 
+  clearPointSelection(false);   // カーブが差し替わるので選択は持ち越さない
   editedRoast = originalRoast.map(p => [...p]);
   editedFan = originalFan.map(p => [...p]);
   cooldownPoint = originalCooldown ? [...originalCooldown] : null;
@@ -4373,6 +4378,7 @@ function applyRoastAdjust(direction){
   if(roastAdjustState !== 'none'){
     // 逆方向の調整が適用中 → 新たに反対方向を適用するのではなく、元のプロファイルに戻す
     // (風量カーブ・冷却完了予定も、調整前の状態にまとめて戻す)
+    clearPointSelection(false);   // カーブが差し替わるので選択は持ち越さない
     editedRoast = roastAdjustBaseline.map(p => [...p]);
     if(roastAdjustFanBaseline) editedFan = roastAdjustFanBaseline.map(p => [...p]);
     if(roastAdjustCooldownBaseline) cooldownPoint = [...roastAdjustCooldownBaseline];
@@ -4395,6 +4401,7 @@ function applyRoastAdjust(direction){
     // 元の点のうち、ΔP地点より手前のものだけを残し、ΔP地点の点と
     // 新しい終点を追加する(ΔP地点より後ろの元の点だけが、新しい終点に置き換わる)。
     const kept = base.filter(p => p[0] < extraTime);
+    clearPointSelection(false);   // カーブが差し替わるので選択は持ち越さない
     editedRoast = [...kept, [Math.round(extraTime), Math.round(extraTemp)], [Math.round(newEndTime), Math.round(newEndTemp)]];
 
     // 焙煎終了(=冷却開始)の時刻が動いた分だけ、風量カーブの終端と冷却完了予定も
@@ -4540,6 +4547,8 @@ function pushHistory(){
   updateHistoryButtons();
 }
 function applySnapshot(s){
+  // undo/redoでカーブが入れ替わると点のindexの意味が変わるため、選択は捨てる
+  clearPointSelection(false);
   editedRoast = s.roast.map(p => [...p]);
   editedFan = s.fan.map(p => [...p]);
   cooldownPoint = s.cooldown ? [...s.cooldown] : null;
@@ -4576,6 +4585,7 @@ function redo(){
 }
 function resetToOriginal(){
   pushHistory();
+  clearPointSelection(false);   // カーブが差し替わるので選択は持ち越さない
   editedRoast = originalRoast.map(p => [...p]);
   editedFan = originalFan.map(p => [...p]);
   cooldownPoint = originalCooldown ? [...originalCooldown] : null;
@@ -5280,8 +5290,13 @@ function renderChart(){
   const historyOverlayRorData = historyOverlayRecord
     ? computeRoR(historyOverlayRecord.roast.map(p => [p[0], p[1]])).map(p => ({x:p[0], y:p[1]})) : [];
 
-  const pointColors = editedRoast.map((_, i) => i === fcIndex ? '#7a9b76' : '#ce8b3e');
-  const pointRadii = editedRoast.map((_, i) => i === fcIndex ? 7 : 5);
+  // 選択中の点は大きく・白縁で目立たせる(1ハゼ指定の緑より優先して分かるように)。
+  const pointColors = editedRoast.map((_, i) =>
+    isSelected('roast', i) ? '#ffffff' : (i === fcIndex ? '#7a9b76' : '#ce8b3e'));
+  const pointRadii = editedRoast.map((_, i) =>
+    isSelected('roast', i) ? 8 : (i === fcIndex ? 7 : 5));
+  const fanPointColors = editedFan.map((_, i) => isSelected('fan', i) ? '#ffffff' : '#5b9bd5');
+  const fanPointRadii = editedFan.map((_, i) => isSelected('fan', i) ? 8 : 4);
 
   // X軸の右端は、常に「冷却完了予定時刻」まで見えるようにする(実測値がそれより
   // 長く伸びている場合は、そちらに合わせて広げる)
@@ -5329,8 +5344,8 @@ function renderChart(){
         // わけではなさそう(区間によって実際の変化ペースが一定でない)。ステップ
         // ではないことは確実だが、直線補間は完全に正確な近似ではなく、現状の
         // 「stepなしより誤差の少ない近似」という位置づけで採用している。
-        { label:'風量', data:fanData, borderColor:'#5b9bd5', pointBackgroundColor:'#5b9bd5',
-          pointRadius:4, borderWidth:1.6, borderDash:[2,2], tension:0, yAxisID:'yFan' },
+        { label:'風量', data:fanData, borderColor:'#5b9bd5', pointBackgroundColor:fanPointColors,
+          pointRadius:fanPointRadii, borderWidth:1.6, borderDash:[2,2], tension:0, yAxisID:'yFan' },
         { label:'実測 吸入温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
           borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
           // 容器エラー等が発生していた区間は、線の色を変えて一目で分かるようにする。
@@ -5469,8 +5484,18 @@ function handleChartClick(evt){
     return;
   }
 
-  // 既存の点の上でなければ、線上クリックとみなして新しい点を追加する
+  // Ctrl(⌘)+クリックで複数選択。Shiftは1ハゼ指定に使っているため別のキーにした。
+  if(evt.native.ctrlKey || evt.native.metaKey){
+    if(points.length === 0 || (points[0].datasetIndex !== 1 && points[0].datasetIndex !== 2)) return;
+    togglePointSelection(points[0].datasetIndex === 1 ? 'roast' : 'fan', points[0].index);
+    renderChart();
+    return;
+  }
+
+  // 既存の点の上でなければ、線上クリックとみなして新しい点を追加する。
+  // ただし選択中は、まず選択の解除を優先する(解除してからもう一度クリックで追加)。
   if(points.length > 0) return; // 既存点のクリック/ドラッグはonDragStart側で処理
+  if(pointSelection.indices.length){ clearPointSelection(); return; }
   tryAddPoint(evt.native);
 }
 
@@ -5496,6 +5521,7 @@ function curvePixelYAtPixelX(p0, p1, targetPixelX){
 }
 
 function tryAddPoint(nativeEvt){
+  clearPointSelection(false);   // 点が増えるとindexがずれるため
   const rect = chart.canvas.getBoundingClientRect();
   const clickX = nativeEvt.clientX - rect.left;
   const clickY = nativeEvt.clientY - rect.top;
@@ -5562,6 +5588,7 @@ function deletePoint(dataset, index){
   }
   pushHistory();
   resetOffsetState();
+  clearPointSelection(false);
   const removedTime = arr[index][0];
   arr.splice(index, 1);
   if(dataset === 'roast' && fcIndex !== null){
@@ -5584,60 +5611,141 @@ function findNearestPoint(evt){
 }
 
 function onDragStart(e){
+  // Ctrl(⌘)+クリックは選択の追加・解除だけ。ドラッグは始めない(click側で処理)。
+  if(e.ctrlKey || e.metaKey) return;
   const found = findNearestPoint(e);
-  if(!found) return;
+  if(!found){
+    // 何もない所を掴んだら選択を解除する(点の追加はclick側の判定に任せる)
+    clearPointSelection();
+    return;
+  }
+  // 選択外の点を掴んだら、その点だけのドラッグに切り替える
+  if(!isSelected(found.dataset, found.index)) clearPointSelection(false);
   draggingIndex = found.index;
   draggingDataset = found.dataset;
   dragStartedHistory = false;
+  // ドラッグ中の計算は「開始時点のカーブ」を基準にする。1イベントごとの差分を
+  // 積み上げると、頭打ちに当たったあとで戻したときにずれが残るため。
+  const arr = found.dataset === 'roast' ? editedRoast : editedFan;
+  const selected = isSelected(found.dataset, found.index)
+    ? pointSelection.indices.slice() : [found.index];
+  dragBase = {
+    arr: arr.map(p => [p[0], p[1]]),
+    selected,
+    cooldownT: cooldownPoint ? cooldownPoint[0] : null,
+  };
 }
 
 const MIN_POINT_GAP = 1; // 隣接する制御点との最低時間差(秒)
 
+// ------------------------------------------------------------
+// 複数ポイントの選択(Ctrl/⌘+クリックで追加・解除)
+// ------------------------------------------------------------
+// Shift+クリックは1ハゼ地点の指定に使っているため、複数選択はCtrl(Macは⌘)にする。
+// 温度と風量は縦軸の単位が違うので、選択はどちらか一方のカーブに限る。
+let pointSelection = {dataset: null, indices: []};
+
+function isSelected(dataset, index){
+  return pointSelection.dataset === dataset && pointSelection.indices.includes(index);
+}
+function clearPointSelection(rerender = true){
+  if(pointSelection.dataset === null && pointSelection.indices.length === 0) return;
+  pointSelection = {dataset: null, indices: []};
+  updateSelectionNote();
+  if(rerender && chart) renderChart();
+}
+function togglePointSelection(dataset, index){
+  // 別のカーブの点を選んだら、そちらに乗り換える(混在させない)
+  if(pointSelection.dataset !== dataset) pointSelection = {dataset, indices: []};
+  const at = pointSelection.indices.indexOf(index);
+  if(at >= 0) pointSelection.indices.splice(at, 1);
+  else pointSelection.indices.push(index);
+  pointSelection.indices.sort((a, b) => a - b);
+  if(pointSelection.indices.length === 0) pointSelection.dataset = null;
+  updateSelectionNote();
+}
+function updateSelectionNote(){
+  const el = document.getElementById('selectionNote');
+  if(!el) return;
+  const n = pointSelection.indices.length;
+  if(n < 1){ el.style.display = 'none'; el.textContent = ''; return; }
+  const label = pointSelection.dataset === 'roast' ? '温度' : '風量';
+  el.style.display = '';
+  el.textContent = `${label}カーブの${n}点を選択中 — ドラッグでまとめて移動 / `
+                 + `Ctrl(⌘)+クリックで追加・解除 / 何もない所をクリックで解除`;
+}
+
+// まとめて動かすときに、実際に適用できる移動量(dt秒・dv)を求める。
+//   base     : ドラッグ開始時点の配列のコピー [[t,v], ...]
+//   selected : 選択中のindex(昇順)
+//   wantDt/wantDv: 掴んだ点を動かしたい量
+// 選択されていない隣の点を追い越さないよう、グループ全体で頭打ちにする
+// (選択内どうしの間隔は一定に保たれるので、内側の点は制約にならない)。
+// 純粋な計算だけなので、tests/test_point_drag.js で単体検証している。
+function computeGroupDrag(base, selected, wantDt, wantDv, opts){
+  const {gap, tMax, vMin, vMax} = opts;
+  if(!selected.length) return {dt: 0, dv: 0};
+  const sel = new Set(selected);
+  let dtMin = -Infinity, dtMax = Infinity, dvMin = -Infinity, dvMax = Infinity;
+  for(const i of selected){
+    let L = i - 1; while(L >= 0 && sel.has(L)) L--;
+    dtMin = Math.max(dtMin, L >= 0 ? (base[L][0] + gap) - base[i][0] : -base[i][0]);
+    let R = i + 1; while(R < base.length && sel.has(R)) R++;
+    dtMax = Math.min(dtMax, R < base.length ? (base[R][0] - gap) - base[i][0] : tMax - base[i][0]);
+    dvMin = Math.max(dvMin, vMin - base[i][1]);
+    dvMax = Math.min(dvMax, vMax - base[i][1]);
+  }
+  // 元の並びが詰まりすぎている等で範囲が反転したら、動かさない
+  const dt = dtMin > dtMax ? 0 : Math.min(Math.max(Math.round(wantDt), dtMin), dtMax);
+  const dv = dvMin > dvMax ? 0 : Math.min(Math.max(Math.round(wantDv), dvMin), dvMax);
+  return {dt, dv};
+}
+
 function onDragMove(e){
-  if(draggingIndex === null) return;
+  if(draggingIndex === null || !dragBase) return;
   if(!dragStartedHistory){ pushHistory(); dragStartedHistory = true; resetOffsetState(); }
   const rect = chart.canvas.getBoundingClientRect();
   const xScale = chart.scales.x;
   const yScale = draggingDataset === 'roast' ? chart.scales.yTemp : chart.scales.yFan;
-  let x = xScale.getValueForPixel(e.clientX - rect.left);
-  const y = yScale.getValueForPixel(e.clientY - rect.top);
+  const wantX = xScale.getValueForPixel(e.clientX - rect.left);
+  const wantY = yScale.getValueForPixel(e.clientY - rect.top);
 
   const arr = draggingDataset === 'roast' ? editedRoast : editedFan;
+  const base = dragBase.arr;
+  const sel = dragBase.selected;
+  const anchor = draggingIndex;
+  if(!base[anchor]) return;
 
-  // 前後の制御点より、最低1秒以上の間隔を保つよう時間をクランプする
-  // (同じ時間や、順序が入れ替わるような移動を防ぐ)。焙煎時間はTHE ROAST EXPERT
-  // 仕様の上限(最大15分)も超えないようにする。
-  x = Math.min(MAX_ROAST_SECONDS, Math.max(0, Math.round(x)));
-  if(draggingIndex > 0){
-    x = Math.max(x, arr[draggingIndex - 1][0] + MIN_POINT_GAP);
+  // 掴んだ点の移動量を、選択中の全点に同じだけ適用する(選択外の隣の点を
+  // 追い越さない範囲まで頭打ちにする)。1点だけのドラッグも同じ経路を通る。
+  const {dt, dv} = computeGroupDrag(
+    base, sel, wantX - base[anchor][0], wantY - base[anchor][1],
+    { gap: MIN_POINT_GAP, tMax: MAX_ROAST_SECONDS,
+      vMin: draggingDataset === 'roast' ? 0 : MIN_FAN,
+      vMax: draggingDataset === 'roast' ? MAX_TEMPERATURE : 100 });
+  for(const i of sel){
+    arr[i][0] = base[i][0] + dt;
+    arr[i][1] = base[i][1] + dv;
   }
-  if(draggingIndex < arr.length - 1){
-    x = Math.min(x, arr[draggingIndex + 1][0] - MIN_POINT_GAP);
-  }
-
-  const prevX = arr[draggingIndex][0];
-  arr[draggingIndex][0] = x;
-  const maxY = draggingDataset === 'roast' ? MAX_TEMPERATURE : 100;
-  const minY = draggingDataset === 'roast' ? 0 : MIN_FAN;
-  arr[draggingIndex][1] = Math.min(maxY, Math.max(minY, Math.round(y)));
 
   // 温度カーブ・風量カーブの「最終ポイントの時間」は常に一致させる。
-  // どちらかの終端を動かしたら、もう片方の終端もそれに合わせて動かし、
+  // どちらかの終端が動いたら、もう片方の終端もそれに合わせて動かし、
   // 焙煎終了より後に片方だけ制御点が残ってしまうのを防ぐ。
-  if(draggingIndex === arr.length - 1){
+  const lastIdx = arr.length - 1;
+  if(sel.includes(lastIdx)){
+    const newLastT = arr[lastIdx][0];
     const otherArr = draggingDataset === 'roast' ? editedFan : editedRoast;
     const otherDsIndex = draggingDataset === 'roast' ? 2 : 1;
     if(otherArr.length > 0){
-      const otherLast = otherArr[otherArr.length - 1];
       const minAllowed = otherArr.length > 1 ? otherArr[otherArr.length - 2][0] + MIN_POINT_GAP : 0;
-      otherLast[0] = Math.max(minAllowed, x);
+      otherArr[otherArr.length - 1][0] = Math.max(minAllowed, newLastT);
       chart.data.datasets[otherDsIndex].data = otherArr.map(p => ({x:p[0], y:p[1]}));
     }
-    // 焙煎加熱の終了時刻(最終ポイントの時間)が動いた分だけ、冷却完了予定時刻
-    // (cooldownPoint)も連動して移動させる(冷却にかかる時間の長さ自体は変えない)。
-    const deltaX = x - prevX;
-    if(cooldownPoint && deltaX !== 0){
-      cooldownPoint[0] = Math.max(x + MIN_POINT_GAP, cooldownPoint[0] + deltaX);
+    // 焙煎加熱の終了時刻が動いた分だけ、冷却完了予定時刻も連動して移動させる
+    // (冷却にかかる時間の長さ自体は変えない)。開始時点の値からの差分で出すので、
+    // 頭打ちに当たって戻したときもずれない。
+    if(cooldownPoint && dragBase.cooldownT !== null){
+      cooldownPoint[0] = Math.max(newLastT + MIN_POINT_GAP, dragBase.cooldownT + dt);
     }
   }
 
@@ -5667,7 +5775,11 @@ function refreshEstimateDatasets(){
 }
 function onDragEnd(){
   const draggedDataset = draggingIndex !== null ? draggingDataset : null;
-  draggingIndex = null; draggingDataset = null;
+  const moved = dragStartedHistory;
+  draggingIndex = null; draggingDataset = null; dragBase = null;
+  // 実際に動かした場合だけ、選択の枠(点の色・大きさ)を描き直す。ドラッグ中は
+  // データセットを直接書き換えているだけなので、ここで一度きちんと描き直す。
+  if(moved && chart) renderChart();
   maybeScheduleGeneratorTasteRecalc(draggedDataset);
 }
 
@@ -5941,6 +6053,7 @@ function applyRemoteProfile(profile){
   if(!profile) return;
   document.getElementById('profileTitle').textContent = profileDisplayName(profile, null);
   originalRoast = profile.roast.map(p => [...p]);
+  clearPointSelection(false);   // カーブが差し替わるので選択は持ち越さない
   editedRoast = profile.roast.map(p => [...p]);
   editedFan = profile.fan.map(p => [...p]);
   cooldownPoint = profile.cooldown ? [...profile.cooldown] : null;
@@ -5954,6 +6067,7 @@ function applyRemoteProfile(profile){
 // ため反映しない(混乱を避ける)。
 function applyRemoteCurve(msg){
   if(document.getElementById('generatorFormPanel').style.display !== 'none') return;
+  clearPointSelection(false);   // カーブが差し替わるので選択は持ち越さない
   editedRoast = msg.roast.map(p => [...p]);
   editedFan = (msg.fan || []).map(p => [...p]);
   cooldownPoint = msg.cooldown ? [...msg.cooldown] : null;
