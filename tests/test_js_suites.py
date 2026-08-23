@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 TESTS = Path(__file__).resolve().parent
-SUITES = ["test_point_drag.js", "test_point_drag_sync.js"]
+SUITES = ["test_point_drag.js", "test_point_drag_sync.js", "test_point_hit.js"]
 
 
 def _runner():

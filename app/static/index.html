@@ -5474,27 +5474,29 @@ function renderChart(){
 }
 
 function handleChartClick(evt){
-  const points = chart.getElementsAtEventForMode(evt.native, 'nearest', {intersect:true}, true);
+  // ドラッグ・ダブルクリック削除と同じ判定を使う。ここだけ判定がずれると
+  // 「掴めるのに、クリックすると点が追加される」といった食い違いになる。
+  const hit = findNearestPoint(evt.native);
 
   if(evt.native.shiftKey){
-    if(points.length === 0 || points[0].datasetIndex !== 1) return;
+    if(!hit || hit.dataset !== 'roast') return;
     pushHistory();
-    fcIndex = (fcIndex === points[0].index) ? null : points[0].index;
+    fcIndex = (fcIndex === hit.index) ? null : hit.index;
     renderChart(); updateStaticMetrics();
     return;
   }
 
   // Ctrl(⌘)+クリックで複数選択。Shiftは1ハゼ指定に使っているため別のキーにした。
   if(evt.native.ctrlKey || evt.native.metaKey){
-    if(points.length === 0 || (points[0].datasetIndex !== 1 && points[0].datasetIndex !== 2)) return;
-    togglePointSelection(points[0].datasetIndex === 1 ? 'roast' : 'fan', points[0].index);
+    if(!hit) return;
+    togglePointSelection(hit.dataset, hit.index);
     renderChart();
     return;
   }
 
-  // 既存の点の上でなければ、線上クリックとみなして新しい点を追加する。
+  // 既存の点の近くでなければ、線上クリックとみなして新しい点を追加する。
   // ただし選択中は、まず選択の解除を優先する(解除してからもう一度クリックで追加)。
-  if(points.length > 0) return; // 既存点のクリック/ドラッグはonDragStart側で処理
+  if(hit) return; // 既存点のクリック/ドラッグはonDragStart側で処理
   if(pointSelection.indices.length){ clearPointSelection(); return; }
   tryAddPoint(evt.native);
 }
@@ -5601,13 +5603,35 @@ function deletePoint(dataset, index){
   maybeScheduleGeneratorTasteRecalc(dataset);
 }
 
+// 点の当たり判定。Chart.jsの intersect:true(点のちょうど上)は、点が密集していると
+// 狙った点を掴みにくいので、少し離れていても拾えるようにピクセル距離で判定する。
+// Chart.jsの'nearest'は全データセットを対象にしてしまい、実測トレース等(半径0で
+// 描いていない点)を拾ってしまうため、編集できる温度(1)・風量(2)だけを自分で見る。
+//
+// しきい値は、点(半径4〜8px)より少し大きく、かつ線上クリックでの点の追加を
+// 邪魔しない程度にする。ここを大きくしすぎると、線の途中を狙ったつもりが
+// 既存点の掴みになり「点が追加できない」になるので注意。
+const POINT_HIT_RADIUS_PX = 12;
+
 function findNearestPoint(evt){
-  const points = chart.getElementsAtEventForMode(evt, 'nearest', {intersect:true}, true);
-  if(points.length === 0) return null;
-  const p = points[0];
-  if(p.datasetIndex === 1) return {dataset:'roast', index:p.index};
-  if(p.datasetIndex === 2) return {dataset:'fan', index:p.index};
-  return null;
+  if(!chart || !chart.scales || !chart.chartArea) return null;
+  const rect = chart.canvas.getBoundingClientRect();
+  const px = evt.clientX - rect.left, py = evt.clientY - rect.top;
+  const xScale = chart.scales.x;
+  let best = null;
+  for(const c of [{dataset:'roast', arr:editedRoast, scale:chart.scales.yTemp},
+                  {dataset:'fan',   arr:editedFan,   scale:chart.scales.yFan}]){
+    if(!c.scale) continue;
+    for(let i = 0; i < c.arr.length; i++){
+      const dx = xScale.getPixelForValue(c.arr[i][0]) - px;
+      const dy = c.scale.getPixelForValue(c.arr[i][1]) - py;
+      const d = Math.hypot(dx, dy);
+      if(d <= POINT_HIT_RADIUS_PX && (!best || d < best.d)){
+        best = {dataset:c.dataset, index:i, d};
+      }
+    }
+  }
+  return best ? {dataset:best.dataset, index:best.index} : null;
 }
 
 function onDragStart(e){
