@@ -20,36 +20,35 @@
 #       対流入熱 q  = U(風量) × (空気温度 - T_b)      U = U0×(風量/70)^0.8
 #       表面水分 : T_b>100℃ で徐々に蒸発
 #       内部水分 : T_b が1ハゼ豆温度(196℃)に達したら時定数25秒で一気に抜ける
-#       乾物分解 : アレニウス型(CO2・揮発成分。焙煎指数の分)
-#       dT_b/dt = (q - 蒸発) / (乾物×比熱 + 水×比熱)
-#   当てはめる定数は2つだけ:
-#       U0     … 「ガイド1ハゼ温度を空気が横切った瞬間に豆温度が196℃」で決める
-#       k_pyro … 「中煎りの焙煎指数の中央値が1.1825(帯の中央)」で決める
+#       乾物分解 : アレニウス型(CO2・揮発成分)。生成ガスは高温のまま出ていくので
+#                  吸熱として温度の式に入れる
+#       dT_b/dt = (q - 蒸発 - 脱ガス吸熱) / (乾物×比熱 + 水×比熱)
+#   当てはめる定数は3つ。それぞれ独立した基準を1つずつ持たせてある:
+#       U0     … ガイド1ハゼ温度を空気が横切った瞬間の豆温度が196℃
+#       h_endo … 焙煎終了時の「空気温度 - 豆温度」が20℃(よくある焙煎動画の値)
+#       k_pyro … 中煎りの焙煎指数の中央値が1.1825(定義帯の中央)
 #
-#   発熱反応は豆温度の式に入れていない。入れると正のフィードバックで熱暴走し、
-#   モデル上の豆温度が空気温度を超えてしまう(熱風焙煎では起こり得ない)。
-#   空気温度は焙煎機が制御している量なので、発熱の分はヒーター出力が下がる形で
-#   すでに観測値に織り込まれている、という整理。
+#   ※ h_endo の基準が要る理由: 1ハゼでは内部水分が一気に気化して豆温度が196℃に
+#      張り付く(相変化の平坦域=まさにポップコーンの原理)。そのためU0を3割変えても
+#      1ハゼ時の豆温度はほとんど動かず、1ハゼだけではU0が決まらない。
+#   ※ 脱ガスを発熱として入れると、熱いほど分解が進み更に熱くなる正のフィードバックで
+#      熱暴走し、豆温度が空気温度を超えてしまう。吸熱は負のフィードバックなので安定する。
 #
-# ■ 検証結果(プリセット174件)
-#   ・1ハゼ時の豆温度: 全件共通のU0ひとつで 中央196.0℃・標準偏差4.3℃
-#     (水分が1ハゼまで残るモデルにしたことで、旧モデルの8.9℃から改善した)
-#   ・終了豆温度 中央232.8℃ < 終了空気温度 中央240.0℃(逆転は174件中2件のみ)
-#   ・焙煎指数: 中煎りだけで合わせた定数ひとつで、他3つの焙煎度も予測できた
-#       浅煎り 1.141(定義1.140〜1.170)○
-#       中煎り 1.183(1.170〜1.195)○ ←当てはめに使用
-#       中深煎り 1.194(1.195〜1.220)△ 0.001はみ出し
-#       深煎り 1.267(1.220以上)○
-#   ・積算入熱: 6.48 / 7.10 / 7.25 / 7.41 kcal(焙煎度の順に単調増加)
+# ■ 検証結果(プリセット174件、3つの基準を同時に満たす当てはめ)
+#   ・1ハゼ時の豆温度: 中央196.0℃・標準偏差3.8℃
+#   ・終了時の 空気-豆: 全体中央20.2℃。焙煎度別 浅24.0 / 中18.3 / 中深19.7 / 深20.5℃
+#     (豆温度が空気温度を超えた件数 0/174)
+#   ・焙煎指数: 中煎りだけ当てはめ、他3つは予測
+#       浅煎り 1.144(定義1.140〜1.170)○ / 中煎り 1.182(1.170〜1.195)○
+#       中深煎り 1.191(1.195〜1.220)× 0.004はみ出し / 深煎り 1.241(1.220以上)○
+#   ・積算入熱: 7.62 / 8.79 / 9.04 / 10.22 kcal(焙煎度の順に単調増加)
 #
 # ■ 表示を検討する上での要点
-#   ・総カロリーは終了温度でほぼ決まる。風量50%→80%で総量は+4%しか動かない。
+#   ・総カロリーは終了温度でほぼ決まる。風量50%→80%で総量は+9%しか動かない。
 #     これはモデルの粗さではなくエネルギー保存則(豆に入った熱=エンタルピー変化)。
-#   ・一方「入熱速度(W)」は風量に強く反応する。最大入熱 346W→503W。
-#     しかも終盤は逆転する(52.3W→23.7W。豆が空気温度に近づき押し込めなくなる)。
+#   ・一方「入熱速度(W)」は風量に強く反応し、終盤は逆転する。
 #   ・積算カーブの形は空気温度カーブとも豆温度カーブとも違う。
-#     τ=0.1で 空気8% / 豆42% / 積算30%。
-#   ・入熱速度は1ハゼ付近(τ≈0.7)で山を作る。内部水分が一気に蒸発する分。
+#   ・入熱速度は1ハゼ付近で山を作る。内部水分が一気に蒸発する分。
 #   ・投入直後(最初の1分)はモデルの信頼度が最も低い。集中定数モデルは豆の
 #     内部温度勾配を持たないため、豆温度の立ち上がりを速めに見積もる。
 #
@@ -77,7 +76,9 @@ FREE_FRAC = 0.25               # 1ハゼ前に抜ける水分の割合(残り75%
 K_FREE = 8.0e-5                # 表面水分の乾燥速度係数
 TAU_FC = 25.0                  # 1ハゼで内部水分が抜けきる時定数(秒)
 EA = 65_000.0                  # 乾物分解の活性化エネルギー J/mol
-K_PYRO = 2.759e3               # 同 前指数因子 /s(中煎りの焙煎指数で当てはめ)
+K_PYRO = 3.031e3               # 同 前指数因子 /s(中煎りの焙煎指数で当てはめ)
+H_ENDO = 2610.0                # 脱ガス1kgあたりの吸熱 kJ/kg(終了時の差20℃で当てはめ)
+U0_DEFAULT = 0.00368           # 熱伝達係数 kW/K(風量70%基準、1ハゼ豆温196℃で当てはめ)
 
 ROAST_INDEX_BANDS = {"浅煎り": (1.140, 1.170), "中煎り": (1.170, 1.195),
                      "中深煎り": (1.195, 1.220), "深煎り": (1.220, 1.400)}
@@ -89,8 +90,8 @@ def l_vap(t_c):
     return 2257.0 * max((tc - min(t_c, 370.0)) / (tc - 100.0), 0.05) ** 0.38
 
 
-def simulate(roast, fan, u0, k_pyro=K_PYRO, ea=EA, bean_g=BEAN_G,
-             moisture=MOISTURE, c_dry=C_DRY, dt=1.0):
+def simulate(roast, fan, u0=U0_DEFAULT, k_pyro=K_PYRO, ea=EA, bean_g=BEAN_G,
+             moisture=MOISTURE, c_dry=C_DRY, h_endo=H_ENDO, dt=1.0):
     """1本のプロファイルを積分する。
 
     戻り値: (時系列, 焙煎後の重量kg)
@@ -109,13 +110,15 @@ def simulate(roast, fan, u0, k_pyro=K_PYRO, ea=EA, bean_g=BEAN_G,
         r_free = min(K_FREE * w_free * max(t_b - 100.0, 0.0), w_free / dt) if w_free > 0 else 0.0
         r_bound = min(w_bound / TAU_FC, w_bound / dt) if (t_b >= T_FC_BEAN and w_bound > 0) else 0.0
         q_lat = (r_free + r_bound) * l_vap(t_b)
-        c_eff = max(m_dry * c_dry + (w_free + w_bound) * C_W, 1e-4)
-        t_b += (q - q_lat) / c_eff * dt
-        w_free -= r_free * dt
-        w_bound -= r_bound * dt
-        # 乾物の分解(豆温度に依存。発熱は温度の式に戻さない)
+        # 乾物の分解(CO2・揮発成分)。生成したガスは高温のまま豆から出ていくので
+        # 熱を持ち去る。吸熱として温度の式に入れる(発熱として入れると正の
+        # フィードバックで熱暴走するが、吸熱は負のフィードバックなので安定する)。
         r_pyro = min(k_pyro * m_dry * math.exp(-ea / (R_GAS * max(t_b + 273.15, 200.0))),
                      m_dry * 0.01 / dt)
+        c_eff = max(m_dry * c_dry + (w_free + w_bound) * C_W, 1e-4)
+        t_b += (q - q_lat - r_pyro * h_endo) / c_eff * dt
+        w_free -= r_free * dt
+        w_bound -= r_bound * dt
         m_dry -= r_pyro * dt
         e_in += max(q, 0.0) * dt
         e_lat += q_lat * dt
@@ -134,14 +137,30 @@ def at_time(res, t):
 
 
 def fit_u0(profiles, **kw):
-    """1ハゼ時の豆温度の中央値が196℃になるU0を求める(発熱と独立なので一度だけ)。"""
+    """1ハゼ時の豆温度の中央値が196℃になるU0を求める。"""
     fc_t = [rising_cross(x["roast"], GUIDE["firstCrack"]) for x in profiles]
-    lo, hi = 0.0002, 0.02
-    for _ in range(30):
+    lo, hi = 0.0005, 0.008
+    for _ in range(26):
         u0 = (lo + hi) / 2
-        v = [at_time(simulate(x["roast"], x["fan"], u0, k_pyro=0.0, **kw)[0], t)[1]
+        v = [at_time(simulate(x["roast"], x["fan"], u0, **kw)[0], t)[1]
              for x, t in zip(profiles, fc_t) if t is not None]
         lo, hi = (u0, hi) if st.median(v) < T_FC_BEAN else (lo, u0)
+    return (lo + hi) / 2
+
+
+def fit_h_endo(profiles, u0, target_gap=20.0, **kw):
+    """終了時の「空気温度 − 豆温度」の中央値がtarget_gapになる吸熱量を求める。
+
+    この基準が無いとU0が決まらない。1ハゼでは内部水分が一気に気化して
+    豆温度が196℃に張り付く(相変化の平坦域)ため、U0を3割変えても1ハゼ時の
+    豆温度はほとんど動かないから。終了時の差だけがU0と吸熱量を分離できる。
+    """
+    lo, hi = 0.0, 20000.0
+    for _ in range(26):
+        h = (lo + hi) / 2
+        g = st.median([x["roast"][-1][1] - simulate(x["roast"], x["fan"], u0, h_endo=h, **kw)[0][-1][1]
+                       for x in profiles])
+        lo, hi = (h, hi) if g < target_gap else (lo, h)
     return (lo + hi) / 2
 
 
@@ -161,28 +180,34 @@ def main():
     if not P:
         print("プリセット(nhm.sqlite)が無いため検証できません。")
         return
-    u0 = fit_u0(P)
-    k_pyro = fit_k_pyro(P, u0)
+    # 3つの基準を順に満たす(互いの結合が弱いので数回まわせば収まる)
+    u0, k_pyro, h_endo = U0_DEFAULT, K_PYRO, H_ENDO
+    for _ in range(4):
+        u0 = fit_u0(P, k_pyro=k_pyro, h_endo=h_endo)
+        h_endo = fit_h_endo(P, u0, k_pyro=k_pyro)
+        k_pyro = fit_k_pyro(P, u0, h_endo=h_endo)
     print(f"豆 {BEAN_G:.0f}g / 含水率 {MOISTURE * 100:.0f}% / 水分の{(1 - FREE_FRAC) * 100:.0f}%は1ハゼまで残る")
-    print(f"当てはめ U0 = {u0:.5f} kW/K,  k_pyro = {k_pyro:.3e} /s (Ea = {EA / 1000:.0f} kJ/mol)\n")
+    print(f"当てはめ U0 = {u0:.5f} kW/K,  h_endo = {h_endo:.0f} kJ/kg,  "
+          f"k_pyro = {k_pyro:.3e} /s (Ea = {EA / 1000:.0f} kJ/mol)\n")
 
     fc_t = [rising_cross(x["roast"], GUIDE["firstCrack"]) for x in P]
-    fb = [at_time(simulate(x["roast"], x["fan"], u0, k_pyro)[0], t)[1]
+    fb = [at_time(simulate(x["roast"], x["fan"], u0, k_pyro, h_endo=h_endo)[0], t)[1]
           for x, t in zip(P, fc_t) if t is not None]
     print("■ 検証1 1ハゼ時のモデル豆温度(全件共通のU0ひとつ)")
     print(f"   n={len(fb)} 中央 {st.median(fb):.1f}℃ 標準偏差 {st.pstdev(fb):.1f}℃")
 
     rows, ends, airs = {}, [], []
     for x in P:
-        r, m_end = simulate(x["roast"], x["fan"], u0, k_pyro)
+        r, m_end = simulate(x["roast"], x["fan"], u0, k_pyro, h_endo=h_endo)
         rows.setdefault(x["level"], []).append((r[-1][2], r[-1][7], r[-1][1], BEAN_G / 1000.0 / m_end))
         ends.append(r[-1][1])
         airs.append(x["roast"][-1][1])
     print(f"   終了豆温 中央 {st.median(ends):.1f}℃ / 終了空気温 中央 {st.median(airs):.1f}℃ "
+          f"→ 差 {st.median([b - a for a, b in zip(ends, airs)]):.1f}℃ "
           f"(逆転 {sum(1 for a, b in zip(ends, airs) if a > b)}/{len(P)}件)")
 
     print("\n■ 検証2 焙煎指数(中煎りだけ当てはめ、他3つは予測)")
-    print("   焙煎度   積算入熱             うち蒸発  終了豆温   指数(予測)  定義帯")
+    print("   焙煎度   積算入熱             うち蒸発  終了豆温 空気との差 指数(予測)  定義帯")
     for lv, (a, b) in ROAST_INDEX_BANDS.items():
         g = rows.get(lv) or []
         if not g:
@@ -190,8 +215,9 @@ def main():
         idx = st.median([q[3] for q in g])
         e = st.median([q[0] for q in g])
         mark = "○" if a <= idx < b else "△"
+        gap = st.median([air - q[2] for q, air in zip(g, [x["roast"][-1][1] for x in P if x["level"] == lv])])
         print(f"   {lv:5} {e:5.1f} kJ ({e / 4.184:4.2f} kcal) {st.median([q[1] for q in g]):5.1f} kJ "
-              f"{st.median([q[2] for q in g]):7.1f}℃  {idx:.3f}{mark}     {a:.3f}〜{b:.3f}")
+              f"{st.median([q[2] for q in g]):7.1f}℃  {gap:5.1f}℃  {idx:.3f}{mark}   {a:.3f}〜{b:.3f}")
     all_e = [q[0] for g in rows.values() for q in g]
     print(f"   全体 中央 {st.median(all_e):.1f} kJ = {st.median(all_e) / 4.184:.2f} kcal")
 
@@ -199,7 +225,7 @@ def main():
     base = [x for x in P if x["level"] == "中煎り"][0]
     for f in (50, 65, 80):
         flat = [[0, float(f)], [base["roast"][-1][0], float(f)]]
-        r, _ = simulate(base["roast"], flat, u0, k_pyro)
+        r, _ = simulate(base["roast"], flat, u0, k_pyro, h_endo=h_endo)
         peak = max(s[3] for s in r)
         print(f"   風量{f}%: 総 {r[-1][2]:5.1f} kJ  最大入熱 {peak:6.1f} W  "
               f"終盤(τ=0.9) {r[int(len(r) * 0.9)][3]:5.1f} W  終了豆温 {r[-1][1]:.1f}℃")
