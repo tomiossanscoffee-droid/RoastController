@@ -107,3 +107,31 @@ def test_グラフの色が直書きされていない(page):
     hard = set(re.findall(r"'#[0-9a-fA-F]{6}'|'rgba?\([0-9., ]+\)'", tail))
     hard.discard("'#888888'")   # cssVar() が変数を見つけられなかった時の保険
     assert not hard, f"{page.name} に直書きの色が残っている: {sorted(hard)}"
+
+
+def test_配色のコントラストが基準を満たす():
+    """3配色とも、文字4.5:1・線3.0:1を満たすこと(scripts/check_theme_contrast.py と同じ判定)。
+
+    焙煎中は機器のそばから読むので、埋もれる色があると実害がある。
+    2026-08、ダークの2ハゼのガイド線が2.04しかなく、ほぼ読めなかった。
+    """
+    import subprocess
+    import sys as _sys
+    script = Path(__file__).resolve().parent.parent / "scripts/check_theme_contrast.py"
+    out = subprocess.run([_sys.executable, str(script)], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, f"配色の基準を満たしていません\n{out.stdout}"
+
+
+def test_PC版とモバイル版で同じ変数は同じ色():
+    """片方だけ色を直すと、スマホとPCで見た目が食い違う。"""
+    def block(text, name):
+        pat = (r":root\s*\{(.*?)\n  \}" if name == ":root"
+               else rf'\[data-theme="{name}"\]\s*\{{(.*?)\n  \}}')
+        m = re.search(pat, text, re.S)
+        return {k: v.split("/*")[0].strip()
+                for k, v in re.findall(r"(--[a-z0-9-]+):\s*([^;]+);", m.group(1))}
+    pc, mo = INDEX.read_text(encoding="utf-8"), MOBILE.read_text(encoding="utf-8")
+    for name in (":root", "light", "contrast"):
+        a, b = block(pc, name), block(mo, name)
+        diff = sorted(k for k in set(a) & set(b) if a[k] != b[k])
+        assert not diff, f"{name} で食い違い: {diff}"
