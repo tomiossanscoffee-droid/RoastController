@@ -778,6 +778,16 @@
            A/B/C/Dフェーズの境界として、味を推測・ABCモードの計算に使われる。 -->
       <button class="btn small" id="btnGuideSettings" style="width:100%; margin:2px 0 8px;"
               title="焙煎機で見て決めた、カラーチェンジ・1ハゼ・2ハゼの温度。フェーズの区切りとして味を推測・ABCモードの計算に使われます">温度ガイド線設定</button>
+      <!-- 推定入熱・推定焙煎指数の前提。豆の投入量は50g固定なので設定は含水率だけ。
+           焙煎後の重量を量って実測の焙煎指数と突き合わせれば、含水率を較正できる。 -->
+      <div class="settings-num-row"
+           title="生豆の含水率です(5〜15%)。ニュークロップかオールドクロップかでも変わります。焙煎後の重量を量って、実測の焙煎指数に合うよう調整できます">
+        <label for="beanMoistureInput">生豆の含水率</label>
+        <span class="settings-num-field">
+          <input type="number" id="beanMoistureInput" min="5" max="15" step="0.5" value="10">
+          <span>%</span>
+        </span>
+      </div>
       <!-- 連続焙煎モードで、排出完了(容器交換まで終わった状態)から次のプロファイルを
            送るまでの待ち時間。豆の計量や容器の清掃にかかる時間に合わせて変えられる。 -->
       <div class="settings-num-row"
@@ -1450,6 +1460,9 @@ function estimateRoastEnergy(roastPoints, fanPoints){
   let mDry = m * (1 - E.MOISTURE);
   let wFree = m * E.MOISTURE * E.FREE_FRAC;
   let wBound = m * E.MOISTURE * (1 - E.FREE_FRAC);
+  // 熱伝達係数は豆の量に比例させる(U0は50gに対して当てはめた値。豆が増えれば
+  // 表面積も比例して増える)。これが無いと少量のとき豆が空気温度を追い越す。
+  const uScale = E.BEAN_G / 50.0;
   let tB = E.T_START, eIn = 0.0;
   const series = [];
   const steps = Math.floor(tEnd / E.DT) + 1;
@@ -1463,7 +1476,7 @@ function estimateRoastEnergy(roastPoints, fanPoints){
       const tAir = energyInterp(roastPoints, tk);
       const fan = (fanPoints && fanPoints.length) ? energyInterp(fanPoints, tk) : E.FAN_REF;
       const warm = Math.min(Math.max((tB - E.T_START) / (E.U_WARM_TEMP - E.T_START), 0.0), 1.0);
-      const u = E.U0 * Math.pow(Math.max(fan, 1.0) / E.FAN_REF, E.FAN_EXP) * (E.U_COLD + (1.0 - E.U_COLD) * warm);
+      const u = E.U0 * uScale * Math.pow(Math.max(fan, 1.0) / E.FAN_REF, E.FAN_EXP) * (E.U_COLD + (1.0 - E.U_COLD) * warm);
       const q = u * (tAir - tB);
       // 表面水分は100℃超で徐々に、内部水分は1ハゼ豆温度に達したら一気に抜ける
       const rFree = wFree > 0 ? Math.min(E.K_FREE * wFree * Math.max(tB - 100.0, 0.0), wFree / h) : 0.0;
@@ -1490,11 +1503,12 @@ function estimateRoastEnergy(roastPoints, fanPoints){
 }
 
 // 編集中のカーブに対する推定結果。カーブを触るたびに作り直すのは重いので、
-// 同じ入力なら前回の結果を使い回す。
+// 同じ入力なら前回の結果を使い回す。豆の量・含水率の設定も鍵に含める。
 let energyCache = {key: null, result: null};
 function currentEnergyEstimate(){
   if(!editedRoast || editedRoast.length < 2) return null;
-  const key = JSON.stringify(editedRoast) + '|' + JSON.stringify(editedFan || []);
+  const key = JSON.stringify(editedRoast) + '|' + JSON.stringify(editedFan || [])
+            + '|' + ENERGY.MOISTURE;
   if(energyCache.key === key) return energyCache.result;
   energyCache = {key, result: estimateRoastEnergy(editedRoast, editedFan)};
   return energyCache.result;
@@ -6301,9 +6315,51 @@ async function initAppSettings(){
       Number.isFinite(d) ? clampContinuousDelay(d) : CONTINUOUS_DELAY_DEFAULT;
     sourceTabPref.preset = data.showPresetTab !== false;
     sourceTabPref.ikawa = data.showIkawaTab !== false;
+    applyBeanSettings(data.beanMoisturePct);
+    // 設定の取得はプロファイル選択より後になることがある。既に開いていれば
+    // 新しい前提で推定し直す。
+    if(currentProfile){ updateProfileOverview(); renderChart(); }
   } catch(e){ /* 取得できなければHTMLの既定値(すべて表示)のまま */ }
   applySourceTabVisibility();
 }
+
+// 推定入熱・推定焙煎指数の前提(生豆の量・含水率)を反映する。
+// 豆の投入量は焙煎機の仕様どおり50g固定(ENERGY.BEAN_G)。設定するのは含水率だけ。
+const BEAN_MOISTURE_MIN = 5, BEAN_MOISTURE_MAX = 15, BEAN_MOISTURE_DEFAULT = 10;
+function applyBeanSettings(moisturePct){
+  const raw = Number(moisturePct);
+  const m = Number.isFinite(raw)
+    ? Math.min(Math.max(raw, BEAN_MOISTURE_MIN), BEAN_MOISTURE_MAX)
+    : BEAN_MOISTURE_DEFAULT;
+  ENERGY.MOISTURE = m / 100.0;
+  const mi = document.getElementById('beanMoistureInput');
+  if(mi) mi.value = m;
+  // 概要欄の説明も、実際に使っている前提に合わせる
+  const card = document.getElementById('ovEnergy');
+  const wrap = card ? card.closest('.metric-card') : null;
+  if(wrap){
+    wrap.title = `温度と風量から計算した、豆が受け取る熱量の推定値です`
+               + `(生豆${ENERGY.BEAN_G}g・含水率${m}%として計算)。実測ではありません`;
+  }
+  energyCache = {key: null, result: null};   // 前提が変わったので作り直す
+}
+// 入力途中で保存しないよう、changeで確定してから送る。空欄は既定値に戻す。
+document.getElementById('beanMoistureInput').addEventListener('change', async (e) => {
+  const raw = (e.target.value || '').trim();
+  const n = Number(raw);
+  const v = (raw === '' || !Number.isFinite(n)) ? BEAN_MOISTURE_DEFAULT
+          : Math.min(Math.max(n, BEAN_MOISTURE_MIN), BEAN_MOISTURE_MAX);
+  applyBeanSettings(v);
+  updateProfileOverview();
+  renderChart();
+  try {
+    await fetch(`${API}/api/app_settings`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({beanMoisturePct: v}),
+    });
+    log(`設定: 生豆の含水率を${v}%にしました(推定入熱・推定焙煎指数に反映されます)。`);
+  } catch(err){ /* 保存に失敗した場合は次回起動時に元の設定へ戻る */ }
+});
 
 // プリセット/IKAWAタブの表示を、元データの有無と設定の両方から決めて反映する。
 // server_infoの取得後と、設定の読み込み・変更後のどちらからも呼ばれる。

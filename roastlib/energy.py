@@ -6,7 +6,10 @@
 # 豆の温度を推定する。あくまで推定値で、実測ではない。
 #
 # ■ 前提
-#   豆50g / 生豆の含水率10% → 乾物45g・水5g
+#   豆50g(焙煎機の仕様どおり固定) / 生豆の含水率10%(既定値)→ 乾物45g・水5g
+#   含水率はアプリの設定(beanMoisturePct、5〜15%)で変えられる。ニュークロップと
+#   オールドクロップでも違うため、焙煎後の重量を量って実測の焙煎指数に合うよう
+#   調整できる(含水率5→15%で指数の予測は1.136→1.244と大きく動く)。
 #   焙煎指数 = 生豆重量 ÷ 焙煎後重量。焙煎度の目安は
 #       浅煎り 1.140〜1.170 / 中煎り 1.170〜1.195
 #       中深煎り 1.195〜1.220 / 深煎り 1.220以上
@@ -65,8 +68,8 @@ import math
 from typing import Optional, Sequence
 
 # ---- 豆の前提 ----
-BEAN_G = 50.0        # 生豆の量(g)
-MOISTURE = 0.10      # 生豆の含水率
+BEAN_G = 50.0        # 生豆の量(g)。焙煎機の仕様どおり固定で、設定項目にはしていない
+MOISTURE = 0.10      # 生豆の含水率の既定値(アプリの設定 beanMoisturePct で変わる)
 C_DRY = 1.70         # 乾物の比熱 kJ/(kg·K)
 C_W = 4.18           # 水の比熱 kJ/(kg·K)
 T_START = 20.0       # 投入時の豆温度(室温)
@@ -166,6 +169,11 @@ def estimate(roast_points: Sequence[Sequence[float]],
     m_dry = m * (1.0 - moisture)
     w_free = m * moisture * FREE_FRAC
     w_bound = m * moisture * (1.0 - FREE_FRAC)
+    # 熱伝達係数は豆の量に比例させる。U0は50gの豆に対して当てはめた値で、
+    # 豆が増えれば表面積も比例して増えるため。これをやらないと、少量にしたとき
+    # 熱容量だけが減って豆が空気温度に追いつきすぎる(10gで追い越しが出た)。
+    # 結果として豆温度のカーブは量によらずほぼ同じになり、積算入熱は量に比例する。
+    u_scale = bean_g / BEAN_G
     t_b = T_START
     e_in = 0.0
     series = []
@@ -183,7 +191,8 @@ def estimate(roast_points: Sequence[Sequence[float]],
             t_air = _interp(roast_points, tk)
             fan = _interp(fan_points, tk) if fan_points else FAN_REF
             warm = min(max((t_b - T_START) / (U_WARM_TEMP - T_START), 0.0), 1.0)
-            u = U0 * ((max(fan, 1.0) / FAN_REF) ** FAN_EXP) * (U_COLD + (1.0 - U_COLD) * warm)
+            u = (U0 * u_scale * ((max(fan, 1.0) / FAN_REF) ** FAN_EXP)
+                 * (U_COLD + (1.0 - U_COLD) * warm))
             q = u * (t_air - t_b)                              # kW
             # 表面水分: 100℃を超えたら徐々に
             r_free = min(K_FREE * w_free * max(t_b - 100.0, 0.0), w_free / h) if w_free > 0 else 0.0

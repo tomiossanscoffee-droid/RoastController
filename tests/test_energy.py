@@ -111,6 +111,30 @@ def test_豆の量に比例する():
     assert b["total_kcal"] < a["total_kcal"]
 
 
+def test_含水率の設定範囲いっぱいで壊れない():
+    """含水率5〜15%(設定の上下限)で値が破綻しないこと。
+
+    豆の量は焙煎機の仕様どおり50g固定で設定項目にはしていないが、引数としては
+    受けるので(感度検証のスクリプトが使う)、極端な量でも壊れないことも見る。
+    """
+    for g in (10.0, 50.0, 100.0):
+        for m in (0.05, 0.10, 0.15):
+            r = estimate(ROAST, FAN, bean_g=g, moisture=m)
+            assert r is not None
+            assert r["total_kcal"] > 0
+            assert 1.0 < r["roast_index"] < 2.0, f"{g}g/{m}: 指数{r['roast_index']}"
+            assert 0 < r["roasted_g"] < g
+            for pt in r["series"]:
+                assert pt["bean"] <= pt["air"] + 1e-6, f"{g}g/{m}: 豆が空気を超えた"
+
+
+def test_含水率が高いほど入熱が増える():
+    """水を余分に蒸発させる分だけ熱が要る。"""
+    dry = estimate(ROAST, FAN, moisture=0.08)
+    wet = estimate(ROAST, FAN, moisture=0.12)
+    assert wet["total_kcal"] > dry["total_kcal"]
+
+
 def test_風量カーブが無くても計算できる():
     r = estimate(ROAST, None)
     assert r is not None and r["total_kcal"] > 0

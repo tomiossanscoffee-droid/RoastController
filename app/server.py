@@ -464,6 +464,12 @@ async def set_guide_temps(request: Request):
 # 使わない人にとっては場所を取るだけなので、隠せるようにした。なお元データが無い場合
 # (nhm.sqlite / ikawa_profiles.jsonが無い)は、この設定に関わらず画面側で非表示にする。
 # server_info の has_presets / has_ikawa を見て決めるので、ここでは関与しない。
+# beanMoisturePct: 推定入熱・推定焙煎指数(roastlib/energy.py)の前提となる生豆の
+# 含水率。総入熱が±8.6%(含水率±2%)動くうえ、焙煎指数の予測にも効く。
+# ニュークロップとオールドクロップでも変わるため、実際に焙煎して焙煎後の重量を
+# 量れば、実測の焙煎指数と突き合わせて較正できる。
+# 豆の投入量は焙煎機の仕様どおり50g固定なので、設定にはしていない
+# (roastlib/energy.py の BEAN_G)。
 DEFAULT_APP_SETTINGS = {
     "notifyEnabled": True,
     "showLogEnabled": True,
@@ -471,7 +477,9 @@ DEFAULT_APP_SETTINGS = {
     "continuousRoastDelay": CONTINUOUS_ROAST_RESTART_DELAY,
     "showPresetTab": True,
     "showIkawaTab": True,
+    "beanMoisturePct": 10.0,
 }
+BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX = 5.0, 15.0
 
 
 def _load_app_settings() -> dict:
@@ -507,8 +515,23 @@ async def set_app_settings(request: Request):
         data["showPresetTab"] = bool(body["showPresetTab"])
     if "showIkawaTab" in body:
         data["showIkawaTab"] = bool(body["showIkawaTab"])
+    if "beanMoisturePct" in body:
+        data["beanMoisturePct"] = _clamp_setting(
+            body["beanMoisturePct"], BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX,
+            DEFAULT_APP_SETTINGS["beanMoisturePct"])
     APP_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return JSONResponse({"ok": True})
+
+
+def _clamp_setting(value, lo: float, hi: float, default: float) -> float:
+    """数値の設定を安全な範囲に収める。数値以外・NaNは既定値に倒す。"""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if v != v:  # NaN
+        return default
+    return min(max(v, lo), hi)
 
 
 def _clamp_continuous_delay(value) -> float:
