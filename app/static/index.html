@@ -937,6 +937,7 @@
       <div class="settings-title" style="margin-top:12px;">温度ガイド線</div>
       <div class="settings-note" style="margin-bottom:6px;">
         焙煎機で見て決めた温度。味を推測・ABCモードのフェーズの区切りに使われます。
+        空欄にすると未設定に戻ります。
       </div>
       <div class="settings-num-row">
         <label for="guideColorChange">カラーチェンジ</label>
@@ -955,9 +956,6 @@
         <span class="settings-num-field">
           <input type="number" id="guideSecondCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
         </span>
-      </div>
-      <div class="settings-num-row" style="justify-content:flex-end;">
-        <button class="btn small" id="btnGuideClear" style="width:auto;">すべてクリア</button>
       </div>
       <!-- 推定入熱・推定焙煎指数の前提。豆の投入量は50g固定なので設定は含水率だけ。
            焙煎後の重量を量って実測の焙煎指数と突き合わせれば、含水率を較正できる。 -->
@@ -5083,12 +5081,6 @@ for(const id of ['guideColorChange','guideFirstCrack','guideSecondCrack']){
 document.getElementById('btnOffsetToggle').onclick = () => {
   const panel = document.getElementById('offsetPanel');
   panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-};
-document.getElementById('btnGuideClear').onclick = () => {
-  guideTemps = { colorChange: null, firstCrack: null, secondCrack: null };
-  saveGuideTemps();
-  applyGuideTempsToInputs();
-  if(chart) chart.update('none');
 };
 loadGuideTemps();
 
