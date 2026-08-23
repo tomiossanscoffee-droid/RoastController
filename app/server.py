@@ -2531,10 +2531,16 @@ def _lan_ip() -> str:
         s.close()
 
 
-def _tailscale_host() -> str:
-    """Tailscale接続中なら、このマシンのMagicDNSホスト名(例: imac.tailXXXX.ts.net)を返す。
-    別ネットワークからでもアクセスできるため、モバイル版アドレスとしてLAN IPより優先する。
-    Tailscale未使用/CLI無しなら空文字。"""
+def _tailscale_status() -> dict:
+    """Tailscaleの状態を返す: {"host":.., "state":.., "connected":..}。
+
+    2026-08: 以前はMagicDNS名(Self.DNSName)が取れたら「使える」と扱っていたが、
+    DNSNameはログイン済みでさえあれば切断中(BackendState=Stopped)でも返ってくる。
+    そのため、Tailscaleがオフのままモバイル版のアドレスとして`.ts.net`名を案内して
+    しまい、スマホから繋がらなかった(手でオフ→オンすると繋がる、という症状)。
+    実際に通信できるのは BackendState=Running かつ Tailscale IP が割り当て済みの
+    ときだけなので、そこまで確認する。
+    """
     import subprocess
     candidates = ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
                   "/usr/local/bin/tailscale"]
@@ -2544,11 +2550,21 @@ def _tailscale_host() -> str:
                                  text=True, timeout=2)
             if out.returncode != 0 or not out.stdout:
                 continue
-            dns = (json.loads(out.stdout).get("Self", {}) or {}).get("DNSName", "")
-            return dns.rstrip(".")  # 末尾のドットを除く
+            data = json.loads(out.stdout)
+            self_ = data.get("Self", {}) or {}
+            state = str(data.get("BackendState") or "")
+            connected = state == "Running" and bool(self_.get("TailscaleIPs"))
+            return {"host": str(self_.get("DNSName", "")).rstrip("."),
+                    "state": state, "connected": connected}
         except Exception:  # noqa: BLE001
             continue
-    return ""
+    return {"host": "", "state": "", "connected": False}
+
+
+def _tailscale_host() -> str:
+    """実際に繋がる状態のときだけ、MagicDNSホスト名を返す(切断中は空文字)。"""
+    st = _tailscale_status()
+    return st["host"] if st["connected"] else ""
 
 
 def _load_mobile_host_override() -> str:
@@ -2590,7 +2606,9 @@ def server_info(request: Request):
     プレーンHTTP運用中はLAN IPのみ(Tailscaleホスト名はHTTPSへ強制アップグレードされ
     証明書が無く失敗する)を自動選択する。手動指定があればそれを優先する。"""
     lan = _lan_ip()
-    ts = _tailscale_host()
+    ts_status = _tailscale_status()
+    # 切断中はアドレスとして案内しない(繋がらないアドレスを出さないため)
+    ts = ts_status["host"] if ts_status["connected"] else ""
     override = _load_mobile_host_override()
     scheme = request.url.scheme if request.url.scheme in ("http", "https") else "http"
     auto_host = ts if scheme == "https" else lan
@@ -2601,6 +2619,10 @@ def server_info(request: Request):
         "host": host, "port": port, "scheme": scheme, "mobile_url": mobile_url,
         "qr_svg": _qr_svg(mobile_url),
         "lan_ip": lan, "tailscale_host": ts, "override": override,
+        # 切断中でも名前だけは分かるので、画面で「オフになっています」と案内できるよう返す
+        "tailscale_state": ts_status["state"],
+        "tailscale_connected": ts_status["connected"],
+        "tailscale_host_offline": "" if ts_status["connected"] else ts_status["host"],
         "has_presets": Path(DB_PATH).exists(),
         "has_ikawa": bool(get_ikawa_profiles()),
     })

@@ -51,17 +51,26 @@ if ! command -v tailscale >/dev/null 2>&1; then
     fi
 fi
 
-# ---- Tailscaleのログイン状態を確認。未ログインならログイン手続きを開始する ----
-HOSTNAME=$(tailscale status --json | python3 -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))" 2>/dev/null)
-if [ -z "$HOSTNAME" ]; then
-    echo "Tailscaleにログインしていないため、ログイン手続きを開始します..."
-    echo "(ブラウザが開きます。ログインを完了してからこの画面に戻ってきてください)"
-    tailscale up
-    HOSTNAME=$(tailscale status --json | python3 -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))" 2>/dev/null)
+# ---- Tailscaleが「本当に繋がっている」ことを確認する ----
+# 名前が取れるだけでは不十分。切断中(Stopped)でもログイン済みなら名前は返るため、
+# ここを名前だけで判断していると、Tailscaleが切れたままサーバーが起動してしまい
+# スマホから繋がらない(手でオフ→オンすると繋がる)。詳細はスクリプト内のコメント参照。
+source "scripts/wait_for_tailscale.sh"
+
+if ! ensure_tailscale_up; then
+    echo ""
+    echo "エラー: Tailscaleが接続状態になりませんでした。"
+    echo "  ・Tailscaleアプリでログイン・接続(オン)になっているか"
+    echo "  ・「tailscale status」で BackendState が Running か"
+    echo "を確認してから、もう一度起動してください。"
+    read -p "何かキーを押すと閉じます..."
+    exit 1
 fi
+
+HOSTNAME=$(tailscale_dns_name)
 if [ -z "$HOSTNAME" ]; then
     echo "エラー: TailscaleのMagicDNS名を取得できませんでした。"
-    echo "「tailscale up」でログイン済みか、確認してください(tailscale status で確認できます)。"
+    echo "管理コンソールでMagicDNSが有効か確認してください: https://login.tailscale.com/admin/dns"
     read -p "何かキーを押すと閉じます..."
     exit 1
 fi

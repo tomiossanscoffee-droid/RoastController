@@ -5145,6 +5145,17 @@ function updateMobileQrSchemeNote(){
   const sel = document.getElementById('mobileHostSelect').value;
   const note = document.getElementById('mobileQrSchemeNote');
   const auto = autoMobileHost(info);
+  // Tailscaleが切断されていると、名前は分かるのに繋がらない。候補にも出さないので、
+  // なぜ出ていないのかをここで説明する(オフのまま起動していた事象への対策)。
+  if(info.tailscale_host_offline){
+    note.textContent = `Tailscaleが接続されていません(状態: ${info.tailscale_state || '不明'})。`
+      + `「${info.tailscale_host_offline}」は接続をオンにすれば使えます。`
+      + (info.scheme === 'https'
+          ? 'HTTPSで動作中のためLAN IPでは接続できません。Tailscaleをオンにしてから、'
+            + 'このMacのアプリを起動し直してください。'
+          : 'いまはLAN IPをお使いください。');
+    return;
+  }
   if(sel !== '__custom__' && sel !== auto){
     if(info.scheme === 'https'){
       note.textContent = 'このMacは現在HTTPS(start_app_https.command)で動作中です。'
