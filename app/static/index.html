@@ -164,19 +164,27 @@
   *{box-sizing:border-box;}
   body{
     margin:0; background:var(--bg); color:var(--text);
-    font-family:'Inter',sans-serif; height:100vh; overflow:hidden;
+    font-family:'Inter',sans-serif; overflow:hidden;
+    /* スマホのブラウザは、ツールバーの分だけ 100vh が実際の表示領域より大きい。
+       そのまま使うとサイドバーの下端が画面外に出て、一番下までスクロールできない。
+       dvh(いま見えている高さ)を優先し、未対応のブラウザには100vhで従来どおり。 */
+    height:100vh;
+    height:100dvh;
   }
   h1,h2,h3{
     font-family:'Oswald',sans-serif; text-transform:uppercase; letter-spacing:0.04em;
   }
   .mono{ font-family:'IBM Plex Mono',monospace; }
 
-  .layout{ display:flex; height:100vh; }
+  .layout{ display:flex; height:100vh; height:100dvh; }
 
   /* --- サイドバー --- */
   .sidebar{
     width:290px; background:var(--panel); border-right:1px solid var(--border);
     display:flex; flex-direction:column; padding:16px; overflow-y:auto;
+    /* 最後の項目が画面の縁に貼り付かないよう、下に少し余白を持たせる */
+    padding-bottom:32px;
+    -webkit-overflow-scrolling:touch;
   }
   .sidebar h1{ font-size:15px; margin:0 0 4px; color:var(--amber); }
   .sidebar .subtitle{ font-size:11px; color:var(--text-muted); margin-bottom:14px; }
@@ -393,7 +401,13 @@
      残り高さだけを使うようにする(autoだとChart.jsが前回描いた高さが基準に
      なってしまい、列からはみ出す)。 */
   #chartWrap{ position:relative; flex:1 1 0; min-height:240px; margin-bottom:0; }
-  #roastChart{ max-height:none; }
+  #roastChart{
+    max-height:none;
+    /* グラフ上の指の動きは制御点のドラッグに使うため、ブラウザのスクロール・拡大に
+       取られないようにする(スマホからPC版を開いたときの操作用)。ページのスクロールは
+       グラフの上下の余白で行える。 */
+    touch-action:none;
+  }
 
   /* プロファイル・ヘルスチェック(逸脱警告) */
   .profile-health{
@@ -738,17 +752,7 @@
   }
   #offsetInput:disabled{ opacity:0.4; }
 
-  .guide-panel{
-    display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap;
-    background:var(--panel); border:1px solid var(--border); border-radius:6px;
-    padding:10px 14px; margin-bottom:10px;
-  }
-  .guide-field{ display:flex; flex-direction:column; gap:4px; font-size:11.5px; color:var(--text-muted); }
-  .guide-field input{
-    background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--text);
-    padding:6px 8px; font-size:13px; width:90px; font-family:'IBM Plex Mono',monospace;
-  }
-
+      
   .log-box{
     background:var(--panel); border:1px solid var(--border); border-radius:6px;
     padding:10px 14px; font-size:11px; color:var(--text-muted); height:100px;
@@ -926,9 +930,35 @@
       </label>
       <div class="settings-note" id="sourceTabNote" style="display:none;"></div>
       <!-- 焙煎機を見ながら決めた、カラーチェンジ・1ハゼ・2ハゼの空気温度。
-           A/B/C/Dフェーズの境界として、味を推測・ABCモードの計算に使われる。 -->
-      <button class="btn small" id="btnGuideSettings" style="width:100%; margin:2px 0 8px;"
-              title="焙煎機で見て決めた、カラーチェンジ・1ハゼ・2ハゼの温度。フェーズの区切りとして味を推測・ABCモードの計算に使われます">温度ガイド線設定</button>
+           A/B/C/Dフェーズの境界として、味を推測・ABCモードの計算に使われる。
+           2026-08: 以前はボタンでグラフ横のパネルを開閉していたが、押しても枠が
+           出ないことがあった(パネルがメインエリア側にあり、ビューによっては
+           畳まれるため)。設定の中に入力欄そのものを置く形にした。 -->
+      <div class="settings-title" style="margin-top:12px;">温度ガイド線</div>
+      <div class="settings-note" style="margin-bottom:6px;">
+        焙煎機で見て決めた温度。味を推測・ABCモードのフェーズの区切りに使われます。
+      </div>
+      <div class="settings-num-row">
+        <label for="guideColorChange">カラーチェンジ</label>
+        <span class="settings-num-field">
+          <input type="number" id="guideColorChange" placeholder="未設定" min="50" max="255"><span>℃</span>
+        </span>
+      </div>
+      <div class="settings-num-row">
+        <label for="guideFirstCrack">1ハゼ</label>
+        <span class="settings-num-field">
+          <input type="number" id="guideFirstCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
+        </span>
+      </div>
+      <div class="settings-num-row">
+        <label for="guideSecondCrack">2ハゼ</label>
+        <span class="settings-num-field">
+          <input type="number" id="guideSecondCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
+        </span>
+      </div>
+      <div class="settings-num-row" style="justify-content:flex-end;">
+        <button class="btn small" id="btnGuideClear" style="width:auto;">すべてクリア</button>
+      </div>
       <!-- 推定入熱・推定焙煎指数の前提。豆の投入量は50g固定なので設定は含水率だけ。
            焙煎後の重量を量って実測の焙煎指数と突き合わせれば、含水率を較正できる。 -->
       <div class="settings-num-row"
@@ -1003,9 +1033,9 @@
          豆の情報・焙煎履歴のビューでは switchGraphView() でまとめて隠す。 -->
     <div class="main-toolbar" id="mainToolbar">
       <div class="toolbar-group">
-        <!-- 「温度ガイド線設定」はサイドバーの設定へ移した(2026-08)。焙煎機を見ながら
+        <!-- 「温度ガイド線」はサイドバーの設定へ移した(2026-08)。焙煎機を見ながら
              一度決めたら滅多に変えない値であり、カーブ編集の操作とは性質が違うため。
-             パネル(#guidePanel)はグラフのそばに残してあり、設定から開く。 -->
+             ボタンで開閉するのではなく、設定の中に入力欄を直接置いている。 -->
         <button class="btn small" id="btnOffsetToggle">温度オフセット</button>
         <button class="btn small" id="btnAdjustLighter" style="display:none;" title="THE ROAST純正アプリの「浅めに調整」と同じ調整量でカーブを変更します">浅めに調整</button>
         <button class="btn small" id="btnAdjustDeeper" style="display:none;" title="THE ROAST純正アプリの「深めに調整」と同じ調整量でカーブを変更します">深めに調整</button>
@@ -1024,7 +1054,8 @@
     <div class="hint edit-hint-row" id="editHint" style="display:none;">
       <span class="nb">ドラッグで点を移動</span> ・ <span class="nb">線上をクリックで点を追加</span> ・
       <span class="nb">ダブルクリックで点を削除</span> ・ <span class="nb">Shift+クリックでFirst Crack指定</span> ・
-      <span class="nb">Ctrl(⌘)+クリックで複数選択</span> <span class="nb">(まとめてドラッグで移動)</span>
+      <span class="nb">Ctrl(⌘)+クリックで複数選択</span> <span class="nb">(スマホは長押し)</span>
+      <span class="nb">・まとめてドラッグで移動</span>
       <span class="nb">(THE ROAST EXPERT仕様:</span> <span class="nb">温度は1℃単位で最大255℃・最大20ポイント、</span>
       <span class="nb">風量は1%単位で50〜100%・最大10ポイント、</span> <span class="nb">焙煎時間は1秒単位で最大15分。</span>
       <span class="nb">隣接する点とは1秒以上の間隔が必要)</span>
@@ -1038,22 +1069,6 @@
       <button class="offset-btn" id="offsetPlus" disabled title="1℃上げる">＋</button>
       <span>℃</span>
       <span class="offset-hint" id="offsetRangeHint"></span>
-    </div>
-
-    <div class="guide-panel" id="guidePanel" style="display:none;">
-      <label class="guide-field">
-        <span>カラーチェンジ(℃)</span>
-        <input type="number" id="guideColorChange" placeholder="未設定">
-      </label>
-      <label class="guide-field">
-        <span>1ハゼ(℃)</span>
-        <input type="number" id="guideFirstCrack" placeholder="未設定">
-      </label>
-      <label class="guide-field">
-        <span>2ハゼ(℃)</span>
-        <input type="number" id="guideSecondCrack" placeholder="未設定">
-      </label>
-      <button class="btn small" id="btnGuideClear" style="width:auto;">すべてクリア</button>
     </div>
 
     <!-- 焙煎前(プロファイル選択時)に、予熱温度・焙煎時間・最終温度・Development Time
@@ -1416,6 +1431,9 @@ function scheduleBeanTasteRadarResize(){
 }
 let draggingIndex = null, draggingDataset = null;
 let dragBase = null;   // ドラッグ開始時点のカーブのコピー(onDragStart参照)
+// 選択外の点を掴んだとき、選択の解除を「動かし始めた時 / 長押しにならずに離した時」
+// まで保留するための目印(タッチの長押しで選択に追加できるようにするため)。
+let pendingClearSelection = false;
 let dragStartedHistory = false;
 let undoStack = [], redoStack = [];
 let pointIdCounter = 0;
@@ -3446,7 +3464,6 @@ function switchGraphView(view){
   document.getElementById('mainToolbar').style.display = editableView ? '' : 'none';
   if(!editableView){
     document.getElementById('offsetPanel').style.display = 'none';
-    document.getElementById('guidePanel').style.display = 'none';
   }
   // 「味を推測」以外のビューでは、調整パネル(generatorFormPanel)・期待される味
   // (レーダーチャート等のヒント類)を必ず隠す。個々の呼び出し元の手順に頼らず
@@ -4234,8 +4251,7 @@ document.getElementById('abcDMinus').onclick = () => abcStep('d_sec', -1);
 document.getElementById('abcDPlus').onclick = () => abcStep('d_sec', 1);
 document.getElementById('btnAbcBaseValues').onclick = resetAbcFormToBase;
 document.getElementById('btnAbcOpenGuide').onclick = () => {
-  document.getElementById('guidePanel').style.display = 'flex';
-};
+  };
 document.getElementById('btnAbcRecheck').onclick = () => initAbcMode();
 // <select>はWKWebViewで"input"が発火しないことがあるため"change"も登録する
 // (味スライダー側と同じ対策)。焙煎度は終了温度の表示も更新する。
@@ -4827,7 +4843,7 @@ document.addEventListener('keydown', (e) => {
   // 入力中(検索窓・プルダウン等)や、モーダル/ガイド設定を開いている時は割り込まない。
   const ae = document.activeElement;
   if(ae && (['INPUT','TEXTAREA','SELECT'].includes(ae.tagName) || ae.isContentEditable)) return;
-  const modalOpen = [...document.querySelectorAll('.modal-overlay, .guide-panel')]
+  const modalOpen = [...document.querySelectorAll('.modal-overlay')]
     .some(m => getComputedStyle(m).display !== 'none');
   if(modalOpen) return;
 
@@ -5064,16 +5080,6 @@ function onGuideInputChange(){
 for(const id of ['guideColorChange','guideFirstCrack','guideSecondCrack']){
   document.getElementById(id).addEventListener('change', onGuideInputChange);
 }
-document.getElementById('btnGuideSettings').onclick = () => {
-  // ボタンはサイドバーの設定にあるが、パネルはグラフのそばに出る。豆の情報・
-  // 焙煎履歴のビューではパネルが畳まれる仕様なので、まず焙煎グラフに戻す。
-  if(currentGraphView !== 'graph' && currentGraphView !== 'taste'){
-    if(currentTab === 'records') switchTab('custom');
-    leaveGeneratorTo('graph');
-  }
-  const panel = document.getElementById('guidePanel');
-  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-};
 document.getElementById('btnOffsetToggle').onclick = () => {
   const panel = document.getElementById('offsetPanel');
   panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
@@ -5674,14 +5680,67 @@ function renderChart(){
   });
 
   const canvas = document.getElementById('roastChart');
-  canvas.onmousedown = (e) => onDragStart(e);
-  canvas.onmousemove = (e) => onDragMove(e);
-  canvas.onmouseup = () => onDragEnd();
-  canvas.onmouseleave = () => onDragEnd();
+  // マウスとタッチを1本の経路で扱う(スマホからPC版を開いたとき、mouse系イベントは
+  // ドラッグ中に発火しないため制御点を動かせなかった)。Pointer Eventsなら
+  // マウス・タッチ・ペンが同じイベントで届く。
+  canvas.onpointerdown = (e) => {
+    const hit = findNearestPoint(e);
+    if(hit){
+      // 制御点を掴んだ時だけ、指の動きをブラウザのスクロールに取られないようにする。
+      // ポインタを取り込んでおくと、指がキャンバスの外へ出ても追従できる。
+      try { canvas.setPointerCapture(e.pointerId); } catch(err){ /* 未対応でも続行 */ }
+      e.preventDefault();
+      startLongPressSelect(e, hit);
+    }
+    onDragStart(e);
+  };
+  canvas.onpointermove = (e) => {
+    if(draggingIndex !== null) e.preventDefault();
+    cancelLongPressSelect(e);
+    onDragMove(e);
+  };
+  const endPointer = (e) => {
+    cancelLongPressSelect();
+    try { canvas.releasePointerCapture(e.pointerId); } catch(err){ /* 取り込んでいなければ何もしない */ }
+    onDragEnd();
+  };
+  canvas.onpointerup = endPointer;
+  canvas.onpointercancel = endPointer;
+  canvas.onpointerleave = (e) => { if(e.pointerType === 'mouse') onDragEnd(); };
   canvas.ondblclick = (e) => {
     const found = findNearestPoint(e);
     if(found) deletePoint(found.dataset, found.index);
   };
+}
+
+// ------------------------------------------------------------
+// タッチでの複数選択(長押し)
+// ------------------------------------------------------------
+// Ctrl(⌘)+クリックはタッチ端末で押せないため、指では「長押し」で選択に追加・解除する。
+// 長押しの判定中に指が動いたら、それはドラッグなので選択の切り替えは取り消す。
+const LONG_PRESS_MS = 500, LONG_PRESS_SLOP_PX = 10;
+let longPressTimer = null, longPressStart = null;
+function startLongPressSelect(e, hit){
+  if(e.pointerType === 'mouse') return;   // マウスはCtrl+クリックがあるので不要
+  longPressStart = {x: e.clientX, y: e.clientY};
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    // 長押しが成立したらドラッグは打ち切り、選択の切り替えだけを行う。
+    // 保留していた「選択の解除」も取り消す(既存の選択に追加できるようにするため)。
+    draggingIndex = null; draggingDataset = null; dragBase = null;
+    pendingClearSelection = false;
+    togglePointSelection(hit.dataset, hit.index);
+    renderChart();
+  }, LONG_PRESS_MS);
+}
+function cancelLongPressSelect(e){
+  if(longPressTimer === null) return;
+  if(e && longPressStart){
+    const moved = Math.hypot(e.clientX - longPressStart.x, e.clientY - longPressStart.y);
+    if(moved < LONG_PRESS_SLOP_PX) return;   // 指の微動は無視して長押しを続ける
+  }
+  clearTimeout(longPressTimer);
+  longPressTimer = null; longPressStart = null;
 }
 
 function handleChartClick(evt){
@@ -5854,8 +5913,10 @@ function onDragStart(e){
     clearPointSelection();
     return;
   }
-  // 選択外の点を掴んだら、その点だけのドラッグに切り替える
-  if(!isSelected(found.dataset, found.index)) clearPointSelection(false);
+  // 選択外の点を掴んだ場合、選択はこの時点では解除しない。タッチの長押し
+  // (複数選択の追加)がこの後に来る可能性があるため、実際に動かし始めた時か、
+  // 長押しにならずに指を離した時に解除する(pendingClearSelection)。
+  pendingClearSelection = !isSelected(found.dataset, found.index);
   draggingIndex = found.index;
   draggingDataset = found.dataset;
   dragStartedHistory = false;
@@ -5907,7 +5968,7 @@ function updateSelectionNote(){
   const label = pointSelection.dataset === 'roast' ? '温度' : '風量';
   el.style.display = '';
   el.textContent = `${label}カーブの${n}点を選択中 — ドラッグでまとめて移動 / `
-                 + `Ctrl(⌘)+クリックで追加・解除 / 何もない所をクリックで解除`;
+                 + `Ctrl(⌘)+クリック(スマホは長押し)で追加・解除 / 何もない所をクリックで解除`;
 }
 
 // まとめて動かすときに、実際に適用できる移動量(dt秒・dv)を求める。
@@ -5938,7 +5999,11 @@ function computeGroupDrag(base, selected, wantDt, wantDv, opts){
 
 function onDragMove(e){
   if(draggingIndex === null || !dragBase) return;
-  if(!dragStartedHistory){ pushHistory(); dragStartedHistory = true; resetOffsetState(); }
+  if(!dragStartedHistory){
+    // 実際に動かし始めた = 掴んだ点だけのドラッグ。保留していた選択の解除をここで行う。
+    if(pendingClearSelection){ clearPointSelection(false); pendingClearSelection = false; }
+    pushHistory(); dragStartedHistory = true; resetOffsetState();
+  }
   const rect = chart.canvas.getBoundingClientRect();
   const xScale = chart.scales.x;
   const yScale = draggingDataset === 'roast' ? chart.scales.yTemp : chart.scales.yFan;
@@ -6011,6 +6076,9 @@ function refreshEstimateDatasets(){
 function onDragEnd(){
   const draggedDataset = draggingIndex !== null ? draggingDataset : null;
   const moved = dragStartedHistory;
+  // 動かさずに離した場合(ただのタップ・クリック)も、選択外の点を掴んでいたなら解除する。
+  // 長押しが成立していた場合はstartLongPressSelect側で解除済みなので、ここでは何もしない。
+  if(pendingClearSelection){ clearPointSelection(); pendingClearSelection = false; }
   draggingIndex = null; draggingDataset = null; dragBase = null;
   // 実際に動かした場合だけ、選択の枠(点の色・大きさ)を描き直す。ドラッグ中は
   // データセットを直接書き換えているだけなので、ここで一度きちんと描き直す。
