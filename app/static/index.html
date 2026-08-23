@@ -41,10 +41,14 @@
     --line-bean-log: #e0a86a;   /* 豆温度(焙煎ログから推定) */
     --line-energy: #7fb069;     /* 積算入熱(推定) */
     --line-error: #ffcc00;      /* 容器エラー等が起きていた区間 */
-    --line-cooldown: #b4573f;   /* 冷却の開始・完了 */
+    --line-cooldown: #c99286;   /* 冷却の開始・完了(線とラベル) */
+    /* ガイド線と冷却の線は、線と同じ色で小さなラベルも描く。つまり「文字」なので
+       背景(グラフの地=--panel)に対して4.5:1が要る。2026-08、旧値は
+       1ハゼ 4.21 / 2ハゼ 2.04 / 冷却 3.29 と足りず、特に2ハゼはほぼ読めなかったため
+       色相は保ったまま明るくした(いずれも4.5以上)。互いのRGB差も40以上を確保。 */
     --guide-cc: #c9a227;        /* 温度ガイド線: カラーチェンジ */
-    --guide-fc: #c76b3f;        /*              1ハゼ */
-    --guide-sc: #8a3a2a;        /*              2ハゼ */
+    --guide-fc: #e07a4a;        /*              1ハゼ */
+    --guide-sc: #e0706e;        /*              2ハゼ */
     --grid: #3d3630;            /* グラフの罫線 */
     --axis: #9c948a;            /* 目盛りの文字 */
     --point-selected: #ffffff;  /* 選択中の制御点 */
@@ -93,11 +97,13 @@
     --line-bean: #9a6a05;
     --line-bean-log: #7d5c1c;
     --line-energy: #3f7a2c;
-    --line-error: #b06f00;
-    --line-cooldown: #a03b28;
-    --guide-cc: #8a6a00;
-    --guide-fc: #a04b18;
-    --guide-sc: #6e2416;
+    /* ガイド線・冷却は線と同じ色でラベルも描くので、文字として4.5:1を確保する。
+       エラー区間は編集中のカーブと20しか離れておらず見分けられなかったため紫にした。 */
+    --line-error: #7a2f9e;
+    --line-cooldown: #8a5a4e;
+    --guide-cc: #5f6e00;
+    --guide-fc: #a8430c;
+    --guide-sc: #8c1030;
     --grid: #d8d1c6;
     --axis: #6b6055;
     --point-selected: #1c1917;
@@ -138,8 +144,8 @@
     --line-bean-log: #ffe9a3;
     --line-energy: #7ddc72;
     --line-error: #ffe600;
-    --line-cooldown: #ff8a5c;
-    --guide-cc: #ffe066;
+    --line-cooldown: #ffab94;
+    --guide-cc: #c8e04d;
     --guide-fc: #ff9a4d;
     --guide-sc: #ff5f6d;
     --grid: #3a3f47;
