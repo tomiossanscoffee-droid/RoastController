@@ -130,7 +130,12 @@ _roast_counted: bool = False
 
 _continuous_roast: bool = False
 _continuous_task: Optional[asyncio.Task] = None
-CONTINUOUS_ROAST_RESTART_DELAY = 10.0  # 排出完了から次のプロファイル送信までの待ち時間(秒)
+# 排出完了から次のプロファイル送信までの待ち時間(秒)。設定(continuousRoastDelay)で
+# 変更できる。下限を0にしないのは、排出完了の直後は機械がまだ次を受け付けられず、
+# 送信しても取りこぼされることがあるため。上限は「席を外して戻るまで」を想定した10分。
+CONTINUOUS_ROAST_RESTART_DELAY = 10.0   # 既定値
+CONTINUOUS_ROAST_DELAY_MIN = 5.0
+CONTINUOUS_ROAST_DELAY_MAX = 600.0
 # 焙煎完了後、どの端末からも保存要求が来ないと判断するまでの猶予(秒)
 UNHANDLED_ROAST_COUNT_DELAY = 20.0
 _last_fc_time: Optional[float] = None          # ハゼを記録した経過時間(秒)。新しい焙煎開始時にリセット。
@@ -453,7 +458,14 @@ async def set_guide_temps(request: Request):
 # ------------------------------------------------------------
 # skipDuplicateRoastLog: 同一日・同一プロファイル(同じ調整状態)で2回目以降の焙煎を
 # したとき、確認ダイアログを出さずに焙煎ログを保存しない。既定はオフ(従来どおり確認する)。
-DEFAULT_APP_SETTINGS = {"notifyEnabled": True, "showLogEnabled": True, "skipDuplicateRoastLog": False}
+# continuousRoastDelay: 連続焙煎モードで、排出完了から次のプロファイルを送るまでの
+# 待ち時間(秒)。豆の計量や容器の清掃にかかる時間は人それぞれのため設定にした。
+DEFAULT_APP_SETTINGS = {
+    "notifyEnabled": True,
+    "showLogEnabled": True,
+    "skipDuplicateRoastLog": False,
+    "continuousRoastDelay": CONTINUOUS_ROAST_RESTART_DELAY,
+}
 
 
 def _load_app_settings() -> dict:
@@ -483,8 +495,25 @@ async def set_app_settings(request: Request):
         data["showLogEnabled"] = bool(body["showLogEnabled"])
     if "skipDuplicateRoastLog" in body:
         data["skipDuplicateRoastLog"] = bool(body["skipDuplicateRoastLog"])
+    if "continuousRoastDelay" in body:
+        data["continuousRoastDelay"] = _clamp_continuous_delay(body["continuousRoastDelay"])
     APP_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return JSONResponse({"ok": True})
+
+
+def _clamp_continuous_delay(value) -> float:
+    """連続焙煎の待ち時間を、安全な範囲(5〜600秒)に収める。
+
+    数値以外・範囲外が入っていても加熱機器の動作に関わる値なので、
+    保存時・使用時のどちらでも通す(古い設定ファイルや手書きの値への備え)。
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return CONTINUOUS_ROAST_RESTART_DELAY
+    if v != v:  # NaN
+        return CONTINUOUS_ROAST_RESTART_DELAY
+    return min(max(v, CONTINUOUS_ROAST_DELAY_MIN), CONTINUOUS_ROAST_DELAY_MAX)
 
 
 # ------------------------------------------------------------
@@ -1604,7 +1633,10 @@ async def _continuous_restart_after_delay() -> None:
     """
     global _continuous_task
     try:
-        remaining = CONTINUOUS_ROAST_RESTART_DELAY
+        # 待ち時間は、待ち始める時点の設定を使う(待っている最中に設定を変えても
+        # 今回の待ち時間は変わらない。画面に出す秒数と食い違わないようにするため)。
+        remaining = _clamp_continuous_delay(
+            _load_app_settings().get("continuousRoastDelay", CONTINUOUS_ROAST_RESTART_DELAY))
         await _broadcast({
             "type": "continuous_roast_pending", "seconds": remaining,
         })
@@ -1681,6 +1713,21 @@ def _on_state(state: str):
     global _continuous_task
     if state == "排出完了" and _continuous_roast:
         # 冷却・容器交換まで含む全シーケンスが終わったので、少し待って次を始める。
+        #
+        # 「排出完了」に至るまでの遷移(session.py):
+        #   待機中(0x20) → プロファイル送信中 → プロファイル受信 → 予熱中(0x21)
+        #   → 予熱完了(豆投入待ち) → 豆投入操作中(0x22) → 焙煎中(0x23)
+        #   → 焙煎完了・冷却中(0x24) → 冷却完了(容器交換待ち) → 排出完了
+        #
+        # 最後の2つは温度ではなく通知パターンで判定している。
+        #   ・冷却完了(容器交換待ち): 「ほぼ全て0」の18〜19byte通知。
+        #     ただし焙煎完了・冷却中に入ってから30秒以上経っていることが条件。
+        #   ・排出完了: 確認要求(0x13 00 + トークン)への応答後。この通知は冷却中にも
+        #     約60秒周期で届くため、冷却完了を検出済みのとき(phaseがcooling_done以降)
+        #     に限って排出完了とみなす。
+        # つまり実質的には「冷却が終わり、容器を交換して機械側の確認操作まで済んだ」
+        # 時点が起点になる。ここから待ち時間を数えて再送する。
+        # 再送後は、機械がまた「プロファイル送信中 → 予熱中」から始まる。
         if _continuous_task is None or _continuous_task.done():
             _continuous_task = asyncio.create_task(_continuous_restart_after_delay())
     elif state == "未接続":

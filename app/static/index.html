@@ -148,6 +148,20 @@
     font-size:12.5px; color:var(--text); cursor:pointer; margin-bottom:6px;
   }
   .settings-toggle-row input[type="checkbox"]{ accent-color:var(--amber); width:16px; height:16px; cursor:pointer; }
+  /* 数値を入力する設定行(連続焙煎の待ち時間)。チェックの行と左端・行間を揃える。 */
+  .settings-num-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    font-size:12.5px; color:var(--text); margin-bottom:6px;
+  }
+  .settings-num-row .settings-num-field{
+    display:flex; align-items:center; gap:4px; color:var(--text-muted); font-size:11.5px;
+  }
+  .settings-num-row input[type="number"]{
+    width:58px; padding:4px 6px; text-align:right;
+    background:var(--panel-2); color:var(--text);
+    border:1px solid var(--border); border-radius:4px; font-size:12.5px;
+  }
+  .settings-num-row input[type="number"]:focus{ outline:none; border-color:var(--amber); }
 
   .status-panel{
     border-top:1px solid var(--border); border-bottom:1px solid var(--border);
@@ -661,7 +675,7 @@
            自動で再送して次の焙煎を始められる状態にする。停止はこのボタンでも、
            焙煎機側で次を始めないことでも行える。 -->
       <label class="continuous-toggle" id="continuousToggleRow" for="continuousToggle"
-             title="排出完了から約10秒後に、同じプロファイルを自動で再送します。停止するにはもう一度押してください。">
+             title="排出完了(冷却・容器交換まで完了)から、設定した待ち時間のあとに同じプロファイルを自動で再送します。待ち時間はサイドバーの設定「連続焙煎の待ち時間」で変えられます。停止するにはもう一度押してください。">
         <input type="checkbox" id="continuousToggle">
         <span>連続焙煎モード</span>
       </label>
@@ -744,6 +758,16 @@
         <span>同日2回目以降は記録しない</span>
         <input type="checkbox" id="skipDuplicateToggle">
       </label>
+      <!-- 連続焙煎モードで、排出完了(容器交換まで終わった状態)から次のプロファイルを
+           送るまでの待ち時間。豆の計量や容器の清掃にかかる時間に合わせて変えられる。 -->
+      <div class="settings-num-row"
+           title="連続焙煎モードで、排出完了から次のプロファイルを送るまでの待ち時間です(5〜600秒)。変更は次の焙煎から反映されます">
+        <label for="continuousDelayInput">連続焙煎の待ち時間</label>
+        <span class="settings-num-field">
+          <input type="number" id="continuousDelayInput" min="5" max="600" step="5" value="10">
+          <span>秒</span>
+        </span>
+      </div>
       <div class="app-about-link"><a id="btnAbout">ⓘ アプリについて / 権利表示</a></div>
       <!-- モバイル版から「PC版を開く」で来た場合に、URLを打ち直さず戻れるようにする。
            同じホスト・ポートのまま /mobile を開くので、Tailscale経由でもLAN経由でも
@@ -5744,7 +5768,7 @@ function connectWS(){
     else if(msg.type === 'continuous_roast'){
       setContinuousRoastUI(msg.enabled === true);
       if(msg.reason) log(msg.reason);
-      else log(msg.enabled ? '連続焙煎モードを開始しました。排出完了の約10秒後に、同じプロファイルを自動で再送します。'
+      else log(msg.enabled ? `連続焙煎モードを開始しました。排出完了の約${currentContinuousDelay()}秒後に、同じプロファイルを自動で再送します。`
                            : '連続焙煎モードを終了しました。');
     }
     else if(msg.type === 'continuous_roast_pending'){
@@ -6031,15 +6055,33 @@ document.getElementById('continuousToggle').addEventListener('change', (e) => {
   sendWS({action: 'set_continuous_roast', enabled});
 });
 
-// 「同日2回目以降は記録しない」。オンにすると、同一日・同一プロファイル(同じ調整状態)の
-// 2回目以降の焙煎で確認ダイアログを出さず、焙煎ログを保存しない(焙煎回数には加算)。
-// 判定はサーバー側(auto_save_claim)で行うため、ここでは設定の読み書きだけを担当する。
-async function initSkipDuplicateSetting(){
-  const toggle = document.getElementById('skipDuplicateToggle');
+// 「同日2回目以降は記録しない」と「連続焙煎の待ち時間」。どちらもサーバー側の
+// app_settings.jsonに保存され、アプリを再起動しても残る。判定・待機はサーバー側が
+// 行うため、ここでは設定の読み書きだけを担当する(1回のGETで両方を読む)。
+const CONTINUOUS_DELAY_MIN = 5, CONTINUOUS_DELAY_MAX = 600, CONTINUOUS_DELAY_DEFAULT = 10;
+async function initAppSettings(){
   try {
     const data = await fetchJSON(`${API}/api/app_settings`);
-    toggle.checked = data.skipDuplicateRoastLog === true;
-  } catch(e){ /* 取得できなければ既定(オフ)のまま */ }
+    document.getElementById('skipDuplicateToggle').checked = data.skipDuplicateRoastLog === true;
+    const d = Number(data.continuousRoastDelay);
+    document.getElementById('continuousDelayInput').value =
+      Number.isFinite(d) ? clampContinuousDelay(d) : CONTINUOUS_DELAY_DEFAULT;
+  } catch(e){ /* 取得できなければHTMLの既定値のまま */ }
+}
+function clampContinuousDelay(v){
+  return Math.min(Math.max(Math.round(v), CONTINUOUS_DELAY_MIN), CONTINUOUS_DELAY_MAX);
+}
+// 入力欄の文字列を秒数にする。空欄やゴミが入っていたら既定値に戻す
+// (Number('')は0になるため、空欄を「0秒」と解釈しないよう先に弾く)。
+function parseContinuousDelay(text){
+  if(typeof text !== 'string' || text.trim() === '') return CONTINUOUS_DELAY_DEFAULT;
+  const v = Number(text);
+  return Number.isFinite(v) ? clampContinuousDelay(v) : CONTINUOUS_DELAY_DEFAULT;
+}
+// いま設定されている待ち時間(秒)。案内文に使う。実際に待つ長さを決めるのは
+// サーバー側なので、ここでの値はあくまで表示用。
+function currentContinuousDelay(){
+  return parseContinuousDelay(document.getElementById('continuousDelayInput')?.value);
 }
 document.getElementById('skipDuplicateToggle').addEventListener('change', async (e) => {
   const enabled = e.target.checked;
@@ -6052,7 +6094,20 @@ document.getElementById('skipDuplicateToggle').addEventListener('change', async 
                : '設定: 同一日・同一プロファイルの2回目以降も、保存するか確認します。');
   } catch(err){ /* 保存に失敗した場合は次回起動時に元の設定へ戻る */ }
 });
-initSkipDuplicateSetting();
+// 入力途中(1文字打った状態)で保存しないよう、changeで確定してから送る。
+// 空欄・範囲外は既定値/上下限に丸めて、入力欄にも丸めた値を書き戻す。
+document.getElementById('continuousDelayInput').addEventListener('change', async (e) => {
+  const sec = parseContinuousDelay(e.target.value);
+  e.target.value = sec;
+  try {
+    await fetch(`${API}/api/app_settings`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({continuousRoastDelay: sec}),
+    });
+    log(`設定: 連続焙煎の待ち時間を${sec}秒にしました(次の焙煎から反映されます)。`);
+  } catch(err){ /* 保存に失敗した場合は次回起動時に元の設定へ戻る */ }
+});
+initAppSettings();
 
 function setRoasterStateText(text){
   const el = document.getElementById('roasterState');
