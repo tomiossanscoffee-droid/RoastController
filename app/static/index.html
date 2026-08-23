@@ -148,6 +148,10 @@
     font-size:12.5px; color:var(--text); cursor:pointer; margin-bottom:6px;
   }
   .settings-toggle-row input[type="checkbox"]{ accent-color:var(--amber); width:16px; height:16px; cursor:pointer; }
+  /* 元データが無くて操作できない設定行(プリセット/IKAWAタブ)。理由はsettings-noteに出す。 */
+  .settings-toggle-row.disabled{ color:var(--text-muted); cursor:default; }
+  .settings-toggle-row.disabled input[type="checkbox"]{ cursor:not-allowed; }
+  .settings-note{ font-size:11px; color:var(--text-muted); line-height:1.5; margin:-2px 0 6px; }
   /* 数値を入力する設定行(連続焙煎の待ち時間)。チェックの行と左端・行間を揃える。 */
   .settings-num-row{
     display:flex; align-items:center; justify-content:space-between; gap:10px;
@@ -758,6 +762,18 @@
         <span>同日2回目以降は記録しない</span>
         <input type="checkbox" id="skipDuplicateToggle">
       </label>
+      <!-- プロファイル選択のタブを出すかどうか。元データが無い場合(nhm.sqlite /
+           ikawa_profiles.jsonが無い)は、この設定に関わらず非表示になり、チェックも
+           操作できなくなる(applySourceTabVisibility参照)。 -->
+      <label class="settings-toggle-row" id="showPresetTabRow" for="showPresetTabToggle">
+        <span>プリセットタブを表示</span>
+        <input type="checkbox" id="showPresetTabToggle" checked>
+      </label>
+      <label class="settings-toggle-row" id="showIkawaTabRow" for="showIkawaTabToggle">
+        <span>IKAWAタブを表示</span>
+        <input type="checkbox" id="showIkawaTabToggle" checked>
+      </label>
+      <div class="settings-note" id="sourceTabNote" style="display:none;"></div>
       <!-- 連続焙煎モードで、排出完了(容器交換まで終わった状態)から次のプロファイルを
            送るまでの待ち時間。豆の計量や容器の清掃にかかる時間に合わせて変えられる。 -->
       <div class="settings-num-row"
@@ -1150,6 +1166,14 @@ let roastingProfileRef = null;
 // この端末の識別ID(編集中カーブの同期で、自分のブロードキャストのエコーを無視する用)
 const clientId = 'pc-' + Math.random().toString(36).slice(2);
 let currentTab = 'preset';
+// プリセット/IKAWAタブを出すかどうかは、次の2つのANDで決まる(applySourceTabVisibility)。
+//   sourceDataAvailable … 元データがあるか(server_infoのhas_presets/has_ikawa)。
+//                         無ければ一覧が空にしかならないので、設定に関わらず隠す。
+//   sourceTabPref       … 利用者の設定(showPresetTab/showIkawaTab)。
+// どちらも「まだ読めていない間は表示のまま」にして、読み込み後に隠す方向へ倒す
+// (最初に見えていたタブが消えることはあっても、隠したタブが一瞬見えることはない)。
+const sourceDataAvailable = {preset: true, ikawa: true};
+const sourceTabPref = {preset: true, ikawa: true};
 let currentRoasterState = '';
 let preheatDotValue = null;  // 予熱中、時間0の位置に表示するドットのy値
 let currentProfile = null;
@@ -1348,7 +1372,17 @@ function fmtFanValue(fan){
 // ------------------------------------------------------------
 // プロファイル検索・選択
 // ------------------------------------------------------------
+// そのタブを今出しているか(元データがあり、かつ設定でオンになっているか)。
+function isSourceTabVisible(tab){
+  if(tab !== 'preset' && tab !== 'ikawa') return true;
+  return sourceDataAvailable[tab] && sourceTabPref[tab];
+}
+
 function switchTab(tab){
+  // 隠しているタブには移動しない。他端末でプリセットのプロファイルを選んだ場合など、
+  // 自分では押せないタブへ飛ばされるのを防ぐ(プロファイル自体はグラフに表示される
+  // ので、一覧だけ「保存済み」に寄せる)。
+  if(!isSourceTabVisible(tab)) tab = 'custom';
   // 移動する前に、今のタブの絞り込み状態を控えておく(戻ってきた時に復元する)。
   if(currentTab !== tab) saveProfileFilterState(currentTab);
   currentTab = tab;
@@ -4669,17 +4703,11 @@ async function loadServerInfo(){
     if(info.host){
       document.getElementById('mobileAccess').style.display = '';
     }
-    // nhm.sqlite(プリセットの情報源)がリポジトリ直下に無い場合、プリセットタブは
-    // 一覧が空にしかならないため非表示にする(保存済み/IKAWA/購入豆はそのまま使える)。
-    if(!info.has_presets){
-      document.getElementById('tabPreset').style.display = 'none';
-      if(currentTab === 'preset') switchTab('custom');
-    }
-    // ikawa_profiles.jsonが無い(未生成)場合も同様にIKAWAタブを非表示にする。
-    if(!info.has_ikawa){
-      document.getElementById('tabIkawa').style.display = 'none';
-      if(currentTab === 'ikawa') switchTab('custom');
-    }
+    // nhm.sqlite(プリセットの情報源)・ikawa_profiles.jsonの有無。無い場合はタブを
+    // 出しても一覧が空にしかならないため、設定に関わらず非表示にする。
+    sourceDataAvailable.preset = info.has_presets !== false;
+    sourceDataAvailable.ikawa = info.has_ikawa !== false;
+    applySourceTabVisibility();
   } catch(e){ /* ホストが取れない環境ではモバイルアクセス欄を出さない */ }
 }
 loadServerInfo();
@@ -6066,8 +6094,61 @@ async function initAppSettings(){
     const d = Number(data.continuousRoastDelay);
     document.getElementById('continuousDelayInput').value =
       Number.isFinite(d) ? clampContinuousDelay(d) : CONTINUOUS_DELAY_DEFAULT;
-  } catch(e){ /* 取得できなければHTMLの既定値のまま */ }
+    sourceTabPref.preset = data.showPresetTab !== false;
+    sourceTabPref.ikawa = data.showIkawaTab !== false;
+  } catch(e){ /* 取得できなければHTMLの既定値(すべて表示)のまま */ }
+  applySourceTabVisibility();
 }
+
+// プリセット/IKAWAタブの表示を、元データの有無と設定の両方から決めて反映する。
+// server_infoの取得後と、設定の読み込み・変更後のどちらからも呼ばれる。
+function applySourceTabVisibility(){
+  for(const tab of ['preset', 'ikawa']){
+    const visible = isSourceTabVisible(tab);
+    const btn = document.getElementById(tab === 'preset' ? 'tabPreset' : 'tabIkawa');
+    if(btn) btn.style.display = visible ? '' : 'none';
+    // 元データが無いときは設定を変えても出せないので、チェック自体を操作不能にする
+    // (押せるのに何も起きない、という状態を作らないため)。
+    const box = document.getElementById(tab === 'preset' ? 'showPresetTabToggle' : 'showIkawaTabToggle');
+    const row = document.getElementById(tab === 'preset' ? 'showPresetTabRow' : 'showIkawaTabRow');
+    if(box){
+      box.checked = sourceTabPref[tab];
+      box.disabled = !sourceDataAvailable[tab];
+    }
+    if(row) row.classList.toggle('disabled', !sourceDataAvailable[tab]);
+  }
+  // 操作できない理由を、まとめて1行で説明する。
+  const missing = [];
+  if(!sourceDataAvailable.preset) missing.push('プリセット');
+  if(!sourceDataAvailable.ikawa) missing.push('IKAWA');
+  const note = document.getElementById('sourceTabNote');
+  if(note){
+    note.textContent = missing.length
+      ? `${missing.join('・')}のデータが取り込まれていないため、表示できません。`
+      : '';
+    note.style.display = missing.length ? '' : 'none';
+  }
+  // 今開いているタブを隠した場合は、「保存済み」へ移す。
+  if(!isSourceTabVisible(currentTab)) switchTab('custom');
+}
+
+// 表示・非表示の切り替え。設定はサーバー側に保存し、他の端末とも揃える。
+function bindSourceTabToggle(tab, boxId, label){
+  document.getElementById(boxId).addEventListener('change', async (e) => {
+    const enabled = e.target.checked;
+    sourceTabPref[tab] = enabled;
+    applySourceTabVisibility();
+    try {
+      await fetch(`${API}/api/app_settings`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(tab === 'preset' ? {showPresetTab: enabled} : {showIkawaTab: enabled}),
+      });
+      log(`設定: ${label}タブを${enabled ? '表示' : '非表示に'}しました。`);
+    } catch(err){ /* 保存に失敗した場合は次回起動時に元の設定へ戻る */ }
+  });
+}
+bindSourceTabToggle('preset', 'showPresetTabToggle', 'プリセット');
+bindSourceTabToggle('ikawa', 'showIkawaTabToggle', 'IKAWA');
 function clampContinuousDelay(v){
   return Math.min(Math.max(Math.round(v), CONTINUOUS_DELAY_MIN), CONTINUOUS_DELAY_MAX);
 }

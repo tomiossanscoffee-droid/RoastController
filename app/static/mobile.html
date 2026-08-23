@@ -296,6 +296,15 @@ let lastSentProfile = null;
 // ブロードキャストが自分自身にも返ってくるため、自分の変更を無視するのに使う。
 const clientId = 'm-' + Math.random().toString(36).slice(2);
 let currentTab = 'preset';
+// プリセット/IKAWAタブを出すかどうかは、元データの有無(server_infoのhas_presets/
+// has_ikawa)と、PC版の設定(showPresetTab/showIkawaTab)のANDで決まる。PC版で隠した
+// タブはこちらでも隠す、という考え方(applySourceTabVisibility)。設定の変更はPC版で行う。
+const sourceDataAvailable = {preset: true, ikawa: true};
+const sourceTabPref = {preset: true, ikawa: true};
+function isSourceTabVisible(tab){
+  if(tab !== 'preset' && tab !== 'ikawa') return true;
+  return sourceDataAvailable[tab] && sourceTabPref[tab];
+}
 let currentProfile = null;
 let currentProfileSource = null;
 let editedRoast = [], editedFan = [], cooldownPoint = null;
@@ -382,6 +391,8 @@ function endpointFor(source){
 }
 
 function switchTab(tab){
+  // 隠しているタブには移動しない(他端末でプリセットのプロファイルを選んだ場合など)。
+  if(!isSourceTabVisible(tab)) tab = 'custom';
   currentTab = tab;
   document.getElementById('tabPreset').classList.toggle('active', tab === 'preset');
   document.getElementById('tabCustom').classList.toggle('active', tab === 'custom');
@@ -1947,23 +1958,36 @@ renderChart();
 fetchLastSentProfile();
 connectWS();
 
-// nhm.sqlite(プリセットの情報源)がリポジトリ直下に無い場合、プリセットタブは
-// 一覧が空にしかならないため非表示にする(PC版と同じ判定)。
+// プリセット/IKAWAタブの表示を、元データの有無と設定の両方から決めて反映する
+// (PC版のapplySourceTabVisibilityと同じ判定。こちらは設定のUIを持たない)。
+function applySourceTabVisibility(){
+  for(const tab of ['preset', 'ikawa']){
+    const btn = document.getElementById(tab === 'preset' ? 'tabPreset' : 'tabIkawa');
+    if(btn) btn.style.display = isSourceTabVisible(tab) ? '' : 'none';
+  }
+  if(!isSourceTabVisible(currentTab)) switchTab('custom');
+}
+
+// nhm.sqlite(プリセットの情報源)・ikawa_profiles.jsonが無い場合は一覧が空にしか
+// ならないため、設定に関わらず非表示にする(PC版と同じ判定)。
 (async () => {
   try {
     const res = await fetch(`${API}/api/server_info`, {cache: 'no-store'});
-    if(!res.ok) return;
-    const info = await res.json();
-    if(!info.has_presets){
-      document.getElementById('tabPreset').style.display = 'none';
-      if(currentTab === 'preset') switchTab('custom');
+    if(res.ok){
+      const info = await res.json();
+      sourceDataAvailable.preset = info.has_presets !== false;
+      sourceDataAvailable.ikawa = info.has_ikawa !== false;
     }
-    // ikawa_profiles.jsonが無い(未生成)場合も同様にIKAWAタブを非表示にする。
-    if(!info.has_ikawa){
-      document.getElementById('tabIkawa').style.display = 'none';
-      if(currentTab === 'ikawa') switchTab('custom');
+  } catch(e){ /* 取得できない場合は表示のままにする */ }
+  try {
+    const res = await fetch(`${API}/api/app_settings`, {cache: 'no-store'});
+    if(res.ok){
+      const data = await res.json();
+      sourceTabPref.preset = data.showPresetTab !== false;
+      sourceTabPref.ikawa = data.showIkawaTab !== false;
     }
-  } catch(e){ /* 取得できない場合は何もしない */ }
+  } catch(e){ /* 取得できない場合は表示のままにする */ }
+  applySourceTabVisibility();
 })();
 </script>
 </body>

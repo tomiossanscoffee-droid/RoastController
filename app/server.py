@@ -460,11 +460,17 @@ async def set_guide_temps(request: Request):
 # したとき、確認ダイアログを出さずに焙煎ログを保存しない。既定はオフ(従来どおり確認する)。
 # continuousRoastDelay: 連続焙煎モードで、排出完了から次のプロファイルを送るまでの
 # 待ち時間(秒)。豆の計量や容器の清掃にかかる時間は人それぞれのため設定にした。
+# showPresetTab / showIkawaTab: プロファイル選択のプリセット・IKAWAタブを出すかどうか。
+# 使わない人にとっては場所を取るだけなので、隠せるようにした。なお元データが無い場合
+# (nhm.sqlite / ikawa_profiles.jsonが無い)は、この設定に関わらず画面側で非表示にする。
+# server_info の has_presets / has_ikawa を見て決めるので、ここでは関与しない。
 DEFAULT_APP_SETTINGS = {
     "notifyEnabled": True,
     "showLogEnabled": True,
     "skipDuplicateRoastLog": False,
     "continuousRoastDelay": CONTINUOUS_ROAST_RESTART_DELAY,
+    "showPresetTab": True,
+    "showIkawaTab": True,
 }
 
 
@@ -497,6 +503,10 @@ async def set_app_settings(request: Request):
         data["skipDuplicateRoastLog"] = bool(body["skipDuplicateRoastLog"])
     if "continuousRoastDelay" in body:
         data["continuousRoastDelay"] = _clamp_continuous_delay(body["continuousRoastDelay"])
+    if "showPresetTab" in body:
+        data["showPresetTab"] = bool(body["showPresetTab"])
+    if "showIkawaTab" in body:
+        data["showIkawaTab"] = bool(body["showIkawaTab"])
     APP_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return JSONResponse({"ok": True})
 
