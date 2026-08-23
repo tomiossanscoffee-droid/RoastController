@@ -13,7 +13,67 @@
     --bg: #1c1917; --panel: #26221e; --panel-2: #2f2a25; --border: #3d3630;
     --text: #ede7dd; --text-muted: #9c948a; --amber: #ce8b3e; --amber-dim: #8a6538;
     --slate: #7c8b99; --sage: #7a9b76; --danger: #e0705a;   /* コントラスト確保のため明るくした(PC版と同色) */
+    /* グラフの色。PC版(index.html)と同じ変数名・同じ値にそろえてある。
+       設定の「配色」はサーバー側(app_settings の theme)に保存されるので、
+       モバイル版も同じ配色になる。切り替えはPC版から行う。 */
+    --line-ref: #7c8b99; --line-live: #e0483a; --line-ror: #9b6bce; --line-ror-profile: #b98fe0;
+    --line-error: #ffcc00; --guide-cc: #c9a227; --guide-fc: #c76b3f; --guide-sc: #8a3a2a;
+    --grid: #3d3630; --axis: #9c948a; --chart-legend: #ede7dd;
+    --dev-band-soft: rgba(122,155,118,0.15);
   }
+
+  /* 配色(PC版の設定に追従する)。値はindex.htmlと同じ。 */
+  [data-theme="light"]{
+    --dev-band-soft: rgba(74,107,70,0.12);
+    --bg: #f5f2ec;
+    --panel: #ffffff;
+    --panel-2: #ece7de;
+    --border: #cfc7ba;
+    --text: #2b2521;
+    --text-muted: #6b6055;
+    --amber: #9a5f14;
+    --amber-dim: #c19a63;
+    --slate: #4c5c6b;
+    --sage: #4a6b46;
+    --danger: #b3271a;
+    --line-ref: #7a8794;
+    --line-live: #c22d1e;
+    --line-ror: #6a3fae;
+    --line-ror-profile: #9a75d4;
+    --line-error: #b06f00;
+    --guide-cc: #8a6a00;
+    --guide-fc: #a04b18;
+    --guide-sc: #6e2416;
+    --grid: #d8d1c6;
+    --axis: #6b6055;
+    --chart-legend: #2b2521;
+  }
+  [data-theme="contrast"]{
+    --dev-band-soft: rgba(125,220,114,0.16);
+    --bg: #0b0b0d;
+    --panel: #16171a;
+    --panel-2: #1f2126;
+    --border: #4a4e57;
+    --text: #ffffff;
+    --text-muted: #b9bec7;
+    --amber: #ffb020;
+    --amber-dim: #a8741a;
+    --slate: #9aa7b4;
+    --sage: #7ddc72;
+    --danger: #ff6b57;
+    --line-ref: #9aa7b4;
+    --line-live: #ff4d3d;
+    --line-ror: #b78bff;
+    --line-ror-profile: #d5bcff;
+    --line-error: #ffe600;
+    --guide-cc: #ffe066;
+    --guide-fc: #ff9a4d;
+    --guide-sc: #ff5f6d;
+    --grid: #3a3f47;
+    --axis: #b9bec7;
+    --chart-legend: #ffffff;
+  }
+
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body{
     margin:0; background:var(--bg); color:var(--text);
@@ -672,9 +732,9 @@ const tempGuideLinesPlugin = {
     const area = c.chartArea;
     const ctx = c.ctx;
     const lines = [
-      [guideTemps.colorChange, 'カラーチェンジ', '#c9a227'],
-      [guideTemps.firstCrack, '1ハゼ', '#c76b3f'],
-      [guideTemps.secondCrack, '2ハゼ', '#8a3a2a'],
+      [guideTemps.colorChange, 'カラーチェンジ', cssVar('--guide-cc')],
+      [guideTemps.firstCrack, '1ハゼ', cssVar('--guide-fc')],
+      [guideTemps.secondCrack, '2ハゼ', cssVar('--guide-sc')],
     ];
     ctx.save();
     for(const [temp, label, color] of lines){
@@ -710,9 +770,9 @@ const devTimePlugin = {
     if(x1 <= x0) return;
     const ctx = c.ctx;
     ctx.save();
-    ctx.fillStyle = 'rgba(122,155,118,0.15)';
+    ctx.fillStyle = cssVar('--dev-band-soft');
     ctx.fillRect(x0, area.top, x1 - x0, area.bottom - area.top);
-    ctx.fillStyle = '#7a9b76';
+    ctx.fillStyle = cssVar('--sage');
     ctx.font = '10px Inter, sans-serif';
     ctx.fillText(`DT${fcTimeIsInferred ? '(1ハゼ推定)' : ''}`, x0 + 4, area.bottom - 6);
     ctx.restore();
@@ -807,21 +867,21 @@ function renderChart(){
         // ではなく直線補間で描画する(詳細はindex.htmlの同箇所のコメント参照。
         // 急激な制御点変化に隣接する区間で、monotone補間は実測と大きく乖離する
         // ことが実機ログで確認された)。
-        { label:'プロファイル', data:refData, borderColor:'#7c8b99', borderDash:[4,4],
+        { label:'プロファイル', data:refData, borderColor:cssVar('--line-ref'), borderDash:[4,4],
           pointRadius:0, borderWidth:1.5, tension:0, yAxisID:'yTemp' },
-        { label:'実測 吸入温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
+        { label:'実測 吸入温度', data:liveData, borderColor:cssVar('--line-live'), pointRadius:0,
           borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
-          segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? '#ffcc00' : undefined } },
-        { label:'予熱中(実測)', data:preheatDotData, borderColor:'#e0483a', backgroundColor:'#e0483a',
+          segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? cssVar('--line-error') : undefined } },
+        { label:'予熱中(実測)', data:preheatDotData, borderColor:cssVar('--line-live'), backgroundColor:cssVar('--line-live'),
           pointRadius:8, showLine:false, yAxisID:'yTemp' },
-        { label:'RoR(実測)', data:rorData, borderColor:'#9b6bce', pointRadius:0,
+        { label:'RoR(実測)', data:rorData, borderColor:cssVar('--line-ror'), pointRadius:0,
           borderWidth:2, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorLiveVisible },
-        { label:'RoR(プロファイル)', data:profileRorData, borderColor:'#b98fe0', borderDash:[5,3], pointRadius:0,
+        { label:'RoR(プロファイル)', data:profileRorData, borderColor:cssVar('--line-ror-profile'), borderDash:[5,3], pointRadius:0,
           borderWidth:1.5, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorProfileVisible },
         // 2026-07再訂正: 制御点間はステップ状ではなく直線的に変化することが判明した
         // ため、実測風量もステップではなく実測BTと同じ滑らかな補間で描画する
         // (詳細はindex.htmlの同箇所のコメント参照)。
-        { label:'実測風量', data:liveFanData, borderColor:'#e0483a', borderDash:[2,3], pointRadius:0,
+        { label:'実測風量', data:liveFanData, borderColor:cssVar('--line-live'), borderDash:[2,3], pointRadius:0,
           borderWidth:2, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yFan' },
       ]
     },
@@ -829,12 +889,12 @@ function renderChart(){
       responsive:true, animation:false, interaction:{mode:'nearest', intersect:false},
       scales:{
         x:{ type:'linear', min:0, max:xAxisMax,
-            ticks:{color:'#9c948a', stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:'#3d3630'} },
-        yTemp:{ position:'left', ticks:{color:'#9c948a'}, grid:{color:'#3d3630'}, min:TEMP_AXIS_MIN, max:280 },
-        yRoR:{ position:'right', display:anyRoRVisible(), ticks:{color:'#9c948a'}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
-        yFan:{ position:'right', ticks:{color:'#9c948a'}, grid:{display:false}, min:50, max:100 },
+            ticks:{color:cssVar('--axis'), stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:cssVar('--grid')} },
+        yTemp:{ position:'left', ticks:{color:cssVar('--axis')}, grid:{color:cssVar('--grid')}, min:TEMP_AXIS_MIN, max:280 },
+        yRoR:{ position:'right', display:anyRoRVisible(), ticks:{color:cssVar('--axis')}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
+        yFan:{ position:'right', ticks:{color:cssVar('--axis')}, grid:{display:false}, min:50, max:100 },
       },
-      plugins:{ legend:{ labels:{ color:'#ede7dd', font:{size:10},
+      plugins:{ legend:{ labels:{ color:cssVar('--chart-legend'), font:{size:10},
         // 凡例は「今の文脈で実際に使われている」項目だけに絞り込む(PC版と同じ考え方)。
         // プロファイル自体(常に意味を持つ)は例外として常に表示する。
         filter: (item, data) => {
@@ -1442,6 +1502,25 @@ function notify(title, body){
 const NOTIFY_OPTIONS = { tag: 'roast-status', renotify: true, requireInteraction: true, vibrate: [300, 120, 300] };
 
 // ------------------------------------------------------------
+// 配色(PC版の設定に追従。切り替えはPC版から行う)
+// ------------------------------------------------------------
+const _cssVarCache = new Map();
+function cssVar(name, fallback = '#888888'){
+  if(_cssVarCache.has(name)) return _cssVarCache.get(name);
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const out = v || fallback;
+  _cssVarCache.set(name, out);
+  return out;
+}
+const APP_THEMES = ['dark', 'light', 'contrast'];
+function applyTheme(name){
+  const theme = APP_THEMES.includes(name) ? name : 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  _cssVarCache.clear();
+  if(chart) renderChart();   // Chart.jsは色を保持するので描き直す
+}
+
+// ------------------------------------------------------------
 // 通知のオン/オフ設定(サーバー側のapp_settings.jsonに保存し、アプリ再起動後も
 // 引き継がれるようにする)。デフォルトはオンで、起動時に自動的に許可をリクエストする。
 // ------------------------------------------------------------
@@ -1453,6 +1532,7 @@ async function initNotifySettings(){
     if(res.ok){
       const data = await res.json();
       settingEnabled = data.notifyEnabled !== false;
+      applyTheme(data.theme);
     }
   } catch(e){ /* 取得に失敗してもデフォルト(オン)で続行する */ }
   toggle.checked = settingEnabled;

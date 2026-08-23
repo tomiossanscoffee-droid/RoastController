@@ -24,7 +24,137 @@
        3.3〜3.6 とWCAGの基準(4.5)に届かず、焙煎中に離れた場所から気づきにくかったため
        明るくした(bg上5.53・panel上4.99)。 */
     --danger: #e0705a;
+
+    /* グラフの線・目盛りの色。JS側は cssVar() でここを読むので、配色を切り替えると
+       グラフも一緒に変わる。線どうしが見分けられることが最優先の値なので、
+       配色を足すときは「役割ごとに色相を離す」ことを崩さないこと。 */
+    --line-ref: #7c8b99;        /* 参照(元プロファイル) */
+    --line-edit: #ce8b3e;       /* 編集中のカーブ */
+    --line-fan: #5b9bd5;        /* 風量(プロファイル) */
+    --line-live: #e0483a;       /* 実測(吸入温度・風量・予熱中) */
+    --line-compare: #4a9b8e;    /* 比較 */
+    --line-log: #e0609a;        /* 焙煎ログ */
+    --line-ror: #9b6bce;        /* RoR(実測) */
+    --line-ror-profile: #b98fe0;/* RoR(プロファイル) */
+    --line-ror-log: #c56bce;    /* RoR(焙煎ログ) */
+    --line-bean: #d9a441;       /* 豆温度(推定) */
+    --line-bean-log: #e0a86a;   /* 豆温度(焙煎ログから推定) */
+    --line-energy: #7fb069;     /* 積算入熱(推定) */
+    --line-error: #ffcc00;      /* 容器エラー等が起きていた区間 */
+    --line-cooldown: #b4573f;   /* 冷却の開始・完了 */
+    --guide-cc: #c9a227;        /* 温度ガイド線: カラーチェンジ */
+    --guide-fc: #c76b3f;        /*              1ハゼ */
+    --guide-sc: #8a3a2a;        /*              2ハゼ */
+    --grid: #3d3630;            /* グラフの罫線 */
+    --axis: #9c948a;            /* 目盛りの文字 */
+    --point-selected: #ffffff;  /* 選択中の制御点 */
+    --chart-legend: #ede7dd;    /* 凡例の文字 */
+    /* 半透明の塗り。明るい配色では白の薄塗りが見えなくなるので、これも配色ごとに持つ */
+    --dev-band: rgba(122,155,118,0.16);      /* Development Timeの帯 */
+    --dev-band-line: rgba(122,155,118,0.6);  /* 同 開始位置の縦線 */
+    --dev-band-soft: rgba(122,155,118,0.15); /* 同 メイングラフ側 */
+    --radar-fill-amber: rgba(206,139,62,0.22);
+    --radar-fill-sage: rgba(122,155,118,0.35);
+    --radar-grid: rgba(255,255,255,0.12);
   }
+
+  /* ============================================================
+     配色(設定 → 配色 で切り替え。data-theme を <html> に付ける)
+     ・dark(既定)  … 上の :root。焙煎機のそばの薄暗い場所を想定した暖色の暗い配色
+     ・light        … 日中の明るい部屋向け。紙に近い明るさで、線は濃いめにして飛ばない
+     ・contrast     … 焙煎中に離れた場所から読むための高コントラスト。背景を沈め、
+                      線を鮮やかにして本数の見分けを優先する
+     文字色は背景に対して WCAG AA(4.5:1)以上を確保すること
+     (scripts/check_theme_contrast.py で検算できる)。
+     ============================================================ */
+  [data-theme="light"]{
+    --bg: #f5f2ec;
+    --panel: #ffffff;
+    --panel-2: #ece7de;
+    --border: #cfc7ba;
+    --text: #2b2521;
+    --text-muted: #6b6055;
+    --amber: #9a5f14;
+    --amber-dim: #c19a63;
+    --slate: #4c5c6b;
+    --teal: #1f6f62;
+    --sage: #4a6b46;
+    --danger: #b3271a;
+
+    --line-ref: #7a8794;
+    --line-edit: #b4700f;
+    --line-fan: #2a6fb0;
+    --line-live: #c22d1e;
+    --line-compare: #17766a;
+    --line-log: #b62a6d;
+    --line-ror: #6a3fae;
+    --line-ror-profile: #9a75d4;
+    --line-ror-log: #a13fae;
+    --line-bean: #9a6a05;
+    --line-bean-log: #7d5c1c;
+    --line-energy: #3f7a2c;
+    --line-error: #b06f00;
+    --line-cooldown: #a03b28;
+    --guide-cc: #8a6a00;
+    --guide-fc: #a04b18;
+    --guide-sc: #6e2416;
+    --grid: #d8d1c6;
+    --axis: #6b6055;
+    --point-selected: #1c1917;
+    --chart-legend: #2b2521;
+
+    --dev-band: rgba(74,107,70,0.14);
+    --dev-band-line: rgba(74,107,70,0.7);
+    --dev-band-soft: rgba(74,107,70,0.12);
+    --radar-fill-amber: rgba(180,112,15,0.20);
+    --radar-fill-sage: rgba(74,107,70,0.28);
+    --radar-grid: rgba(0,0,0,0.14);
+  }
+
+  [data-theme="contrast"]{
+    --bg: #0b0b0d;
+    --panel: #16171a;
+    --panel-2: #1f2126;
+    --border: #4a4e57;
+    --text: #ffffff;
+    --text-muted: #b9bec7;
+    --amber: #ffb020;
+    --amber-dim: #a8741a;
+    --slate: #9aa7b4;
+    --teal: #2fd4b8;
+    --sage: #7ddc72;
+    --danger: #ff6b57;
+
+    --line-ref: #9aa7b4;
+    --line-edit: #ffb020;
+    --line-fan: #4db8ff;
+    --line-live: #ff4d3d;
+    --line-compare: #2fd4b8;
+    --line-log: #ff6ec7;
+    --line-ror: #b78bff;
+    --line-ror-profile: #d5bcff;
+    --line-ror-log: #ff8bef;
+    --line-bean: #ffd24d;
+    --line-bean-log: #ffe9a3;
+    --line-energy: #7ddc72;
+    --line-error: #ffe600;
+    --line-cooldown: #ff8a5c;
+    --guide-cc: #ffe066;
+    --guide-fc: #ff9a4d;
+    --guide-sc: #ff5f6d;
+    --grid: #3a3f47;
+    --axis: #b9bec7;
+    --point-selected: #ffffff;
+    --chart-legend: #ffffff;
+
+    --dev-band: rgba(125,220,114,0.18);
+    --dev-band-line: rgba(125,220,114,0.85);
+    --dev-band-soft: rgba(125,220,114,0.16);
+    --radar-fill-amber: rgba(255,176,32,0.26);
+    --radar-fill-sage: rgba(125,220,114,0.30);
+    --radar-grid: rgba(255,255,255,0.22);
+  }
+
   *{box-sizing:border-box;}
   body{
     margin:0; background:var(--bg); color:var(--text);
@@ -166,6 +296,11 @@
     border:1px solid var(--border); border-radius:4px; font-size:12.5px;
   }
   .settings-num-row input[type="number"]:focus{ outline:none; border-color:var(--amber); }
+  .settings-select{
+    padding:4px 6px; background:var(--panel-2); color:var(--text);
+    border:1px solid var(--border); border-radius:4px; font-size:12.5px; cursor:pointer;
+  }
+  .settings-select:focus{ outline:none; border-color:var(--amber); }
 
   .status-panel{
     border-top:1px solid var(--border); border-bottom:1px solid var(--border);
@@ -749,6 +884,16 @@
 
     <div class="settings-section">
       <div class="settings-title">設定</div>
+      <!-- 画面の配色。実体は :root と [data-theme=...] のCSS変数(app/static/index.html上部)。
+           グラフの線の色も同じ変数から取るので、切り替えるとグラフも一緒に変わる。 -->
+      <div class="settings-num-row" title="画面とグラフの配色を切り替えます">
+        <label for="themeSelect">配色</label>
+        <select id="themeSelect" class="settings-select">
+          <option value="dark">ダーク(既定)</option>
+          <option value="light">ライト</option>
+          <option value="contrast">高コントラスト</option>
+        </select>
+      </div>
       <label class="settings-toggle-row" for="notifyToggle">
         <span>焙煎完了の通知</span>
         <input type="checkbox" id="notifyToggle" checked>
@@ -1407,6 +1552,49 @@ function fmtFanValue(fan){
 }
 
 // ------------------------------------------------------------
+// 配色
+// ------------------------------------------------------------
+// グラフの色はCSS変数(:root と [data-theme=...])に持たせてあり、ここから読む。
+// 設定で配色を切り替えたら、data-theme を差し替えて renderChart() し直せば全部追従する。
+// Chart.jsは色を文字列で受け取るので、描画のたびに解決した値を渡す。
+const _cssVarCache = new Map();
+function cssVar(name, fallback = '#888888'){
+  if(_cssVarCache.has(name)) return _cssVarCache.get(name);
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const out = v || fallback;
+  _cssVarCache.set(name, out);
+  return out;
+}
+function clearCssVarCache(){ _cssVarCache.clear(); }
+
+const APP_THEMES = ['dark', 'light', 'contrast'];
+// 配色を切り替える。CSS変数を差し替えるだけなので、キャッシュを捨てて描き直せば
+// グラフの線・目盛り・帯まで全部が新しい配色になる。
+function applyTheme(name){
+  const theme = APP_THEMES.includes(name) ? name : 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  clearCssVarCache();
+  const sel = document.getElementById('themeSelect');
+  if(sel) sel.value = theme;
+  // Chart.jsは色を文字列で受け取って保持するため、作り直さないと前の色が残る。
+  if(chart) renderChart();
+  if(recordChart && lastRecordMiniChartArgs){
+    renderRecordMiniChart(...lastRecordMiniChartArgs);
+  }
+}
+document.getElementById('themeSelect').addEventListener('change', async (e) => {
+  const theme = e.target.value;
+  applyTheme(theme);
+  try {
+    await fetch(`${API}/api/app_settings`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({theme}),
+    });
+    log(`設定: 配色を「${e.target.options[e.target.selectedIndex].textContent}」にしました。`);
+  } catch(err){ /* 保存に失敗した場合は次回起動時に元の配色へ戻る */ }
+});
+
+// ------------------------------------------------------------
 // 豆への入熱・豆温度の推定(推定値であって実測ではない)
 // ------------------------------------------------------------
 // roastlib/energy.py と同じ計算。数値が食い違わないよう tests/test_energy.py で
@@ -1630,6 +1818,8 @@ function setSearchBoxVisibility(id, tab){
 // 「焙煎履歴」タブから開いて豆情報にリンク、の2箇所からアクセスする。
 // ============================================================
 let recordChart = null;
+// 配色を切り替えたときに描き直せるよう、記録グラフを最後に描いた引数を覚えておく。
+let lastRecordMiniChartArgs = null;
 let beanCompareChartInstance = null;
 let lastAutoRoastRecordId = null;
 let currentRecordOpenBeanId = null;
@@ -2048,8 +2238,8 @@ async function updateRoastRecordComparison(){
   beanCompareChartInstance = new Chart(ctx, {
     type: 'line',
     data: { datasets: [
-      {label: label(a), data: (a.roast_curve || []).map(p => ({x: p[0], y: p[1]})), borderColor: '#ce8b3e', backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: 0.15, cubicInterpolationMode: 'monotone'},
-      {label: label(b), data: (b.roast_curve || []).map(p => ({x: p[0], y: p[1]})), borderColor: '#4a9b8e', backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: 0.15, cubicInterpolationMode: 'monotone'},
+      {label: label(a), data: (a.roast_curve || []).map(p => ({x: p[0], y: p[1]})), borderColor: cssVar('--line-edit'), backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: 0.15, cubicInterpolationMode: 'monotone'},
+      {label: label(b), data: (b.roast_curve || []).map(p => ({x: p[0], y: p[1]})), borderColor: cssVar('--line-compare'), backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: 0.15, cubicInterpolationMode: 'monotone'},
     ]},
     options: {
       responsive: true, animation: false,
@@ -2351,6 +2541,7 @@ function devTimeStartForRecord(curve, record){
 let recordRorVisible = false;
 let recordFanVisible = false;
 function renderRecordMiniChart(curve, record = null){
+  lastRecordMiniChartArgs = [curve, record];
   document.getElementById('recordMiniChartWrap').style.display = '';
   const ctx = document.getElementById('recordMiniChart').getContext('2d');
   if(recordChart) recordChart.destroy();
@@ -2379,12 +2570,12 @@ function renderRecordMiniChart(curve, record = null){
       if(x1 <= x0) return;
       const g = c.ctx;
       g.save();
-      g.fillStyle = 'rgba(122,155,118,0.16)';
+      g.fillStyle = cssVar('--dev-band');
       g.fillRect(x0, area.top, x1 - x0, area.bottom - area.top);
-      g.strokeStyle = 'rgba(122,155,118,0.6)'; g.setLineDash([4, 3]);
+      g.strokeStyle = cssVar('--dev-band-line'); g.setLineDash([4, 3]);
       g.beginPath(); g.moveTo(x0, area.top); g.lineTo(x0, area.bottom); g.stroke();
       g.setLineDash([]);
-      g.fillStyle = '#7a9b76'; g.font = '10px Inter, sans-serif';
+      g.fillStyle = cssVar('--sage'); g.font = '10px Inter, sans-serif';
       const dt = heatEndT - fc.t, pct = heatEndT > 0 ? (dt / heatEndT * 100) : 0;
       g.fillText(`Development Time ${fmtMMSS(dt)} (${pct.toFixed(0)}%)${fc.inferred ? ' ・1ハゼ推定' : ''}`,
                  x0 + 4, area.bottom - 6);
@@ -2395,19 +2586,19 @@ function renderRecordMiniChart(curve, record = null){
     type: 'line',
     data: { datasets: [
       { label: '実測 吸入温度', data: curve.map(p => ({x: p[0], y: p[1]})),
-        borderColor: '#ce8b3e', backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: 0.15,
+        borderColor: cssVar('--line-edit'), backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: 0.15,
         cubicInterpolationMode: 'monotone', yAxisID: 'y' },
-      { label: 'RoR', data: rorData, borderColor: '#9b6bce', backgroundColor: 'transparent', pointRadius: 0,
+      { label: 'RoR', data: rorData, borderColor: cssVar('--line-ror'), backgroundColor: 'transparent', pointRadius: 0,
         borderWidth: 2, tension: 0.2, cubicInterpolationMode: 'monotone', yAxisID: 'yRoR', hidden: !showRoR },
       // 2026-07再訂正: 制御点間はステップ状ではなく直線的に変化することが判明した
       // ため(下のメイングラフのコメント参照)、実測風量もステップではなく実測BTと
       // 同じ滑らかな補間で描画する(1%刻みの見た目の「階段」は変換式の量子化に
       // よるもので、実際の変化自体が階段状というわけではなかった)。
-      { label: '風量', data: fanData, borderColor: '#5b9bd5', backgroundColor: 'transparent', pointRadius: 0,
+      { label: '風量', data: fanData, borderColor: cssVar('--line-fan'), backgroundColor: 'transparent', pointRadius: 0,
         borderWidth: 2, tension: 0.15, cubicInterpolationMode: 'monotone', yAxisID: 'yFan', hidden: !showFan },
       // 実測の吸入温度と風量から推定した豆温度。プロファイルではなく「実際に
       // どう焼けたか」から計算するので、記録ごとに違う値になる。
-      { label: '豆温度(推定)', data: recordBeanTempData, borderColor: '#d9a441', borderDash: [3, 3],
+      { label: '豆温度(推定)', data: recordBeanTempData, borderColor: cssVar('--line-bean'), borderDash: [3, 3],
         backgroundColor: 'transparent', pointRadius: 0, borderWidth: 1.6, tension: 0.15,
         cubicInterpolationMode: 'monotone', yAxisID: 'y' },
     ]},
@@ -4004,8 +4195,8 @@ function renderTasteResult(taste, explanations){
     tasteRadarChart = new Chart(ctx, {
       type: 'radar',
       data: { labels, datasets: [{
-        data: values, backgroundColor: 'rgba(206,139,62,0.22)', borderColor: '#ce8b3e',
-        borderWidth: 2, pointBackgroundColor: '#ce8b3e', pointRadius: 2,
+        data: values, backgroundColor: cssVar('--radar-fill-amber'), borderColor: cssVar('--line-edit'),
+        borderWidth: 2, pointBackgroundColor: cssVar('--line-edit'), pointRadius: 2,
       }]},
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
@@ -4014,8 +4205,8 @@ function renderTasteResult(taste, explanations){
           callbacks: { label: (c) => `${TASTE_LABELS[TASTE_RADAR_KEYS[c.dataIndex]]}: ${c.raw}` } } },
         scales: { r: {
           min: 0, max: 5, ticks: { display: false, stepSize: 1 },
-          pointLabels: { color: '#d6d3d1', font: { size: 12 }, padding: 3 },
-          grid: { color: 'rgba(255,255,255,0.12)' }, angleLines: { color: 'rgba(255,255,255,0.12)' },
+          pointLabels: { color: cssVar('--text'), font: { size: 12 }, padding: 3 },
+          grid: { color: cssVar('--radar-grid') }, angleLines: { color: cssVar('--radar-grid') },
         }},
       },
     });
@@ -4181,8 +4372,8 @@ async function loadPresetBeanInfo(){
     beanTasteRadarChart = new Chart(ctx, {
       type: 'radar',
       data: { labels, datasets: [{
-        data: values, backgroundColor: 'rgba(122,155,118,0.35)', borderColor: '#7a9b76',
-        borderWidth: 2, pointBackgroundColor: '#7a9b76', pointRadius: 2,
+        data: values, backgroundColor: cssVar('--radar-fill-sage'), borderColor: cssVar('--sage'),
+        borderWidth: 2, pointBackgroundColor: cssVar('--sage'), pointRadius: 2,
       }]},
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
@@ -4190,8 +4381,8 @@ async function loadPresetBeanInfo(){
         plugins: { legend: { display: false } },
         scales: { r: {
           min: 0, max: 100, ticks: { display: false },
-          pointLabels: { color: '#d6d3d1', font: { size: 12 }, padding: 3 },
-          grid: { color: 'rgba(255,255,255,0.12)' }, angleLines: { color: 'rgba(255,255,255,0.12)' },
+          pointLabels: { color: cssVar('--text'), font: { size: 12 }, padding: 3 },
+          grid: { color: cssVar('--radar-grid') }, angleLines: { color: cssVar('--radar-grid') },
         }},
       },
     });
@@ -5025,9 +5216,9 @@ document.getElementById('mobileQrOverlay').onclick = (e) => {
 // カラーチェンジ67秒・1ハゼ89秒・2ハゼ39秒ほど帯の方が早い)。そのずれ自体が
 // 「設定した温度が実際の事象より遅いかもしれない」という手掛かりになる。
 const BEAN_TEMP_BANDS = [
-  {lo: 140, hi: 150, label: 'カラーチェンジ(豆)', color: '#c9a227'},
-  {lo: 190, hi: 208, label: '1ハゼ(豆)', color: '#c76b3f'},
-  {lo: 215, hi: 225, label: '2ハゼ(豆)', color: '#8a3a2a'},
+  {lo: 140, hi: 150, label: 'カラーチェンジ(豆)', color: cssVar('--guide-cc')},
+  {lo: 190, hi: 208, label: '1ハゼ(豆)', color: cssVar('--guide-fc')},
+  {lo: 215, hi: 225, label: '2ハゼ(豆)', color: cssVar('--guide-sc')},
 ];
 // 推定豆温度の線を出している時だけ帯を描く(線が無いと読みようがないため)。
 const beanTempBandsPlugin = {
@@ -5063,9 +5254,9 @@ const tempGuideLinesPlugin = {
     const area = c.chartArea;
     const ctx = c.ctx;
     const lines = [
-      [guideTemps.colorChange, 'カラーチェンジ', '#c9a227'],
-      [guideTemps.firstCrack, '1ハゼ', '#c76b3f'],
-      [guideTemps.secondCrack, '2ハゼ', '#8a3a2a'],
+      [guideTemps.colorChange, 'カラーチェンジ', cssVar('--guide-cc')],
+      [guideTemps.firstCrack, '1ハゼ', cssVar('--guide-fc')],
+      [guideTemps.secondCrack, '2ハゼ', cssVar('--guide-sc')],
     ];
     ctx.save();
     for(const [temp, label, color] of lines){
@@ -5153,7 +5344,7 @@ const cooldownLinesPlugin = {
     const endX = cooldownPoint[0];
     const ctx = c.ctx;
     ctx.save();
-    for(const [xVal, label, color] of [[startX,'冷却開始','#b4573f'], [endX,'冷却完了目安','#4a9b8e']]){
+    for(const [xVal, label, color] of [[startX,'冷却開始',cssVar('--line-cooldown')], [endX,'冷却完了目安',cssVar('--line-compare')]]){
       const px = xScale.getPixelForValue(xVal);
       if(px < area.left || px > area.right) continue;
       ctx.strokeStyle = color; ctx.setLineDash([3,3]); ctx.lineWidth = 1.5;
@@ -5183,9 +5374,9 @@ const devTimePlugin = {
     if(x1 <= x0) return;
     const ctx = c.ctx;
     ctx.save();
-    ctx.fillStyle = 'rgba(122,155,118,0.15)';
+    ctx.fillStyle = cssVar('--dev-band-soft');
     ctx.fillRect(x0, area.top, x1 - x0, area.bottom - area.top);
-    ctx.fillStyle = '#7a9b76';
+    ctx.fillStyle = cssVar('--sage');
     ctx.font = '10px Inter, sans-serif';
     ctx.fillText(`Development Time${fcTimeIsInferred ? '(1ハゼ推定)' : ''}`, x0 + 4, area.bottom - 6);
     ctx.restore();
@@ -5295,10 +5486,10 @@ function renderChart(){
 
   // 選択中の点は大きく・白縁で目立たせる(1ハゼ指定の緑より優先して分かるように)。
   const pointColors = editedRoast.map((_, i) =>
-    isSelected('roast', i) ? '#ffffff' : (i === fcIndex ? '#7a9b76' : '#ce8b3e'));
+    isSelected('roast', i) ? cssVar('--point-selected') : (i === fcIndex ? cssVar('--sage') : cssVar('--line-edit')));
   const pointRadii = editedRoast.map((_, i) =>
     isSelected('roast', i) ? 8 : (i === fcIndex ? 7 : 5));
-  const fanPointColors = editedFan.map((_, i) => isSelected('fan', i) ? '#ffffff' : '#5b9bd5');
+  const fanPointColors = editedFan.map((_, i) => isSelected('fan', i) ? cssVar('--point-selected') : cssVar('--line-fan'));
   const fanPointRadii = editedFan.map((_, i) => isSelected('fan', i) ? 8 : 4);
 
   // X軸の右端は、常に「冷却完了予定時刻」まで見えるようにする(実測値がそれより
@@ -5331,9 +5522,9 @@ function renderChart(){
       // 遅れ・オーバーシュートが生じるため、直線補間でも実測とはズレが残る
       // (これはどんな単純な補間方式でも再現できない、実機の物理応答による限界)。
       datasets: [
-        { label:'参照(元プロファイル)', data:refData, borderColor:'#7c8b99', borderDash:[4,4],
+        { label:'参照(元プロファイル)', data:refData, borderColor:cssVar('--line-ref'), borderDash:[4,4],
           pointRadius:0, borderWidth:1.5, tension:0, yAxisID:'yTemp' },
-        { label:'編集中カーブ(吸入温度)', data:editData, borderColor:'#ce8b3e', backgroundColor:'#ce8b3e',
+        { label:'編集中カーブ(吸入温度)', data:editData, borderColor:cssVar('--line-edit'), backgroundColor:cssVar('--line-edit'),
           pointBackgroundColor:pointColors, pointRadius:pointRadii, pointHoverRadius:8,
           borderWidth:3, tension:0, yAxisID:'yTemp' },
         // 2026-07再訂正: 当初「制御点間はステップ状(手前の値を保持)」と推定し
@@ -5347,55 +5538,55 @@ function renderChart(){
         // わけではなさそう(区間によって実際の変化ペースが一定でない)。ステップ
         // ではないことは確実だが、直線補間は完全に正確な近似ではなく、現状の
         // 「stepなしより誤差の少ない近似」という位置づけで採用している。
-        { label:'風量', data:fanData, borderColor:'#5b9bd5', pointBackgroundColor:fanPointColors,
+        { label:'風量', data:fanData, borderColor:cssVar('--line-fan'), pointBackgroundColor:fanPointColors,
           pointRadius:fanPointRadii, borderWidth:1.6, borderDash:[2,2], tension:0, yAxisID:'yFan' },
-        { label:'実測 吸入温度', data:liveData, borderColor:'#e0483a', pointRadius:0,
+        { label:'実測 吸入温度', data:liveData, borderColor:cssVar('--line-live'), pointRadius:0,
           borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
           // 容器エラー等が発生していた区間は、線の色を変えて一目で分かるようにする。
-          segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? '#ffcc00' : undefined } },
+          segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? cssVar('--line-error') : undefined } },
         { label: compareProfile ? `比較: ${compareProfile.name}` : '比較', data:compareData,
-          borderColor:'#4a9b8e', borderDash:[6,3], pointRadius:0, borderWidth:2.2, tension:0, yAxisID:'yTemp' },
-        { label:'予熱中(実測)', data:preheatDotData, borderColor:'#e0483a', backgroundColor:'#e0483a',
+          borderColor:cssVar('--line-compare'), borderDash:[6,3], pointRadius:0, borderWidth:2.2, tension:0, yAxisID:'yTemp' },
+        { label:'予熱中(実測)', data:preheatDotData, borderColor:cssVar('--line-live'), backgroundColor:cssVar('--line-live'),
           pointRadius:9, pointHoverRadius:11, showLine:false, yAxisID:'yTemp' },
-        { label:'RoR(実測)', data:rorData, borderColor:'#9b6bce', pointRadius:0,
+        { label:'RoR(実測)', data:rorData, borderColor:cssVar('--line-ror'), pointRadius:0,
           borderWidth:1.8, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorLiveVisible },
-        { label:'RoR(プロファイル)', data:profileRorData, borderColor:'#b98fe0', borderDash:[5,3], pointRadius:0,
+        { label:'RoR(プロファイル)', data:profileRorData, borderColor:cssVar('--line-ror-profile'), borderDash:[5,3], pointRadius:0,
           borderWidth:1.5, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorProfileVisible },
         // 2026-07再訂正: 制御点間はステップ状ではなく直線的に変化することが実測風量
         // との突き合わせで判明した(上の「風量」データセットのコメント参照)ため、
         // 実測風量もステップではなく実測BTと同じ滑らかな補間で描画する(1%刻みの
         // 見た目の「階段」は変換式の量子化によるもので、実際の変化自体が階段状
         // というわけではなかった)。
-        { label:'実測風量', data:liveFanData, borderColor:'#e0483a', borderDash:[2,3], pointRadius:0,
+        { label:'実測風量', data:liveFanData, borderColor:cssVar('--line-live'), borderDash:[2,3], pointRadius:0,
           borderWidth:1.4, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yFan' },
         // 焙煎履歴タブから選んだ過去ログ。焙煎中の実測ライントレースと同じ配色・
         // 補間方式で重ねて描画する(見た目を統一し、実測データとして直感的に比較できるように)。
         { label: historyOverlayRecord ? `焙煎ログ: ${historyOverlayRecord.label}` : '焙煎ログ',
-          data:historyOverlayData, borderColor:'#e0609a', pointRadius:0,
+          data:historyOverlayData, borderColor:cssVar('--line-log'), pointRadius:0,
           borderWidth:2.2, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp' },
-        { label:'焙煎ログ 風量', data:historyOverlayFanData, borderColor:'#e0609a', borderDash:[2,3], pointRadius:0,
+        { label:'焙煎ログ 風量', data:historyOverlayFanData, borderColor:cssVar('--line-log'), borderDash:[2,3], pointRadius:0,
           borderWidth:1.4, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yFan' },
         // 焙煎ログの実測温度から計算したRoR(RoR表示ON時のみ)。実測RoRと同系色で
         // 区別できるよう点線にする。ログを表示していない時はデータ空で描かれない。
-        { label:'RoR(焙煎ログ)', data:historyOverlayRorData, borderColor:'#c56bce', borderDash:[2,2],
+        { label:'RoR(焙煎ログ)', data:historyOverlayRorData, borderColor:cssVar('--line-ror-log'), borderDash:[2,2],
           pointRadius:0, borderWidth:1.5, tension:0.2, cubicInterpolationMode:'monotone',
           yAxisID:'yRoR', hidden:!rorHistoryVisible },
         // 比較対象の風量。温度の比較線と同じ色(teal)で、風量軸に重ねる。
-        { label:'比較 風量', data:compareFanData, borderColor:'#4a9b8e', borderDash:[2,3],
+        { label:'比較 風量', data:compareFanData, borderColor:cssVar('--line-compare'), borderDash:[2,3],
           pointRadius:0, borderWidth:1.4, tension:0, yAxisID:'yFan' },
         // 推定値(実測ではない)。温度・風量から計算した豆温度と積算入熱。
         // 新しいデータセットは必ず配列の末尾に足すこと(ROR_DATASET_KIND_BY_INDEXと
         // ENERGY_DATASET_KIND_BY_INDEXが並び順に依存しているため、間に挿入すると
         // 番号がずれる)。
-        { label:'豆温度(推定)', data:beanTempData, borderColor:'#d9a441', borderDash:[3,3],
+        { label:'豆温度(推定)', data:beanTempData, borderColor:cssVar('--line-bean'), borderDash:[3,3],
           pointRadius:0, borderWidth:1.6, tension:0.15, cubicInterpolationMode:'monotone',
           yAxisID:'yTemp', hidden:!beanTempVisible },
-        { label:'積算入熱(推定)', data:energyData, borderColor:'#7fb069', pointRadius:0,
+        { label:'積算入熱(推定)', data:energyData, borderColor:cssVar('--line-energy'), pointRadius:0,
           borderWidth:1.8, tension:0.15, cubicInterpolationMode:'monotone',
           yAxisID:'yEnergy', hidden:!energyVisible },
         // 焙煎ログの実測吸入温度・実測風量から推定した豆温度。プロファイルから
         // 計算した豆温度(上)と同系色にし、ログ側は点線で区別する。
-        { label:'豆温度(焙煎ログ・推定)', data:historyBeanTempData, borderColor:'#e0a86a',
+        { label:'豆温度(焙煎ログ・推定)', data:historyBeanTempData, borderColor:cssVar('--line-bean-log'),
           borderDash:[2,2], pointRadius:0, borderWidth:1.5, tension:0.15,
           cubicInterpolationMode:'monotone', yAxisID:'yTemp', hidden:!beanTempHistoryVisible },
       ]
@@ -5404,20 +5595,20 @@ function renderChart(){
       responsive:true, maintainAspectRatio:false, animation:false,
       interaction:{ mode:'nearest', intersect:true },
       scales:{
-        x:{ type:'linear', min:0, max:xAxisMax, title:{display:true,text:'時間',color:'#9c948a'},
-            ticks:{color:'#9c948a', stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:'#3d3630'} },
-        yTemp:{ position:'left', title:{display:true,text:'温度(℃)',color:'#9c948a'},
-            ticks:{color:'#9c948a'}, grid:{color:'#3d3630'}, min:TEMP_AXIS_MIN, max:280 },
-        yFan:{ position:'right', title:{display:true,text:'風量(%)',color:'#9c948a'},
-            ticks:{color:'#9c948a'}, grid:{display:false}, min:50, max:100 },
-        yRoR:{ position:'right', display:anyRoRVisible(), title:{display:true,text:'RoR(℃/分)',color:'#9c948a'},
-            ticks:{color:'#9c948a'}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
+        x:{ type:'linear', min:0, max:xAxisMax, title:{display:true,text:'時間',color:cssVar('--axis')},
+            ticks:{color:cssVar('--axis'), stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:cssVar('--grid')} },
+        yTemp:{ position:'left', title:{display:true,text:'温度(℃)',color:cssVar('--axis')},
+            ticks:{color:cssVar('--axis')}, grid:{color:cssVar('--grid')}, min:TEMP_AXIS_MIN, max:280 },
+        yFan:{ position:'right', title:{display:true,text:'風量(%)',color:cssVar('--axis')},
+            ticks:{color:cssVar('--axis')}, grid:{display:false}, min:50, max:100 },
+        yRoR:{ position:'right', display:anyRoRVisible(), title:{display:true,text:'RoR(℃/分)',color:cssVar('--axis')},
+            ticks:{color:cssVar('--axis')}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
         // 積算入熱は0から単調に増えるだけなので、目盛りは表示中だけ出す(RoRと同じ扱い)。
-        yEnergy:{ position:'right', display:energyVisible, title:{display:true,text:'積算入熱(kcal)',color:'#9c948a'},
-            ticks:{color:'#9c948a'}, grid:{display:false}, min:0 },
+        yEnergy:{ position:'right', display:energyVisible, title:{display:true,text:'積算入熱(kcal)',color:cssVar('--axis')},
+            ticks:{color:cssVar('--axis')}, grid:{display:false}, min:0 },
       },
       plugins:{
-        legend:{ labels:{ color:'#ede7dd', font:{size:11},
+        legend:{ labels:{ color:cssVar('--chart-legend'), font:{size:11},
           // 凡例は「今の文脈で実際に使われている」項目だけに絞り込む(2026-07)。
           // 焙煎中でも焙煎ログの項目が出続けたり、ログ比較中でも実測・予熱中の
           // 項目が出たりして紛らわしかったため、データが無い項目は隠す。
@@ -6519,6 +6710,7 @@ async function initAppSettings(){
     sourceTabPref.preset = data.showPresetTab !== false;
     sourceTabPref.ikawa = data.showIkawaTab !== false;
     applyBeanSettings(data.beanMoisturePct);
+    applyTheme(data.theme);
     // 設定の取得はプロファイル選択より後になることがある。既に開いていれば
     // 新しい前提で推定し直す。
     if(currentProfile){ updateProfileOverview(); renderChart(); }

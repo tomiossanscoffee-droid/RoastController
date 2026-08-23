@@ -59,3 +59,51 @@ def test_どれか1項目でも入っていれば空ではない(field):
     entry = {f: "" for f in _BEAN_PURCHASE_FIELDS}
     entry[field] = "あ"
     assert not _bean_purchase_is_empty(entry)
+
+
+# ------------------------------------------------------------
+# 配色(theme)
+# ------------------------------------------------------------
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from app.server import APP_THEMES, DEFAULT_APP_SETTINGS as _SETTINGS  # noqa: E402
+
+INDEX = Path(__file__).resolve().parent.parent / "app/static/index.html"
+MOBILE = Path(__file__).resolve().parent.parent / "app/static/mobile.html"
+
+
+def test_配色の既定はダーク():
+    assert _SETTINGS["theme"] == "dark"
+    assert APP_THEMES == ("dark", "light", "contrast")
+
+
+@pytest.mark.parametrize("page", [INDEX, MOBILE])
+def test_JSが読むCSS変数が全配色で定義されている(page):
+    """cssVar() で読む変数が :root に無いと、その色だけ既定の灰色になる。
+
+    dark以外は :root を継承するので、:root に全部あることを確かめれば足りる。
+    """
+    s = page.read_text(encoding="utf-8")
+    used = set(re.findall(r"cssVar\('(--[a-z0-9-]+)'", s))
+    root = re.search(r":root\s*\{(.*?)\n  \}", s, re.S).group(1)
+    defined = set(re.findall(r"(--[a-z0-9-]+):", root))
+    missing = sorted(used - defined)
+    assert not missing, f"{page.name} の :root に無い変数: {missing}"
+
+
+@pytest.mark.parametrize("page", [INDEX, MOBILE])
+def test_追加した2配色が定義されている(page):
+    s = page.read_text(encoding="utf-8")
+    for theme in ("light", "contrast"):
+        assert f'[data-theme="{theme}"]' in s, f"{page.name} に {theme} が無い"
+
+
+@pytest.mark.parametrize("page", [INDEX, MOBILE])
+def test_グラフの色が直書きされていない(page):
+    """JS側に色を直書きすると、配色を切り替えてもそこだけ変わらない。"""
+    s = page.read_text(encoding="utf-8")
+    tail = s.split("</style>", 1)[1]
+    hard = set(re.findall(r"'#[0-9a-fA-F]{6}'|'rgba?\([0-9., ]+\)'", tail))
+    hard.discard("'#888888'")   # cssVar() が変数を見つけられなかった時の保険
+    assert not hard, f"{page.name} に直書きの色が残っている: {sorted(hard)}"

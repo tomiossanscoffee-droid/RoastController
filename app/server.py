@@ -493,6 +493,9 @@ async def set_guide_temps(request: Request):
 # 量れば、実測の焙煎指数と突き合わせて較正できる。
 # 豆の投入量は焙煎機の仕様どおり50g固定なので、設定にはしていない
 # (roastlib/energy.py の BEAN_G)。
+# theme: 画面の配色。dark(既定・暖色の暗い配色) / light(明るい部屋向け) /
+# contrast(焙煎中に離れた場所から読むための高コントラスト)。
+# 実体はCSS変数で、app/static/index.html の :root と [data-theme=...] にある。
 DEFAULT_APP_SETTINGS = {
     "notifyEnabled": True,
     "showLogEnabled": True,
@@ -501,7 +504,9 @@ DEFAULT_APP_SETTINGS = {
     "showPresetTab": True,
     "showIkawaTab": True,
     "beanMoisturePct": 10.0,
+    "theme": "dark",
 }
+APP_THEMES = ("dark", "light", "contrast")
 BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX = 5.0, 15.0
 
 
@@ -538,6 +543,9 @@ async def set_app_settings(request: Request):
         data["showPresetTab"] = bool(body["showPresetTab"])
     if "showIkawaTab" in body:
         data["showIkawaTab"] = bool(body["showIkawaTab"])
+    if "theme" in body:
+        theme = str(body.get("theme") or "").strip()
+        data["theme"] = theme if theme in APP_THEMES else DEFAULT_APP_SETTINGS["theme"]
     if "beanMoisturePct" in body:
         data["beanMoisturePct"] = _clamp_setting(
             body["beanMoisturePct"], BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX,
