@@ -68,7 +68,6 @@ from roastlib.profile_generator import (  # noqa: E402
     compute_preset_phase_bases,
     compute_preset_health_bands, evaluate_profile_health,
     generate_profile_axes, infer_taste_axes, TASTE_AXES, infer_roast_level,
-    MAX_TEMPERATURE,
 )
 
 DB_PATH = os.environ.get("ROAST_DB_PATH", str(REPO_ROOT / "nhm.sqlite"))
@@ -378,9 +377,7 @@ def _load_guide_temps() -> dict:
         data = json.loads(GUIDE_TEMPS_PATH.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return dict(DEFAULT_GUIDE_TEMPS)
-    if not isinstance(data, dict):
-        return dict(DEFAULT_GUIDE_TEMPS)
-    return {k: _clean_guide_temp(data.get(k)) for k in DEFAULT_GUIDE_TEMPS}
+    return {**DEFAULT_GUIDE_TEMPS, **data}
 
 
 # ------------------------------------------------------------
@@ -444,9 +441,11 @@ def get_guide_temps():
 @app.put("/api/guide_temps")
 async def set_guide_temps(request: Request):
     body = await request.json()
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "本文はオブジェクトで送ってください"}, status_code=400)
-    data = {k: _clean_guide_temp(body.get(k)) for k in DEFAULT_GUIDE_TEMPS}
+    data = {
+        "colorChange": body.get("colorChange"),
+        "firstCrack": body.get("firstCrack"),
+        "secondCrack": body.get("secondCrack"),
+    }
     GUIDE_TEMPS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return JSONResponse({"ok": True})
 

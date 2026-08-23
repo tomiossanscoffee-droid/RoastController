@@ -1,0 +1,28 @@
+@@ -365,6 +366,27 @@
+ #   アプリを再起動しても(ブラウザのlocalStorageに依存せず)引き継がれるようにする。
+ # ------------------------------------------------------------
+ DEFAULT_GUIDE_TEMPS = {"colorChange": None, "firstCrack": None, "secondCrack": None}
++# 焙煎機で見て決める値。この範囲を外れるものは入力ミスとみなして未設定にする。
++GUIDE_TEMP_MIN, GUIDE_TEMP_MAX = 50, MAX_TEMPERATURE
++
++
++def _clean_guide_temp(value):
++    """ガイド温度を数値に正規化する。数値にできない・範囲外なら未設定(None)。
++
++    ここで弾かないと、文字列などが入ったまま焙煎度の判定やフェーズ分割の
++    温度比較に渡り、TypeErrorで500になる(2026-08、APIを直接叩いて発見)。
++    画面側は数値入力欄なので通常は起きないが、ファイルを直接編集した場合や
++    他のクライアントから叩かれた場合に備えて、読み書きの両方で正規化する。
++    """
++    if value is None or value == "":
++        return None
++    try:
++        v = float(value)
++    except (TypeError, ValueError):
++        return None
++    if v != v or not (GUIDE_TEMP_MIN <= v <= GUIDE_TEMP_MAX):
++        return None
++    return int(round(v))
+ 
+ 
+ def _load_guide_temps() -> dict:
