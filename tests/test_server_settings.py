@@ -28,6 +28,12 @@ def test_扱えない値は未設定になる(value):
     assert _clean_guide_temp(value) is None
 
 
-def test_設定の3項目が揃っている():
+def test_既定値そのものが正規化を通る():
+    """公開版は初期値を入れてある(184/223/242)ため、Noneとは限らない。
+
+    どちらの版でも、既定値がそのまま使える形(未設定か、正規化しても変わらない値)で
+    あることだけを確かめる。
+    """
     assert set(DEFAULT_GUIDE_TEMPS) == {"colorChange", "firstCrack", "secondCrack"}
-    assert all(v is None for v in DEFAULT_GUIDE_TEMPS.values())
+    for key, value in DEFAULT_GUIDE_TEMPS.items():
+        assert _clean_guide_temp(value) == value, f"{key} の既定値 {value} が正規化で変わる"
