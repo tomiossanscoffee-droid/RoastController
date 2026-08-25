@@ -6410,14 +6410,23 @@ function updateSelectionNote(){
 // 選択されていない隣の点を追い越さないよう、グループ全体で頭打ちにする
 // (選択内どうしの間隔は一定に保たれるので、内側の点は制約にならない)。
 // 純粋な計算だけなので、tests/test_point_drag.js で単体検証している。
+//   opts.tMinLast: 最終点だけに掛ける時間の下限(省略時は無し)。温度と風量の
+//              終端どうしを揃えるため、相手のカーブが付いてこられる範囲までしか
+//              終端を下げない用途で使う。手前の点には掛からない。
 function computeGroupDrag(base, selected, wantDt, wantDv, opts){
   const {gap, tMax, vMin, vMax} = opts;
+  const tMinLast = (opts.tMinLast === undefined || opts.tMinLast === null)
+    ? null : opts.tMinLast;
   if(!selected.length) return {dt: 0, dv: 0};
   const sel = new Set(selected);
   let dtMin = -Infinity, dtMax = Infinity, dvMin = -Infinity, dvMax = Infinity;
   for(const i of selected){
     let L = i - 1; while(L >= 0 && sel.has(L)) L--;
     dtMin = Math.max(dtMin, L >= 0 ? (base[L][0] + gap) - base[i][0] : -base[i][0]);
+    // 最終点は、相手のカーブが付いてこられる時刻より前へは動かさない
+    if(tMinLast !== null && i === base.length - 1){
+      dtMin = Math.max(dtMin, tMinLast - base[i][0]);
+    }
     let R = i + 1; while(R < base.length && sel.has(R)) R++;
     dtMax = Math.min(dtMax, R < base.length ? (base[R][0] - gap) - base[i][0] : tMax - base[i][0]);
     dvMin = Math.max(dvMin, vMin - base[i][1]);
@@ -6448,11 +6457,19 @@ function onDragMove(e){
   const anchor = draggingIndex;
   if(!base[anchor]) return;
 
+  // 終端を掴んでいる場合は、相手のカーブが付いてこられる所までしか下げられない。
+  // 温度と風量は点の数も時刻も違うので、自分の手前の点だけを見て動かすと、相手の
+  // 終端が追随できず「片方だけ焙煎終了より後ろに残る」状態になる(実在プリセットで
+  // 風量の終端を384秒より左へ引くと、温度の終端が384秒で止まり最大83秒ずれていた)。
+  const otherArrForLimit = draggingDataset === 'roast' ? editedFan : editedRoast;
+  const tMinLastForDrag = otherArrForLimit.length > 1
+    ? otherArrForLimit[otherArrForLimit.length - 2][0] + MIN_POINT_GAP : null;
+
   // 掴んだ点の移動量を、選択中の全点に同じだけ適用する(選択外の隣の点を
   // 追い越さない範囲まで頭打ちにする)。1点だけのドラッグも同じ経路を通る。
   const {dt, dv} = computeGroupDrag(
     base, sel, wantX - base[anchor][0], wantY - base[anchor][1],
-    { gap: MIN_POINT_GAP, tMax: MAX_ROAST_SECONDS,
+    { gap: MIN_POINT_GAP, tMax: MAX_ROAST_SECONDS, tMinLast: tMinLastForDrag,
       vMin: draggingDataset === 'roast' ? 0 : MIN_FAN,
       vMax: draggingDataset === 'roast' ? MAX_TEMPERATURE : 100 });
   for(const i of sel){
@@ -6469,8 +6486,9 @@ function onDragMove(e){
     const otherArr = draggingDataset === 'roast' ? editedFan : editedRoast;
     const otherDsIndex = draggingDataset === 'roast' ? 2 : 1;
     if(otherArr.length > 0){
-      const minAllowed = otherArr.length > 1 ? otherArr[otherArr.length - 2][0] + MIN_POINT_GAP : 0;
-      otherArr[otherArr.length - 1][0] = Math.max(minAllowed, newLastT);
+      // 上のtMinで「相手が付いてこられる範囲」に既に抑えてあるので、そのまま合わせる。
+      // (以前はここでMath.maxを掛けており、抑え切れていない分だけ終端がずれていた)
+      otherArr[otherArr.length - 1][0] = newLastT;
       chart.data.datasets[otherDsIndex].data = otherArr.map(p => ({x:p[0], y:p[1]}));
     }
     // 焙煎加熱の終了時刻が動いた分だけ、冷却完了予定時刻も連動して移動させる
