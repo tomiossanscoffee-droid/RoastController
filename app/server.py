@@ -388,6 +388,36 @@ DEFAULT_GUIDE_TEMPS = {"colorChange": 184, "firstCrack": 223, "secondCrack": 242
 GUIDE_TEMP_MIN, GUIDE_TEMP_MAX = 50, MAX_TEMPERATURE
 
 
+def _clean_curve(points, name="roast"):
+    """[[秒, 値], ...] を検証して、数値の組だけにして返す。
+
+    使えない値が混ざっていたら (None, 理由) を返す。呼び出し側は400で返す。
+
+    ■ なぜ要るか
+    画面から来るカーブは常に数値だが、保存ファイルを手で編集した場合や、
+    APIを直接叩かれた場合には文字列やnullが混ざりうる。そのまま渡すと
+    「'<' not supported between instances of 'int' and 'str'」で500になり、
+    味を推測とプロファイル健全性が落ちる(ガイド温度で同じ直し方をしたのと同種)。
+    """
+    if not isinstance(points, (list, tuple)):
+        return None, f"{name} は [[秒, 値], ...] の形で渡してください"
+    out = []
+    for i, pt in enumerate(points):
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+            return None, f"{name} の{i + 1}番目が [秒, 値] の形になっていません"
+        t, v = pt[0], pt[1]
+        if isinstance(t, bool) or isinstance(v, bool):
+            return None, f"{name} の{i + 1}番目に数値でない値が入っています"
+        try:
+            t, v = float(t), float(v)
+        except (TypeError, ValueError):
+            return None, f"{name} の{i + 1}番目に数値でない値が入っています"
+        if not (math.isfinite(t) and math.isfinite(v)):
+            return None, f"{name} の{i + 1}番目に数値でない値が入っています"
+        out.append([t, v])
+    return out, None
+
+
 def _clean_guide_temp(value):
     """ガイド温度を数値に正規化する。数値にできない・範囲外なら未設定(None)。
 
@@ -1196,8 +1226,12 @@ async def overwrite_custom_profile(pid: str, request: Request):
     existing = data[pid]
     name = (body.get("name") or existing["name"]).strip()
     uuid_ascii = body.get("uuid") or existing.get("uuid", "")
-    roast = body.get("roast")
-    fan = body.get("fan")
+    roast, err = _clean_curve(body.get("roast"))
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    fan, err = _clean_curve(body.get("fan"), "fan")
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
     if not roast or not fan:
         return JSONResponse({"error": "roast/fan は必須です"}, status_code=400)
 
@@ -1371,7 +1405,9 @@ async def profile_health_endpoint(request: Request):
     逸脱を返す注意喚起用エンドポイント。焙煎度の分類は変えない。
     roast_level を渡せばその焙煎度基準で、無ければ総焙煎時間から推定して評価する。"""
     body = await request.json()
-    roast = body.get("roast")
+    roast, err = _clean_curve(body.get("roast"))
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
     if not roast or len(roast) < 2:
         return JSONResponse({"error": "roast(2点以上の制御点)は必須です"}, status_code=400)
     gt = _load_guide_temps()
@@ -1392,7 +1428,9 @@ async def profile_health_endpoint(request: Request):
 @app.post("/api/infer_taste_profile")
 async def infer_taste_profile_endpoint(request: Request):
     body = await request.json()
-    roast = body.get("roast")
+    roast, err = _clean_curve(body.get("roast"))
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
     if not roast or len(roast) < 2:
         return JSONResponse({"error": "roast(2点以上の制御点)は必須です"}, status_code=400)
     try:
@@ -1411,8 +1449,12 @@ async def save_custom_profile(request: Request):
     body = await request.json()
     name = (body.get("name") or "custom").strip()
     uuid_ascii = body.get("uuid", "")
-    roast = body.get("roast")
-    fan = body.get("fan")
+    roast, err = _clean_curve(body.get("roast"))
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    fan, err = _clean_curve(body.get("fan"), "fan")
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
     cooldown = body.get("cooldown")
     if not roast or not fan or not cooldown or not uuid_ascii:
         return JSONResponse({"error": "roast/fan/cooldown/uuid は必須です"}, status_code=400)

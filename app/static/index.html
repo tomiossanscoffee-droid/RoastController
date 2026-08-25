@@ -830,7 +830,7 @@
            自動で再送して次の焙煎を始められる状態にする。停止はこのボタンでも、
            焙煎機側で次を始めないことでも行える。 -->
       <label class="continuous-toggle" id="continuousToggleRow" for="continuousToggle"
-             title="排出完了(冷却・容器交換まで完了)から、設定した待ち時間のあとに同じプロファイルを自動で再送します。待ち時間はサイドバーの設定「連続焙煎の待ち時間」で変えられます。停止するにはもう一度押してください。">
+             title="排出完了から、設定した待ち時間のあとに同じプロファイルを自動で再送します。もう一度押すと停止します。">
         <input type="checkbox" id="continuousToggle">
         <span>連続焙煎モード</span>
       </label>
@@ -944,9 +944,8 @@
            畳まれるため)。設定の中に入力欄そのものを置く形にした。 -->
       <div class="settings-title" style="margin-top:12px;">温度ガイド線(吸入温度)</div>
       <div class="settings-note" style="margin-bottom:6px;">
-        焙煎機の画面を見て決めた<b>吸入温度</b>。味を推測・ABCモードのフェーズの区切り、
-        Development Timeの見込みに使われます。空欄にすると未設定に戻ります。
-        (下の「1ハゼの豆温度」は豆側の温度で、別の設定です)
+        焙煎機の画面を見て決めた<b>吸入温度</b>。空欄にすると未設定に戻ります。
+        下の「1ハゼの豆温度」は豆側の温度で、別物です。
       </div>
       <div class="settings-num-row">
         <label for="guideColorChange">カラーチェンジ</label>
@@ -973,11 +972,11 @@
            豆の投入量は50g固定なので、設定するのは含水率と1ハゼの豆温度だけ。 -->
       <div class="settings-title" style="margin-top:12px;">豆温度モデルの前提(豆温度)</div>
       <div class="settings-note" style="margin-bottom:6px;">
-        推定豆温度・推定入熱・推定焙煎指数の計算に使われます。上のガイド線(吸入温度)
-        とは別で、こちらを変えてもABCモード・味を推測は変わりません。
+        推定豆温度・推定入熱・推定焙煎指数に使います
+        (変えてもABCモード・味を推測は動きません)。
       </div>
       <div class="settings-num-row"
-           title="生豆の含水率です(5〜15%)。ニュークロップかオールドクロップかでも変わります。焙煎後の重量を量って、実測の焙煎指数に合うよう調整できます">
+           title="生豆の含水率(5〜15%)。推定入熱・推定焙煎指数に効きます">
         <label for="beanMoistureInput">生豆の含水率</label>
         <span class="settings-num-field">
           <input type="number" id="beanMoistureInput" min="5" max="15" step="0.5" value="10">
@@ -989,7 +988,7 @@
            乾物の分解に混ぜていると、分解は温度依存なのにチャフはほぼ一定という
            違いが吸収され、当てはめていない焙煎度の指数がずれる。 -->
       <div class="settings-num-row"
-           title="焙煎中に剥がれて出ていく薄皮(チャフ)の量です(豆50gあたり0〜2g)。豆の種類で変わります。焙煎前後の重量差のうち、水分でも揮発性ガスでもない分にあたり、推定焙煎指数に効きます">
+           title="焙煎中に剥がれる薄皮の量(豆50gあたり0〜2g)。推定焙煎指数に効きます">
         <label for="chaffInput">チャフの量</label>
         <span class="settings-num-field">
           <input type="number" id="chaffInput" min="0" max="2" step="0.1" value="0.5">
@@ -1000,7 +999,7 @@
            耐えられる圧力が高く、爆ぜる温度も高い(使う人の経験則)。標高から自動で
            決めるだけの実測が無いため、設定として開けてある。 -->
       <div class="settings-num-row"
-           title="1ハゼが起きる豆の温度です(185〜210℃)。上の温度ガイド線の1ハゼ(吸入温度)とは別物です。標高が高い産地の豆は密度が高く、爆ぜる温度も高くなります。変えると推定豆温度そのものではなく「いつ1ハゼが来るか」の予想が動きます">
+           title="1ハゼが起きる豆の温度(185〜210℃)。上のガイド線の1ハゼ(吸入温度)とは別物です">
         <label for="fcBeanTempInput">1ハゼの豆温度</label>
         <span class="settings-num-field">
           <input type="number" id="fcBeanTempInput" min="185" max="210" step="1" value="196">
@@ -1026,20 +1025,12 @@
            普段は畳んでおく。使うのは焙煎するたびではなく、豆や環境が変わったときだけ。 -->
       <div class="settings-title" style="margin-top:12px;">豆温度モデルの較正</div>
       <div class="settings-note" style="margin-bottom:6px;">
-        推定豆温度・推定入熱・推定焙煎指数は、プリセットから当てはめた一般的な値で
-        計算しています。専用プロファイルを1回焼いて測った値を入れると、この焙煎機と
-        豆に合わせ直せます。
+        専用プロファイルを1回焼いて測った値で、推定をこの焙煎機と豆に合わせます。
       </div>
       <button class="btn small" id="btnCalOpen" style="width:auto;">較正を開く</button>
       <div id="calPanel" style="display:none; margin-top:8px;">
         <div class="settings-note">
-          ① 下のボタンで校正用プロファイルを読み込んで焙煎機に送り、焼きます。<br>
-          ② 1ハゼの音が始まった時刻・終わった時刻、2ハゼが始まった時刻を控えます。<br>
-          ③ 焙煎後の豆を量ります。<br>
-          ④ 別の日に同じプロファイルをもう一度焼き、途中で止めて量ると、序盤の
-             乾き方も合わせられます(止める時刻は何分でも構いません。色が変わった
-             ところで止めるなら、その時刻を控えてください)。<br>
-          測った項目だけが使われます。ひとつだけでも構いません。
+          校正用プロファイルを焼いて、測れた項目だけ入れてください(ひとつでも構いません)。
         </div>
         <button class="btn small" id="btnCalLoadProfile" style="width:auto; margin:6px 0;">校正用プロファイルを読み込む</button>
         <div class="settings-num-row" title="1ハゼの音が聞こえ始めた時刻(2回目のハゼ音)。mm:ss または 秒で入れられます">
@@ -1184,7 +1175,7 @@
       <!-- 最終温度は、焙煎機が測る吸入温度と、そこから推定した豆温度を一枚にまとめる。
            別々のカードに離すと、どちらがどちらか分かりにくく、差(20℃前後が目安)も
            見比べないと分からないため。 -->
-      <div class="metric-card" title="上段は焙煎終了時の吸入温度(焙煎機が測る温度)、下段はそこから推定した豆の温度と、吸入温度との差です。豆は吸入温度より20℃前後低くなります">
+      <div class="metric-card" title="上段が吸入温度(焙煎機が測る温度)、下段が推定した豆温度と、その差です">
         <div class="metric-label">最終温度(吸入 / 豆)</div>
         <div class="metric-value mono" id="ovFinalTemp">--</div>
         <div class="metric-sub mono" id="ovEndBeanTemp">--</div>
@@ -1195,11 +1186,11 @@
       </div>
       <!-- 温度カーブと風量カーブから計算した推定値。実測ではない。
            生豆50g・含水率10%を前提としている(roastlib/energy.py参照)。 -->
-      <div class="metric-card" title="温度と風量から計算した、豆が受け取る熱量の推定値です(生豆50g・含水率10%として計算)。実測ではありません">
+      <div class="metric-card" title="温度と風量から計算した、豆が受け取る熱量の推定値">
         <div class="metric-label">推定入熱</div>
         <div class="metric-value mono" id="ovEnergy">--</div>
       </div>
-      <div class="metric-card" title="焙煎指数 = 生豆重量 ÷ 焙煎後重量。浅煎り1.140〜1.170 / 中煎り〜1.195 / 中深煎り〜1.220 / 深煎り1.220以上。推定値です">
+      <div class="metric-card" title="生豆重量 ÷ 焙煎後重量 の推定値。浅1.140〜 / 中1.170〜 / 中深1.195〜 / 深1.220〜">
         <div class="metric-label">推定焙煎指数</div>
         <div class="metric-value mono" id="ovRoastIndex">--</div>
       </div>
@@ -1268,7 +1259,7 @@
             </label>
             <label class="generator-field">
               <span>&nbsp;</span>
-              <button class="btn small" id="btnAbcBaseValues" title="標高と焙煎度を基準に、A/B/C/D各フェーズを最も標準的な長さ・BのRoRをフラット・最終温度も焙煎度の標準値に戻します">基準値</button>
+              <button class="btn small" id="btnAbcBaseValues" title="各フェーズを焙煎度の標準的な長さに戻します">基準値</button>
             </label>
           </div>
           <!-- Aフェーズ・Bフェーズ -->
@@ -1375,7 +1366,7 @@
       <div class="main-header">
         <div>
           <h2 id="recordsTitle">記録を選択してください</h2>
-          <div class="hint">左の一覧から選ぶか、「＋ 新しく追加」で作成してください。焙煎完了時には、使用したプロファイルと実測カーブが自動で記録されます。</div>
+          <div class="hint">左の一覧から選ぶか、「＋ 新しく追加」で作成してください。</div>
         </div>
       </div>
       <div id="recordsContent"></div>
@@ -2387,7 +2378,7 @@ async function loadBeanRoastRecordList(groupKey){
     return `<div class="rr-item${sel}" data-record-id="${r.id}" style="display:flex; align-items:center; gap:8px; cursor:default;">
       <input type="checkbox" data-compare-id="${r.id}" onchange="toggleCompareRoastRecord('${r.id}', this.checked)"${checked}>
       <span class="rr-label" style="flex:1; cursor:pointer;" onclick="showRoastRecordInline('${r.id}')">${cropYear}${escapeHtml(r.profile_name || '')} ${stars} ・ ${escapeHtml(when)}</span>
-      <button class="btn small" style="width:auto;" title="この豆との紐付けを解除します(記録自体は残ります。別の豆に紐付け直す場合は、そちらの「過去の焙煎記録を追加」から選べます)" onclick="unlinkRoastRecordFromBean('${r.id}')">紐付けを解除</button>
+      <button class="btn small" style="width:auto;" title="この豆との紐付けを解除します(記録は残ります)" onclick="unlinkRoastRecordFromBean('${r.id}')">紐付けを解除</button>
     </div>`;
   }).join('');
 }
@@ -7195,8 +7186,9 @@ function applyBeanSettings(moisturePct, fcBeanTemp, chaffG){
   const card = document.getElementById('ovEnergy');
   const wrap = card ? card.closest('.metric-card') : null;
   if(wrap){
-    wrap.title = `温度と風量から計算した、豆が受け取る熱量の推定値です`
-               + `(生豆${ENERGY.BEAN_G}g・含水率${m}%として計算)。実測ではありません`;
+    // いま使っている前提(含水率)は操作に効くので出す。それ以外の説明は付けない。
+    wrap.title = `温度と風量から計算した、豆が受け取る熱量の推定値`
+               + `(生豆${ENERGY.BEAN_G}g・含水率${m}%)`;
   }
   energyCache = {key: null, result: null};   // 前提が変わったので作り直す
 }
