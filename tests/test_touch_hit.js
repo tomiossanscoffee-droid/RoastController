@@ -10,6 +10,10 @@
 // iPhoneで5px程度にしかならず、指では絶対に当たらない(実際「タップしても反応が
 // ない」状態になっていた)。縮小率で割り戻せているかを確かめる。
 //
+// もう一つの狙いは、割り戻しすぎないこと。visualViewport.scale の逆数と
+// innerWidth÷screen.width は同じ量を別の方法で測ったもので、最初の実装で両方を
+// 掛けてしまい約5.7倍になった(軸の文字も制御点も画面いっぱいに膨れ上がった)。
+//
 //   deno run --allow-read tests/test_touch_hit.js
 // ============================================================
 const fs = await import('node:fs/promises');
@@ -41,42 +45,45 @@ function withWindow(innerWidth, screenWidth, scale) {
 
 console.log('■ 等倍表示(PCのブラウザ)');
 {
-  const f = withWindow(1440, 1440);
+  const f = withWindow(1440, 1440, 1);
   check('縮小率は1', f.layoutShrinkFactor(), 1);
   check('マウスは12px', f.pointHitRadius({pointerType: 'mouse'}), 12);
   check('指でも22px(縮小していないので割り戻さない)',
         f.pointHitRadius({pointerType: 'touch'}), 22);
 }
 
-console.log('■ ウィンドウを少し狭めただけ(縮小表示ではない)');
-{
-  const f = withWindow(1200, 1440);
-  check('1未満でも1に丸める', f.layoutShrinkFactor(), 1);
-}
-
 console.log('■ スマホからPC版を開いた場合(980px幅で描かれ縮小表示)');
 {
-  const f = withWindow(980, 390);          // iPhone 15 相当
-  const shrink = 980 / 390;
-  check('縮小率', f.layoutShrinkFactor(), shrink);
+  const scale = 390 / 980;                 // iPhone 15 相当
+  const f = withWindow(980, 390, scale);
+  check('縮小率は scale の逆数', f.layoutShrinkFactor(), 1 / scale);
+  check('掛け合わせて過剰にしない(2.5倍前後で、5倍を超えない)',
+        f.layoutShrinkFactor() < 3 ? 1 : 0, 1);
   check('マウス相当の入力は割り戻さない', f.pointHitRadius({pointerType: 'mouse'}), 12);
-  check('指は割り戻す', f.pointHitRadius({pointerType: 'touch'}), 22 * shrink);
-  // 画面上で何px確保できているか = 割り戻した半径 ÷ 縮小率
-  check('画面上では22px', f.pointHitRadius({pointerType: 'touch'}) / shrink, 22);
+  check('指は割り戻す', f.pointHitRadius({pointerType: 'touch'}), 22 / scale);
+  // 画面上で何px確保できているか = 割り戻した半径 × scale
+  check('画面上では22px', f.pointHitRadius({pointerType: 'touch'}) * scale, 22);
 }
 
-console.log('■ ピンチで拡大しているとき');
+console.log('■ ピンチで拡大しているとき(画面上では大きく見えている)');
 {
-  const f = withWindow(980, 390, 2);       // 2倍に拡大 = 画面上では大きく見える
-  check('拡大した分だけ当たり判定は小さくてよい',
-        f.layoutShrinkFactor(), 980 / 390 / 2);
+  const f = withWindow(980, 390, 2);
+  check('等倍より小さくはしない', f.layoutShrinkFactor(), 1);
+}
+
+console.log('■ visualViewport が無い環境(innerWidth ÷ screen.width で代用)');
+{
+  const f = withWindow(980, 390);
+  check('縮小率', f.layoutShrinkFactor(), 980 / 390);
+  const g = withWindow(1200, 1440);
+  check('等倍付近では効かせない', g.layoutShrinkFactor(), 1);
+  const h = withWindow(980, 0);
+  check('画面幅が取れなければ等倍扱い', h.layoutShrinkFactor(), 1);
 }
 
 console.log('■ 端の条件');
 {
-  const f = withWindow(980, 0);
-  check('画面幅が取れなければ等倍扱い', f.layoutShrinkFactor(), 1);
-  const g = withWindow(980, 390);
+  const g = withWindow(980, 390, 390 / 980);
   check('pointerType未指定はマウス扱い', g.pointHitRadius({}), 12);
   check('イベントが無くてもマウス扱い', g.pointHitRadius(null), 12);
 }

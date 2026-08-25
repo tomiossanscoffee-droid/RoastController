@@ -400,7 +400,7 @@
   /* flex-basisを0にして、キャンバスの現在の高さに引きずられず、常にグラフ列の
      残り高さだけを使うようにする(autoだとChart.jsが前回描いた高さが基準に
      なってしまい、列からはみ出す)。 */
-  #chartWrap{ position:relative; flex:1 1 0; min-height:240px; margin-bottom:0; }
+  #chartWrap{ position:relative; flex:1 1 0; min-height:300px; margin-bottom:0; }
   #roastChart{
     max-height:none;
     /* グラフ上の指の動きは制御点のドラッグに使うため、ブラウザのスクロール・拡大に
@@ -1515,11 +1515,26 @@ let chart = null;
 // 複数の呼び出しをまとめるためにsetTimeoutで1回に集約する(requestAnimationFrameは
 // タブがバックグラウンドの間は止まるため使わない)。
 let roastChartResizeTimer = null;
+// この高さを下回ったら、軸タイトルを消し目盛りを間引いて描画領域を確保する。
+// スマホを横向きにすると入れ物の高さが極端に減り、飾りだけで埋まってしまう。
+const CHART_COMPACT_H = 340;
+function chartIsCompact(){
+  const el = document.getElementById('chartWrap');
+  return ((el && el.clientHeight) || 400) < CHART_COMPACT_H;
+}
+let lastChartCompact = null;   // 判定が変わったか調べるために覚えておく
 function scheduleRoastChartResize(){
   if(roastChartResizeTimer) return;
   roastChartResizeTimer = setTimeout(() => {
     roastChartResizeTimer = null;
-    if(chart) chart.resize();
+    if(!chart) return;
+    // 画面を回転すると入れ物の高さが変わる。飾りを削るかどうかの判定はチャートを
+    // 作るときにoptionsへ焼き込まれるので、resize()だけでは切り替わらない。
+    if(lastChartCompact !== null && chartIsCompact() !== lastChartCompact){
+      renderChart();
+      return;
+    }
+    chart.resize();
   }, 0);
 }
 
@@ -5591,9 +5606,11 @@ document.getElementById('mobileQrOverlay').onclick = (e) => {
 function beanTempBands(){
   const fc = ENERGY.T_FC_BEAN;
   return [
-    {lo: 140, hi: 150, label: 'カラーチェンジ(豆・一般的な目安)', color: cssVar('--guide-cc')},
-    {lo: fc, hi: fc + 6 * ENERGY.CRACK_SPREAD, label: '1ハゼ(豆・モデルの計算)', color: cssVar('--guide-fc')},
-    {lo: 215, hi: 225, label: '2ハゼ(豆・一般的な目安)', color: cssVar('--guide-sc')},
+    // ラベルは短く。「計算」=モデルが出した値、「目安」=一般に言われる値、の区別だけ残す
+    // (帯がグラフに重なるので、長いと肝心のカーブが読めない)。詳しくは操作マニュアル。
+    {lo: 140, hi: 150, label: 'カラーチェンジ(豆・目安)', color: cssVar('--guide-cc')},
+    {lo: fc, hi: fc + 6 * ENERGY.CRACK_SPREAD, label: '1ハゼ(豆・計算)', color: cssVar('--guide-fc')},
+    {lo: 215, hi: 225, label: '2ハゼ(豆・目安)', color: cssVar('--guide-sc')},
   ];
 }
 // 推定豆温度の線を出している時だけ帯を描く(線が無いと読みようがないため)。
@@ -5614,7 +5631,9 @@ const beanTempBandsPlugin = {
       ctx.fillStyle = b.color + '99';
       ctx.font = '9px Inter, sans-serif';
       ctx.textAlign = 'right';
-      ctx.fillText(`${b.label} ${b.lo}〜${b.hi}℃`, area.right - 6, top + 10);
+      // 境目に小数を出さない(206.8℃ のような偽の精度になるため)
+      ctx.fillText(`${b.label} ${Math.round(b.lo)}〜${Math.round(b.hi)}℃`,
+                   area.right - 6, top + 10);
     }
     ctx.restore();
   }
@@ -5863,7 +5882,13 @@ function renderChart(){
   // 選択中の点は大きく・白縁で目立たせる(1ハゼ指定の緑より優先して分かるように)。
   // 点の大きさは縮小率で割り戻す。スマホからPC版を開くとページが980px幅で描かれて
   // 縮小表示されるため、半径5pxのままでは画面上2pxしかなく、狙う以前に見えない。
-  const ps = layoutShrinkFactor();
+  const ps = layoutShrinkFactor();     // 点の大きさ・当たり判定と同じ率
+  const ts = chartTextScale();         // 文字は控えめ(場所を取るため)
+  // グラフの高さが足りないとき(スマホを横向きにした時など)は、周りの飾りを削って
+  // 描画領域を確保する。凡例・目盛り・軸タイトルで固定の高さを取られると、
+  // 肝心のカーブが数十pxに潰れて読めなくなる。
+  const compact = chartIsCompact();
+  lastChartCompact = compact;
   const pointColors = editedRoast.map((_, i) =>
     isSelected('roast', i) ? cssVar('--point-selected') : (i === fcIndex ? cssVar('--sage') : cssVar('--line-edit')));
   const pointRadii = editedRoast.map((_, i) =>
@@ -5901,9 +5926,9 @@ function renderChart(){
       // 遅れ・オーバーシュートが生じるため、直線補間でも実測とはズレが残る
       // (これはどんな単純な補間方式でも再現できない、実機の物理応答による限界)。
       datasets: [
-        { label:'参照(元プロファイル)', data:refData, borderColor:cssVar('--line-ref'), borderDash:[4,4],
+        { label:'参照', data:refData, borderColor:cssVar('--line-ref'), borderDash:[4,4],
           pointRadius:0, borderWidth:1.5, tension:0, yAxisID:'yTemp' },
-        { label:'編集中カーブ(吸入温度)', data:editData, borderColor:cssVar('--line-edit'), backgroundColor:cssVar('--line-edit'),
+        { label:'吸入温度', data:editData, borderColor:cssVar('--line-edit'), backgroundColor:cssVar('--line-edit'),
           pointBackgroundColor:pointColors, pointRadius:pointRadii, pointHoverRadius:8,
           borderWidth:3, tension:0, yAxisID:'yTemp' },
         // 2026-07再訂正: 当初「制御点間はステップ状(手前の値を保持)」と推定し
@@ -5919,17 +5944,17 @@ function renderChart(){
         // 「stepなしより誤差の少ない近似」という位置づけで採用している。
         { label:'風量', data:fanData, borderColor:cssVar('--line-fan'), pointBackgroundColor:fanPointColors,
           pointRadius:fanPointRadii, borderWidth:1.6, borderDash:[2,2], tension:0, yAxisID:'yFan' },
-        { label:'実測 吸入温度', data:liveData, borderColor:cssVar('--line-live'), pointRadius:0,
+        { label:'実測', data:liveData, borderColor:cssVar('--line-live'), pointRadius:0,
           borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
           // 容器エラー等が発生していた区間は、線の色を変えて一目で分かるようにする。
           segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? cssVar('--line-error') : undefined } },
         { label: compareProfile ? `比較: ${compareProfile.name}` : '比較', data:compareData,
           borderColor:cssVar('--line-compare'), borderDash:[6,3], pointRadius:0, borderWidth:2.2, tension:0, yAxisID:'yTemp' },
-        { label:'予熱中(実測)', data:preheatDotData, borderColor:cssVar('--line-live'), backgroundColor:cssVar('--line-live'),
+        { label:'予熱中', data:preheatDotData, borderColor:cssVar('--line-live'), backgroundColor:cssVar('--line-live'),
           pointRadius:9, pointHoverRadius:11, showLine:false, yAxisID:'yTemp' },
         { label:'RoR(実測)', data:rorData, borderColor:cssVar('--line-ror'), pointRadius:0,
           borderWidth:1.8, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorLiveVisible },
-        { label:'RoR(プロファイル)', data:profileRorData, borderColor:cssVar('--line-ror-profile'), borderDash:[5,3], pointRadius:0,
+        { label:'RoR(設計)', data:profileRorData, borderColor:cssVar('--line-ror-profile'), borderDash:[5,3], pointRadius:0,
           borderWidth:1.5, tension:0.2, cubicInterpolationMode:'monotone', yAxisID:'yRoR', hidden:!rorProfileVisible },
         // 2026-07再訂正: 制御点間はステップ状ではなく直線的に変化することが実測風量
         // との突き合わせで判明した(上の「風量」データセットのコメント参照)ため、
@@ -5943,7 +5968,7 @@ function renderChart(){
         { label: historyOverlayRecord ? `焙煎ログ: ${historyOverlayRecord.label}` : '焙煎ログ',
           data:historyOverlayData, borderColor:cssVar('--line-log'), pointRadius:0,
           borderWidth:2.2, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp' },
-        { label:'焙煎ログ 風量', data:historyOverlayFanData, borderColor:cssVar('--line-log'), borderDash:[2,3], pointRadius:0,
+        { label:'風量(ログ)', data:historyOverlayFanData, borderColor:cssVar('--line-log'), borderDash:[2,3], pointRadius:0,
           borderWidth:1.4, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yFan' },
         // 焙煎ログの実測温度から計算したRoR(RoR表示ON時のみ)。実測RoRと同系色で
         // 区別できるよう点線にする。ログを表示していない時はデータ空で描かれない。
@@ -5957,15 +5982,15 @@ function renderChart(){
         // 新しいデータセットは必ず配列の末尾に足すこと(ROR_DATASET_KIND_BY_INDEXと
         // ENERGY_DATASET_KIND_BY_INDEXが並び順に依存しているため、間に挿入すると
         // 番号がずれる)。
-        { label:'豆温度(推定)', data:beanTempData, borderColor:cssVar('--line-bean'), borderDash:[3,3],
+        { label:'豆温度', data:beanTempData, borderColor:cssVar('--line-bean'), borderDash:[3,3],
           pointRadius:0, borderWidth:1.6, tension:0.15, cubicInterpolationMode:'monotone',
           yAxisID:'yTemp', hidden:!beanTempVisible },
-        { label:'積算入熱(推定)', data:energyData, borderColor:cssVar('--line-energy'), pointRadius:0,
+        { label:'積算入熱', data:energyData, borderColor:cssVar('--line-energy'), pointRadius:0,
           borderWidth:1.8, tension:0.15, cubicInterpolationMode:'monotone',
           yAxisID:'yEnergy', hidden:!energyVisible },
         // 焙煎ログの実測吸入温度・実測風量から推定した豆温度。プロファイルから
         // 計算した豆温度(上)と同系色にし、ログ側は点線で区別する。
-        { label:'豆温度(焙煎ログ・推定)', data:historyBeanTempData, borderColor:cssVar('--line-bean-log'),
+        { label:'豆温度(ログ)', data:historyBeanTempData, borderColor:cssVar('--line-bean-log'),
           borderDash:[2,2], pointRadius:0, borderWidth:1.5, tension:0.15,
           cubicInterpolationMode:'monotone', yAxisID:'yTemp', hidden:!beanTempHistoryVisible },
       ]
@@ -5974,20 +5999,21 @@ function renderChart(){
       responsive:true, maintainAspectRatio:false, animation:false,
       interaction:{ mode:'nearest', intersect:true },
       scales:{
-        x:{ type:'linear', min:0, max:xAxisMax, title:{display:true,text:'時間',color:cssVar('--axis'),font:{size:12 * ps}},
-            ticks:{color:cssVar('--axis'), font:{size:12 * ps}, stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:cssVar('--grid')} },
-        yTemp:{ position:'left', title:{display:true,text:'温度(℃)',color:cssVar('--axis'),font:{size:12 * ps}},
-            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{color:cssVar('--grid')}, min:TEMP_AXIS_MIN, max:280 },
-        yFan:{ position:'right', title:{display:true,text:'風量(%)',color:cssVar('--axis'),font:{size:12 * ps}},
-            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{display:false}, min:50, max:100 },
-        yRoR:{ position:'right', display:anyRoRVisible(), title:{display:true,text:'RoR(℃/分)',color:cssVar('--axis'),font:{size:12 * ps}},
-            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
+        x:{ type:'linear', min:0, max:xAxisMax, title:{display:!compact,text:'時間',color:cssVar('--axis'),font:{size:12 * ts}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ts}, stepSize:compact ? 120 : 60,
+                  maxRotation:compact ? 0 : 45, autoSkip:true, callback:(v)=>fmtMMSS(v)}, grid:{color:cssVar('--grid')} },
+        yTemp:{ position:'left', title:{display:!compact,text:'温度(℃)',color:cssVar('--axis'),font:{size:12 * ts}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ts}}, grid:{color:cssVar('--grid')}, min:TEMP_AXIS_MIN, max:280 },
+        yFan:{ position:'right', title:{display:!compact,text:'風量(%)',color:cssVar('--axis'),font:{size:12 * ts}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ts}}, grid:{display:false}, min:50, max:100 },
+        yRoR:{ position:'right', display:anyRoRVisible(), title:{display:!compact,text:'RoR(℃/分)',color:cssVar('--axis'),font:{size:12 * ts}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ts}}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
         // 積算入熱は0から単調に増えるだけなので、目盛りは表示中だけ出す(RoRと同じ扱い)。
-        yEnergy:{ position:'right', display:energyVisible, title:{display:true,text:'積算入熱(kcal)',color:cssVar('--axis'),font:{size:12 * ps}},
-            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{display:false}, min:0 },
+        yEnergy:{ position:'right', display:energyVisible, title:{display:!compact,text:'積算入熱(kcal)',color:cssVar('--axis'),font:{size:12 * ts}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ts}}, grid:{display:false}, min:0 },
       },
       plugins:{
-        legend:{ labels:{ color:cssVar('--chart-legend'), font:{size:11 * ps},
+        legend:{ labels:{ color:cssVar('--chart-legend'), font:{size:11 * ts},
           // 凡例は「今の文脈で実際に使われている」項目だけに絞り込む(2026-07)。
           // 焙煎中でも焙煎ログの項目が出続けたり、ログ比較中でも実測・予熱中の
           // 項目が出たりして紛らわしかったため、データが無い項目は隠す。
@@ -6251,16 +6277,35 @@ const POINT_HIT_RADIUS_PX = 12;        // マウス。画面上の見た目と�
 const POINT_HIT_RADIUS_TOUCH_PX = 22;  // 指。画面上で確保したい半径
 
 // いま画面がどれだけ縮小表示されているか(1なら等倍)。
-// window.innerWidth はレイアウト上の幅(スマホでは980)、screen.width は画面の幅。
-// ピンチで拡大していれば visualViewport.scale の分だけ当たり判定は小さくてよい。
+//
+// visualViewport.scale が、CSSピクセル1つが画面上で何px分になるかそのもの。
+// 980px幅のページが412px幅の画面に収まっていれば 0.42 で、逆数の2.4倍が求める率。
+// visualViewport が無い環境では innerWidth ÷ screen.width で同じ値が得られる。
+//
+// ※ この2つは同じ量を別の方法で測ったものなので、掛け合わせてはいけない。
+//   最初の実装で両方を掛けてしまい、約2.4倍のところが約5.7倍になって、
+//   軸の文字も制御点も画面いっぱいに膨れ上がった。
+//
+// 拡大方向(ピンチで寄った状態)には効かせない。等倍より小さくすると、
+// PCで見たときより点や文字が小さくなってしまうため。
 function layoutShrinkFactor(){
-  const screenW = (window.screen && window.screen.width) || window.innerWidth;
-  if(!screenW) return 1;
   const vv = window.visualViewport;
-  const scale = (vv && vv.scale) ? vv.scale : 1;
-  const r = window.innerWidth / screenW / scale;
-  // 等倍付近のわずかな差(ウィンドウを少し狭めた等)では効かせない
-  return r > 1.05 ? r : 1;
+  if(vv && vv.scale > 0){
+    return vv.scale < 0.95 ? 1 / vv.scale : 1;
+  }
+  const screenW = (window.screen && window.screen.width) || 0;
+  if(!screenW) return 1;
+  const r = window.innerWidth / screenW;
+  return r > 1.05 ? r : 1;   // 等倍付近のわずかな差では効かせない
+}
+
+// グラフの文字(凡例・軸)の拡大率。点や当たり判定と違って、大きくすると
+// そのぶんグラフを描く面積が減る。縮小率のまま2.4倍にすると、凡例が何行にも
+// 折り返してグラフ本体を押しつぶすので、上限を設けて控えめにする。
+// 1.8倍だと画面上7〜9px相当で、読めて、かつ場所を取りすぎない。
+const CHART_TEXT_MAX_SCALE = 1.8;
+function chartTextScale(){
+  return Math.min(layoutShrinkFactor(), CHART_TEXT_MAX_SCALE);
 }
 
 function pointHitRadius(evt){
