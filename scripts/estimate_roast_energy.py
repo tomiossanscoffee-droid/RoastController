@@ -97,7 +97,9 @@ def main():
         print("当てはめ直した定数(roastlib/energy.py に手で反映すること):")
         print(f"   U0 = {u0:.5f}\n   H_ENDO = {h_endo:.1f}\n   K_PYRO = {k_pyro:.1f}\n")
     print(f"豆 {E.BEAN_G:.0f}g / 含水率 {E.MOISTURE * 100:.0f}% / "
-          f"水分の{(1 - E.FREE_FRAC) * 100:.0f}%は1ハゼまで残る")
+          f"水分の内訳 表面{E.FRAC_SURFACE * 100:.0f}% "
+          f"内部{(1 - E.FRAC_SURFACE - E.FRAC_SEALED) * 100:.0f}% "
+          f"密閉{E.FRAC_SEALED * 100:.0f}%")
     print(f"U0={E.U0:.5f} kW/K  H_ENDO={E.H_ENDO:.0f} kJ/kg  K_PYRO={E.K_PYRO:.1f} /s\n")
 
     fc_t = [rising_cross(x["roast"], GUIDE["firstCrack"]) for x in P]

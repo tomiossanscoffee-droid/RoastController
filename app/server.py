@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import signal
+import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -61,6 +64,9 @@ from roastlib.beaninfo import (  # noqa: E402
 from roastlib.ble.session import (  # noqa: E402
     RoasterSession, TelemetrySample, profile_from_points, KNOWN_TERMINATORS,
 )
+from roastlib import energy as energy_module  # noqa: E402
+from roastlib.energy import estimate as estimate_energy  # noqa: E402
+from roastlib import calibration as beancal  # noqa: E402
 from roastlib.profile_generator import (  # noqa: E402
     generate_profile, infer_taste_profile, ROAST_LEVELS as GENERATOR_ROAST_LEVELS,
     generate_profile_abc, ABC_ROAST_LEVELS, ABC_BASE, ABC_UNITS, ABC_LIMITS,
@@ -79,6 +85,7 @@ SAMPLE_PROFILES_PATH = Path(os.environ.get("ROAST_SAMPLE_PROFILES_PATH", str(REP
 FAVORITES_PATH = Path(os.environ.get("ROAST_FAVORITES_PATH", str(REPO_ROOT / "favorites.json")))
 GUIDE_TEMPS_PATH = Path(os.environ.get("ROAST_GUIDE_TEMPS_PATH", str(REPO_ROOT / "guide_temps.json")))
 APP_SETTINGS_PATH = Path(os.environ.get("ROAST_APP_SETTINGS_PATH", str(REPO_ROOT / "app_settings.json")))
+CALIBRATION_PATH = Path(os.environ.get("ROAST_CALIBRATION_PATH", str(REPO_ROOT / "calibration.json")))
 IKAWA_PATH = Path(os.environ.get("ROAST_IKAWA_PATH", str(REPO_ROOT / "ikawa_profiles.json")))
 TASTE_CHARTS_PATH = Path(os.environ.get(
     "ROAST_TASTE_CHARTS_PATH", str(REPO_ROOT / "THE_ROAST_Extract" / "taste_charts.json")
@@ -96,7 +103,15 @@ PUSH_SUBSCRIPTIONS_PATH = Path(os.environ.get("ROAST_PUSH_SUBSCRIPTIONS_PATH", s
 LAST_SENT_PROFILE_PATH = Path(os.environ.get("ROAST_LAST_SENT_PROFILE_PATH", str(REPO_ROOT / "last_sent_profile.json")))
 UNSAVED_ROAST_COUNTS_PATH = Path(os.environ.get("ROAST_UNSAVED_COUNTS_PATH", str(REPO_ROOT / "unsaved_roast_counts.json")))
 
-app = FastAPI(title="Roast Studio")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # プリセットの推定最終豆温度(一覧の並び替えに使う)を裏で先に計算しておく。
+    # 起動を待たせないよう、別スレッドに投げるだけにする。
+    _warm_profile_estimate_cache_async()
+    yield
+
+
+app = FastAPI(title="Roast Studio", lifespan=_lifespan)
 
 _db: Optional[DatabaseManager] = None
 _session: Optional[RoasterSession] = None
@@ -392,7 +407,6 @@ def _clean_guide_temp(value):
     return int(round(v))
 
 
-
 def _load_guide_temps() -> dict:
     if not GUIDE_TEMPS_PATH.exists():
         return dict(DEFAULT_GUIDE_TEMPS)
@@ -493,6 +507,14 @@ async def set_guide_temps(request: Request):
 # 量れば、実測の焙煎指数と突き合わせて較正できる。
 # 豆の投入量は焙煎機の仕様どおり50g固定なので、設定にはしていない
 # (roastlib/energy.py の BEAN_G)。
+# chaffG: チャフ(薄皮)の量(0〜2g、豆50gあたり)。焙煎前後の重量差のうち、水分でも
+# 揮発性ガスでもない分。豆の種類で変わり、実測では1g未満。乾物の分解に混ぜていると、
+# 分解は温度依存なのにチャフはほぼ一定という違いが吸収されてしまい、当てはめていない
+# 焙煎度の指数がずれる。
+# firstCrackBeanTemp: 1ハゼが起きる豆の温度(185〜210℃)。標高が高い産地の豆は
+# 密度が高く細胞壁も丈夫なので、耐えられる圧力が高く、爆ぜる温度も高くなる
+# (使う人の経験則)。標高から自動で決めるだけの実測が無いため、設定として開けてある。
+# 変えると推定豆温度そのものは動かず、「いつ1ハゼが来るか」の予想が動く。
 # theme: 画面の配色。dark(既定・暖色の暗い配色) / light(明るい部屋向け) /
 # contrast(焙煎中に離れた場所から読むための高コントラスト)。
 # 実体はCSS変数で、app/static/index.html の :root と [data-theme=...] にある。
@@ -504,10 +526,18 @@ DEFAULT_APP_SETTINGS = {
     "showPresetTab": True,
     "showIkawaTab": True,
     "beanMoisturePct": 10.0,
+    "firstCrackBeanTemp": 196.0,
+    "chaffG": 0.5,
     "theme": "dark",
 }
 APP_THEMES = ("dark", "light", "contrast")
 BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX = 5.0, 15.0
+# 1ハゼの豆温度。標高が高い産地の豆は密度が高く細胞壁も丈夫で、爆ぜる温度が高い
+# (使う人の経験則)。当てはめる根拠になる実測が無いので自動では決めず、設定にした。
+FC_BEAN_TEMP_MIN, FC_BEAN_TEMP_MAX = 185.0, 210.0
+# チャフ(薄皮)の量。豆50gに対して1g未満で、豆の種類によって変わる(使う人の実測)。
+# 焙煎前後の重量差のうち、水分でも揮発性ガスでもない分。
+CHAFF_MIN, CHAFF_MAX = 0.0, 2.0
 
 
 def _load_app_settings() -> dict:
@@ -518,6 +548,253 @@ def _load_app_settings() -> dict:
     except Exception:  # noqa: BLE001
         return dict(DEFAULT_APP_SETTINGS)
     return {**DEFAULT_APP_SETTINGS, **data}
+
+
+# ============================================================
+# プロファイル一覧に出す推定値(最終豆温度・焙煎指数)
+# ------------------------------------------------------------
+# 一覧の表示と並び替えに使う。焙煎機が測るのは吸入温度で、豆はそれより20℃前後低い。
+# 最高温度が同じでも、時間の掛け方と風量で豆の到達温度は変わるため、
+# 「最高温度順」とは別の並びになる。焙煎指数(生豆重量÷焙煎後重量)も同じ計算から
+# 出るので、一覧で焙煎度の目安として並べて出す。
+#
+# 計算(roastlib/energy.py)は1件あたり7ms、プリセット174件で1.25秒かかる。
+# 一覧は元々50ms程度で返っていたので、毎回計算すると体感で分かるほど遅くなる。
+# カーブそのものをキーにして覚えておく(プリセットは不変、保存プロファイルは
+# 編集すればキーが変わるので、これだけで正しく作り直される)。
+# 起動直後の一回だけは全件ぶんの計算が要るため、バックグラウンドで先に温めておく。
+_PROFILE_ESTIMATE_CACHE: dict = {}
+_PROFILE_ESTIMATE_LOCK = threading.Lock()
+
+
+def _bean_moisture_frac() -> float:
+    pct = _load_app_settings().get("beanMoisturePct", DEFAULT_APP_SETTINGS["beanMoisturePct"])
+    try:
+        pct = float(pct)
+    except (TypeError, ValueError):
+        pct = DEFAULT_APP_SETTINGS["beanMoisturePct"]
+    return min(max(pct, BEAN_MOISTURE_MIN), BEAN_MOISTURE_MAX) / 100.0
+
+
+# ------------------------------------------------------------
+# 豆温度モデルの較正(roastlib/calibration.py)
+# ------------------------------------------------------------
+# 専用プロファイルを1回焼いて測った値から、モデルの定数を実機に合わせ直す。
+# 測定値と、そこから求めた上書き値の両方を保存する。上書き値だけだと、後から
+# 「何をどう測ったからこの値なのか」が追えなくなるため。
+def _load_calibration() -> dict:
+    if not CALIBRATION_PATH.exists():
+        return {"measurements": {}, "overrides": {}, "scale": {}, "notes": [], "used": []}
+    try:
+        data = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {"measurements": {}, "overrides": {}, "scale": {}, "notes": [], "used": []}
+    data.setdefault("measurements", {})
+    data.setdefault("overrides", {})
+    data.setdefault("scale", {})
+    data.setdefault("notes", [])
+    data.setdefault("used", [])
+    return data
+
+
+# 較正で上書きしてよい範囲(既定値に対する倍率)。calibration.py の当てはめは
+# この範囲内で答えを探すが、保存ファイルは手で書き換えられる。範囲外の値をそのまま
+# モデルへ渡すと、豆温度がNaNになったり焙煎指数が28になったりして、画面の数字が
+# 全部おかしくなる(実際にそうなることを確認済み)。読み込み時に弾く。
+_CAL_VALUE_RANGE = {
+    "U0": (0.2, 5.0), "H_ENDO": (0.1, 10.0), "K_PYRO": (0.01, 100.0),
+    "K_SURFACE": (0.05, 20.0), "K_INNER": (0.05, 20.0),
+    "CRACK_SPREAD": (0.1, 10.0), "U_WET": (0.02, 1.0),
+}
+
+
+def _first_crack_bean_temp() -> float:
+    v = _load_app_settings().get("firstCrackBeanTemp",
+                                 DEFAULT_APP_SETTINGS["firstCrackBeanTemp"])
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        v = DEFAULT_APP_SETTINGS["firstCrackBeanTemp"]
+    return min(max(v, FC_BEAN_TEMP_MIN), FC_BEAN_TEMP_MAX)
+
+
+def _chaff_g() -> float:
+    v = _load_app_settings().get("chaffG", DEFAULT_APP_SETTINGS["chaffG"])
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        v = DEFAULT_APP_SETTINGS["chaffG"]
+    return min(max(v, CHAFF_MIN), CHAFF_MAX)
+
+
+def _calibration_overrides() -> dict:
+    """estimate() に渡す上書き値。較正の結果と、1ハゼ豆温度の設定。
+
+    知らない定数名と、既定値からかけ離れた値は捨てる。
+    """
+    ov = _load_calibration().get("overrides") or {}
+    out = {}
+    for k, v in ov.items():
+        if k not in energy_module.CALIBRATABLE:
+            continue
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        v = float(v)
+        if not math.isfinite(v):
+            continue
+        base = getattr(energy_module, k, None)
+        lo, hi = _CAL_VALUE_RANGE.get(k, (0.0, float("inf")))
+        if base and not (base * lo <= v <= base * hi):
+            continue
+        out[k] = v
+    # 1ハゼ豆温度とチャフ量は較正ではなく設定で決める(較正の当てはめ対象ではない)
+    out["T_FC_BEAN"] = _first_crack_bean_temp()
+    out["CHAFF_G"] = _chaff_g()
+    return out
+
+
+EMPTY_ESTIMATE = {"end_bean_temp": None, "roast_index": None, "roast_index_level": ""}
+
+
+def _profile_estimate(roast, fan, moisture: float) -> dict:
+    """一覧に出す推定値。計算できなければ値がNoneの辞書を返す。"""
+    if not roast or len(roast) < 2:
+        return EMPTY_ESTIMATE
+    cal = _calibration_overrides()
+    key = (tuple(tuple(p) for p in roast),
+           tuple(tuple(p) for p in fan) if fan else None,
+           round(moisture, 4),
+           tuple(sorted(cal.items())))
+    with _PROFILE_ESTIMATE_LOCK:
+        cached = _PROFILE_ESTIMATE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        est = estimate_energy(roast, fan, moisture=moisture, cal=cal)
+    except Exception:  # noqa: BLE001
+        est = None
+    value = EMPTY_ESTIMATE if not est else {
+        "end_bean_temp": round(est["end_bean_temp"], 1),
+        "roast_index": round(est["roast_index"], 3),
+        "roast_index_level": est["roast_index_level"],
+    }
+    with _PROFILE_ESTIMATE_LOCK:
+        _PROFILE_ESTIMATE_CACHE[key] = value
+    return value
+
+
+def _warm_profile_estimate_cache() -> None:
+    """プリセット全件ぶんを裏で先に計算しておく(初回の一覧が待たされないように)。"""
+    try:
+        if not Path(DB_PATH).exists():
+            return
+        moisture = _bean_moisture_frac()
+        db = get_db()
+        for _, row in db.profile.iterrows():
+            profile = ModelFactory.from_series(row)
+            _profile_estimate(profile.roast.points, profile.fan.points, moisture)
+    except Exception:  # noqa: BLE001
+        # 一覧側で必要になった時に計算し直せるので、失敗しても起動は妨げない
+        pass
+
+
+def _warm_profile_estimate_cache_async() -> None:
+    threading.Thread(target=_warm_profile_estimate_cache, daemon=True).start()
+
+
+@app.get("/api/calibration_profile")
+def get_calibration_profile():
+    """校正用プロファイル。焙煎機に送れるよう、プリセットと同じ形で返す。
+
+    1ハゼ前後で豆がゆるやかに上がるよう作ってあり、時刻を±5秒読み違えても
+    温度換算で±1℃に収まる。2ハゼまで届き、それでいて焙煎指数は実在の深煎り
+    プリセットと同じ範囲に収まる(roastlib/calibration.py 参照)。
+    """
+    prof = beancal.CALIBRATION_PROFILE
+    return JSONResponse({
+        "id": "calibration",
+        "name": prof["name"],
+        "country": "", "bean": "", "roast_level": "", "uuid": "",
+        "roast": prof["roast"], "fan": prof["fan"], "cooldown": prof["cooldown"],
+        # 実機で送信確認していない構成なので、確認済みの印は付けない。
+        "verified": False, "guess_confidence": "low",
+        "has_bean_sheet": False,
+    })
+
+
+@app.get("/api/calibration")
+def get_calibration():
+    data = _load_calibration()
+    # モデルが「こうなるはず」と予想する値も返す。実測値を入れる前の目安になり、
+    # 入れた後は、どれだけずれていたかが分かる。
+    prof = beancal.CALIBRATION_PROFILE
+    moisture = _bean_moisture_frac()
+    data["expected"] = _calibration_expected(prof, moisture, {})
+    if data.get("overrides"):
+        data["fitted"] = _calibration_expected(prof, moisture, _calibration_overrides())
+    data["profile"] = prof
+    data["scSecondCrackBeanTemp"] = beancal.T_SC_BEAN
+    return JSONResponse(data)
+
+
+def _calibration_expected(prof: dict, moisture: float, cal: dict) -> dict:
+    """校正用プロファイルを焼いたとき、測定できる値がどうなるかの予想。"""
+    r = estimate_energy(prof["roast"], prof["fan"], moisture=moisture, cal=cal)
+    if not r:
+        return {}
+    s = r["series"]
+
+    def at(temp):
+        return next((p["t"] for p in s if p["bean"] >= temp), None)
+
+    return {
+        "fcStart": r["crack_start"],
+        "fcEnd": r["crack_end"],
+        "scStart": at(beancal.T_SC_BEAN),
+        "roastedG": round(r["roasted_g"], 1),
+        "roastIndex": round(r["roast_index"], 3),
+    }
+
+
+@app.put("/api/calibration")
+async def set_calibration(request: Request):
+    """測定値を保存し、その場で定数を当てはめ直す。
+
+    入っている項目だけを使うので、1つだけ測って入れることもできる。
+    """
+    body = await request.json()
+    measurements = {}
+    for key in beancal.MEASUREMENT_KEYS:
+        v = body.get(key)
+        if v is None or v == "":
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            measurements[key] = v
+    if not measurements:
+        return JSONResponse({"error": "測定値がひとつも入っていません"}, status_code=400)
+    result = beancal.fit(measurements, moisture=_bean_moisture_frac())
+    data = {"measurements": measurements, **result}
+    CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 定数が変わると推定値が全部変わるので、一覧のキャッシュを温め直す。
+    with _PROFILE_ESTIMATE_LOCK:
+        _PROFILE_ESTIMATE_CACHE.clear()
+    _warm_profile_estimate_cache_async()
+    return JSONResponse({"ok": True, **data})
+
+
+@app.delete("/api/calibration")
+def clear_calibration():
+    """較正を捨てて、プリセットから当てはめた既定値に戻す。"""
+    if CALIBRATION_PATH.exists():
+        CALIBRATION_PATH.unlink()
+    with _PROFILE_ESTIMATE_LOCK:
+        _PROFILE_ESTIMATE_CACHE.clear()
+    _warm_profile_estimate_cache_async()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/app_settings")
@@ -550,7 +827,20 @@ async def set_app_settings(request: Request):
         data["beanMoisturePct"] = _clamp_setting(
             body["beanMoisturePct"], BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX,
             DEFAULT_APP_SETTINGS["beanMoisturePct"])
+    if "chaffG" in body:
+        data["chaffG"] = _clamp_setting(
+            body["chaffG"], CHAFF_MIN, CHAFF_MAX, DEFAULT_APP_SETTINGS["chaffG"])
+    if "firstCrackBeanTemp" in body:
+        data["firstCrackBeanTemp"] = _clamp_setting(
+            body["firstCrackBeanTemp"], FC_BEAN_TEMP_MIN, FC_BEAN_TEMP_MAX,
+            DEFAULT_APP_SETTINGS["firstCrackBeanTemp"])
     APP_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 含水率・1ハゼ豆温度が変わると推定値も変わる。一覧の並び替えで待たされないよう、
+    # 新しい前提ぶんを裏で計算し直しておく。
+    if {"beanMoisturePct", "firstCrackBeanTemp", "chaffG"} & set(body):
+        with _PROFILE_ESTIMATE_LOCK:
+            _PROFILE_ESTIMATE_CACHE.clear()
+        _warm_profile_estimate_cache_async()
     return JSONResponse({"ok": True})
 
 
@@ -799,6 +1089,7 @@ def list_custom_profiles(
     data = _load_custom()
     favs = _load_favorites()
     roast_counts = _roast_counts_by_source("custom")
+    moisture = _bean_moisture_frac()
     keywords = q.strip().split()
     results = []
     for pid, p in data.items():
@@ -820,11 +1111,15 @@ def list_custom_profiles(
         roast = p.get("roast") or []
         duration = roast[-1][0] if roast else None
         max_temp = max((pt[1] for pt in roast), default=None)
+        est = _profile_estimate(roast, p.get("fan"), moisture)
         results.append({
             "id": pid, "name": p["name"],
             "country": beaninfo["country"], "bean": beaninfo["bean"],
             "roast_level": beaninfo["roast_level"], "roaster": "(保存済み)",
             "duration": duration, "max_temp": max_temp,
+            "end_bean_temp": est["end_bean_temp"],
+            "roast_index": est["roast_index"],
+            "roast_index_level": est["roast_index_level"],
             "favorite": f"custom:{pid}" in favs,
             "roast_count": roast_counts.get(str(pid), 0),
         })
@@ -1178,6 +1473,7 @@ def list_ikawa_categories():
 def list_ikawa_profiles(q: str = "", category: str = ""):
     favs = _load_favorites()
     roast_counts = _roast_counts_by_source("ikawa")
+    moisture = _bean_moisture_frac()
     keywords = q.strip().split()
     results = []
     for p in get_ikawa_profiles():
@@ -1189,9 +1485,13 @@ def list_ikawa_profiles(q: str = "", category: str = ""):
             continue
         duration = p["roast"][-1][0] if p["roast"] else None
         max_temp = p.get("max_temp")
+        est = _profile_estimate(p["roast"], p.get("fan"), moisture)
         results.append({
             "id": p["id"], "name": p["name"], "country": "", "roaster": p["category"],
             "duration": duration, "max_temp": max_temp,
+            "end_bean_temp": est["end_bean_temp"],
+            "roast_index": est["roast_index"],
+            "roast_index_level": est["roast_index_level"],
             "favorite": f"ikawa:{p['id']}" in favs,
             "roast_count": roast_counts.get(str(p["id"]), 0),
         })
@@ -1423,6 +1723,7 @@ def list_profiles(
     db = get_db()
     favs = _load_favorites()
     roast_levels = get_roast_levels()
+    moisture = _bean_moisture_frac()
     roast_counts = _roast_counts_by_source("preset")
     keywords = q.strip().split()
     results = []
@@ -1451,6 +1752,7 @@ def list_profiles(
         roast_pts = profile.roast.points
         duration = roast_pts[-1][0] if roast_pts else None
         max_temp = max((pt[1] for pt in roast_pts), default=None)
+        est = _profile_estimate(roast_pts, profile.fan.points, moisture)
         results.append({
             "id": pid,
             "name": row["name"],
@@ -1463,6 +1765,9 @@ def list_profiles(
             "process": bean_info["process"],
             "duration": duration,
             "max_temp": max_temp,
+            "end_bean_temp": est["end_bean_temp"],
+            "roast_index": est["roast_index"],
+            "roast_index_level": est["roast_index_level"],
             "favorite": f"preset:{pid}" in favs,
             "roast_count": roast_counts.get(str(pid), 0),
             # 生豆紹介シート(公式PDFを画像化したもの)を取り込み済みかどうか。

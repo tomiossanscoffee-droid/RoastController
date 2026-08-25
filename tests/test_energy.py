@@ -59,16 +59,39 @@ def test_積算入熱は単調に増える():
     assert all(b >= a - 1e-12 for a, b in zip(vals, vals[1:]))
 
 
-def test_1ハゼ付近で豆温度が平らになる():
-    """内部水分が一気に気化するため、196℃付近で上昇が鈍る(ポップコーンの原理)。"""
+def test_1ハゼで豆温度の上昇が鈍る():
+    """細胞内の水分が気化するため、196℃付近で上昇が鈍る(ポップコーンの原理)。
+
+    ただし止まったり下がったりはしない。実測では「上がりにくくなるが緩やかに
+    上昇し続ける」ため、鈍ることと上がり続けることの両方を確かめる。
+    """
     r = estimate(ROAST, FAN)
     s = r["series"]
-    # 196℃を最初に超えた直後30秒の上昇幅が、その前30秒より小さいこと
     idx = next((i for i, p in enumerate(s) if p["bean"] >= 196.0), None)
     assert idx is not None, "1ハゼ豆温度に届いていない"
     before = s[idx]["bean"] - s[max(idx - 30, 0)]["bean"]
     after = s[min(idx + 30, len(s) - 1)]["bean"] - s[idx]["bean"]
-    assert after < before
+    assert after < before, "1ハゼで鈍っていない"
+    assert after > 0.0, "1ハゼで豆温度が上がらなくなっている"
+
+
+def test_1ハゼの後に急な跳ね返りが出ない():
+    """実測のRoR曲線では、急な落ち込み(crash)も跳ね返り(flick)も欠陥とされる。
+
+    豆が100℃を超えて以降で「いったん下がってから上がり直した幅」を測る。
+    切り替えのある蒸発の式を使っていた頃はここが22.9℃/分もあった。
+    """
+    s = estimate(ROAST, FAN)["series"]
+    start = next((i for i, p in enumerate(s) if p["bean"] >= 100.0), None)
+    assert start is not None
+    win = 15
+    rors = [(s[i + win]["bean"] - s[i]["bean"]) / win * 60
+            for i in range(start, len(s) - win)]
+    lowest, rebound = rors[0], 0.0
+    for v in rors:
+        lowest = min(lowest, v)
+        rebound = max(rebound, v - lowest)
+    assert rebound < 8.0, f"跳ね返りが大きすぎます: {rebound:.1f}℃/分"
 
 
 def test_終了時の空気と豆の差はおおよそ20度():
@@ -178,6 +201,8 @@ def test_JavaScript側と同じ数値になる():
     for pat in (r"const ENERGY = \{.*?\n\};",
                 r"function energyInterp\(points, t\)\{.*?\n\}",
                 r"function energyLatentHeat\(tC\)\{.*?\n\}",
+                r"function energySatPressureRel\(tC\)\{.*?\n\}",
+                r"function energyBurstFraction\(tB, E\)\{.*?\n\}",
                 r"const ROAST_INDEX_BANDS = .*?\n\}",
                 r"function estimateRoastEnergy\(roastPoints, fanPoints\)\{.*?\n\}"):
         m = re.search(pat, html, re.S)
@@ -188,6 +213,7 @@ const r = estimateRoastEnergy({json.dumps(ROAST)}, {json.dumps(FAN)});
 console.log(JSON.stringify({{
   totalKcal: r.totalKcal, roastIndex: r.roastIndex, endBeanTemp: r.endBeanTemp,
   level: r.roastIndexLevel, n: r.series.length,
+  crackStart: r.crackStart, crackEnd: r.crackEnd,
   mid: r.series[Math.floor(r.series.length/2)],
 }}));
 """
@@ -198,6 +224,8 @@ console.log(JSON.stringify({{
     assert js["n"] == len(py["series"])
     assert math.isclose(js["totalKcal"], py["total_kcal"], rel_tol=1e-9)
     assert math.isclose(js["roastIndex"], py["roast_index"], rel_tol=1e-9)
+    assert js["crackStart"] == py["crack_start"]
+    assert js["crackEnd"] == py["crack_end"]
     assert math.isclose(js["endBeanTemp"], py["end_bean_temp"], rel_tol=1e-9)
     assert js["level"] == py["roast_index_level"]
     mid_py = py["series"][len(py["series"]) // 2]
