@@ -724,19 +724,33 @@
   }
   .taste-boost-row input{ accent-color:var(--amber); }
 
-  .metrics-row{ display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
-  .metric-card{
-    flex:1; min-width:140px; background:var(--panel); border:1px solid var(--border);
-    border-radius:6px; padding:12px 14px;
+  /* 数値カードは格子で並べる。flexで折り返していた頃は、最後の行のカードだけが
+     伸びて幅がばらつき、行ごとに大きさの違う箱が並んで見えていた。
+     auto-fitならどの行も同じ幅になる。 */
+  .metrics-row{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+    gap:12px; margin-bottom:16px;
   }
-  .metric-card .metric-label{ font-size:10.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; }
-  .metric-card .metric-value{ font-family:'IBM Plex Mono',monospace; font-size:22px; margin-top:4px; color:var(--amber); }
+  .metric-card{
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:6px; padding:12px 14px;
+    display:flex; flex-direction:column;
+  }
+  /* ラベルは2行ぶんの高さを確保する。長さがまちまちなので、確保しないと折り返した
+     カードだけ値が下がり、肝心の数字の高さが横に揃わない。
+     日本語に大文字変換は効かず、英語のラベルだけ強調されて不揃いに見えるので
+     text-transform は使わない。 */
+  .metric-card .metric-label{
+    font-size:10.5px; color:var(--text-muted); letter-spacing:0.04em;
+    line-height:1.35; min-height:2.7em;
+  }
+  .metric-card .metric-value{ font-family:'IBM Plex Mono',monospace; font-size:22px; margin-top:2px; color:var(--amber); }
   .metric-card .metric-value.small{ font-size:15px; color:var(--text); }
-  /* 主たる数値に添える2行目(例: 最終温度カードの推定豆温度)。主役の値より
-     一段落として、どちらが実測系でどちらが推定かを見分けられるようにする。 */
+  /* 主たる数値に添える2行目(最終温度の豆温度、Development Timeの見込み/実測の別)。
+     margin-top:auto でカードの下端に寄せ、2行目の有無で高さがずれないようにする。 */
   .metric-card .metric-sub{
     font-family:'IBM Plex Mono',monospace; font-size:12.5px;
-    margin-top:2px; color:var(--text-muted);
+    margin-top:auto; padding-top:3px; color:var(--text-muted); min-height:1.2em;
   }
 
   .offset-row{
@@ -1176,13 +1190,14 @@
            別々のカードに離すと、どちらがどちらか分かりにくく、差(20℃前後が目安)も
            見比べないと分からないため。 -->
       <div class="metric-card" title="上段が吸入温度(焙煎機が測る温度)、下段が推定した豆温度と、その差です">
-        <div class="metric-label">最終温度(吸入 / 豆)</div>
+        <div class="metric-label">最終温度</div>
         <div class="metric-value mono" id="ovFinalTemp">--</div>
         <div class="metric-sub mono" id="ovEndBeanTemp">--</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label" id="ovDevTimeLabel">Development Time(見込み)</div>
+        <div class="metric-label">Development Time</div>
         <div class="metric-value mono" id="ovDevTime">--</div>
+        <div class="metric-sub mono" id="ovDevTimeLabel">見込み</div>
       </div>
       <!-- 温度カーブと風量カーブから計算した推定値。実測ではない。
            生豆50g・含水率10%を前提としている(roastlib/energy.py参照)。 -->
@@ -1338,15 +1353,15 @@
         <div class="metric-value mono" id="mElapsed">--:--</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">実測 吸入温度</div>
+        <div class="metric-label">吸入温度</div>
         <div class="metric-value mono" id="mBT">--</div>
       </div>
       <div class="metric-card" id="mRoRCard">
-        <div class="metric-label">RoR (実測, ℃/分)</div>
+        <div class="metric-label">RoR</div>
         <div class="metric-value mono" id="mRoR">--</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">実測 風量</div>
+        <div class="metric-label">風量</div>
         <div class="metric-value mono" id="mFan">--</div>
       </div>
       <div class="metric-card" id="mProgressCard">
@@ -5846,12 +5861,15 @@ function renderChart(){
     ? computeRoR(historyOverlayRecord.roast.map(p => [p[0], p[1]])).map(p => ({x:p[0], y:p[1]})) : [];
 
   // 選択中の点は大きく・白縁で目立たせる(1ハゼ指定の緑より優先して分かるように)。
+  // 点の大きさは縮小率で割り戻す。スマホからPC版を開くとページが980px幅で描かれて
+  // 縮小表示されるため、半径5pxのままでは画面上2pxしかなく、狙う以前に見えない。
+  const ps = layoutShrinkFactor();
   const pointColors = editedRoast.map((_, i) =>
     isSelected('roast', i) ? cssVar('--point-selected') : (i === fcIndex ? cssVar('--sage') : cssVar('--line-edit')));
   const pointRadii = editedRoast.map((_, i) =>
-    isSelected('roast', i) ? 8 : (i === fcIndex ? 7 : 5));
+    (isSelected('roast', i) ? 8 : (i === fcIndex ? 7 : 5)) * ps);
   const fanPointColors = editedFan.map((_, i) => isSelected('fan', i) ? cssVar('--point-selected') : cssVar('--line-fan'));
-  const fanPointRadii = editedFan.map((_, i) => isSelected('fan', i) ? 8 : 4);
+  const fanPointRadii = editedFan.map((_, i) => (isSelected('fan', i) ? 8 : 4) * ps);
 
   // X軸の右端は、常に「冷却完了予定時刻」まで見えるようにする(実測値がそれより
   // 長く伸びている場合は、そちらに合わせて広げる)
@@ -5956,20 +5974,20 @@ function renderChart(){
       responsive:true, maintainAspectRatio:false, animation:false,
       interaction:{ mode:'nearest', intersect:true },
       scales:{
-        x:{ type:'linear', min:0, max:xAxisMax, title:{display:true,text:'時間',color:cssVar('--axis')},
-            ticks:{color:cssVar('--axis'), stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:cssVar('--grid')} },
-        yTemp:{ position:'left', title:{display:true,text:'温度(℃)',color:cssVar('--axis')},
-            ticks:{color:cssVar('--axis')}, grid:{color:cssVar('--grid')}, min:TEMP_AXIS_MIN, max:280 },
-        yFan:{ position:'right', title:{display:true,text:'風量(%)',color:cssVar('--axis')},
-            ticks:{color:cssVar('--axis')}, grid:{display:false}, min:50, max:100 },
-        yRoR:{ position:'right', display:anyRoRVisible(), title:{display:true,text:'RoR(℃/分)',color:cssVar('--axis')},
-            ticks:{color:cssVar('--axis')}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
+        x:{ type:'linear', min:0, max:xAxisMax, title:{display:true,text:'時間',color:cssVar('--axis'),font:{size:12 * ps}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ps}, stepSize:60, callback:(v)=>fmtMMSS(v)}, grid:{color:cssVar('--grid')} },
+        yTemp:{ position:'left', title:{display:true,text:'温度(℃)',color:cssVar('--axis'),font:{size:12 * ps}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{color:cssVar('--grid')}, min:TEMP_AXIS_MIN, max:280 },
+        yFan:{ position:'right', title:{display:true,text:'風量(%)',color:cssVar('--axis'),font:{size:12 * ps}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{display:false}, min:50, max:100 },
+        yRoR:{ position:'right', display:anyRoRVisible(), title:{display:true,text:'RoR(℃/分)',color:cssVar('--axis'),font:{size:12 * ps}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
         // 積算入熱は0から単調に増えるだけなので、目盛りは表示中だけ出す(RoRと同じ扱い)。
-        yEnergy:{ position:'right', display:energyVisible, title:{display:true,text:'積算入熱(kcal)',color:cssVar('--axis')},
-            ticks:{color:cssVar('--axis')}, grid:{display:false}, min:0 },
+        yEnergy:{ position:'right', display:energyVisible, title:{display:true,text:'積算入熱(kcal)',color:cssVar('--axis'),font:{size:12 * ps}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ps}}, grid:{display:false}, min:0 },
       },
       plugins:{
-        legend:{ labels:{ color:cssVar('--chart-legend'), font:{size:11},
+        legend:{ labels:{ color:cssVar('--chart-legend'), font:{size:11 * ps},
           // 凡例は「今の文脈で実際に使われている」項目だけに絞り込む(2026-07)。
           // 焙煎中でも焙煎ログの項目が出続けたり、ログ比較中でも実測・予熱中の
           // 項目が出たりして紛らわしかったため、データが無い項目は隠す。
@@ -6219,12 +6237,43 @@ function deletePoint(dataset, index){
 // しきい値は、点(半径4〜8px)より少し大きく、かつ線上クリックでの点の追加を
 // 邪魔しない程度にする。ここを大きくしすぎると、線の途中を狙ったつもりが
 // 既存点の掴みになり「点が追加できない」になるので注意。
-const POINT_HIT_RADIUS_PX = 12;
+// 制御点の当たり判定。マウスは12pxで足りるが、指はそうはいかない。
+//
+// ■ スマホからPC版を開いたときの落とし穴
+// このページには viewport meta が無く、スマホでは980px幅で描かれてから画面に
+// 合わせて縮小表示される(PC向けの配置を保つため、意図的にそうしている)。
+// 当たり判定はCSSピクセルで計算するので、12pxのままだと画面上では
+// iPhone 15(390pt)で4.8px、SEで4.6pxにしかならない。指の接触は直径40px以上
+// あるので、事実上どこを押しても当たらない。実際「タップしても反応がない」
+// という状態になっていた。
+// そこで「画面上で何px分にしたいか」を決め、縮小率で割り戻す。
+const POINT_HIT_RADIUS_PX = 12;        // マウス。画面上の見た目と一致する
+const POINT_HIT_RADIUS_TOUCH_PX = 22;  // 指。画面上で確保したい半径
+
+// いま画面がどれだけ縮小表示されているか(1なら等倍)。
+// window.innerWidth はレイアウト上の幅(スマホでは980)、screen.width は画面の幅。
+// ピンチで拡大していれば visualViewport.scale の分だけ当たり判定は小さくてよい。
+function layoutShrinkFactor(){
+  const screenW = (window.screen && window.screen.width) || window.innerWidth;
+  if(!screenW) return 1;
+  const vv = window.visualViewport;
+  const scale = (vv && vv.scale) ? vv.scale : 1;
+  const r = window.innerWidth / screenW / scale;
+  // 等倍付近のわずかな差(ウィンドウを少し狭めた等)では効かせない
+  return r > 1.05 ? r : 1;
+}
+
+function pointHitRadius(evt){
+  const touch = evt && evt.pointerType && evt.pointerType !== 'mouse';
+  const want = touch ? POINT_HIT_RADIUS_TOUCH_PX : POINT_HIT_RADIUS_PX;
+  return want * (touch ? layoutShrinkFactor() : 1);
+}
 
 function findNearestPoint(evt){
   if(!chart || !chart.scales || !chart.chartArea) return null;
   const rect = chart.canvas.getBoundingClientRect();
   const px = evt.clientX - rect.left, py = evt.clientY - rect.top;
+  const hitR = pointHitRadius(evt);
   const xScale = chart.scales.x;
   let best = null;
   for(const c of [{dataset:'roast', arr:editedRoast, scale:chart.scales.yTemp},
@@ -6234,7 +6283,7 @@ function findNearestPoint(evt){
       const dx = xScale.getPixelForValue(c.arr[i][0]) - px;
       const dy = c.scale.getPixelForValue(c.arr[i][1]) - py;
       const d = Math.hypot(dx, dy);
-      if(d <= POINT_HIT_RADIUS_PX && (!best || d < best.d)){
+      if(d <= hitR && (!best || d < best.d)){
         best = {dataset:c.dataset, index:i, d};
       }
     }
@@ -6634,11 +6683,11 @@ function updateProfileOverview(){
       : (liveSamples.length ? liveSamples[liveSamples.length - 1].t : actualFcTime);
     const devTime = Math.max(0, endT - actualFcTime);
     const pct = endT > 0 ? (devTime / endT * 100) : 0;
-    if(label) label.textContent = fcTimeIsInferred ? 'Development Time(1ハゼ推定)' : 'Development Time(実測)';
+    if(label) label.textContent = fcTimeIsInferred ? '1ハゼ推定' : '実測';
     document.getElementById('ovDevTime').textContent = `${fmtMMSS(devTime)} (${pct.toFixed(1)}%)`;
     return;
   }
-  if(label) label.textContent = 'Development Time(見込み)';
+  if(label) label.textContent = '見込み';
   const dt = computeStaticDevTime();
   document.getElementById('ovDevTime').textContent = !dt ? '未設定'
     : dt.belowFirstCrack ? '1ハゼ温度未満'
@@ -7537,7 +7586,7 @@ function onTelemetry(msg){
   const recentForRoR = liveSamples.filter(s => s.t >= t - 40);
   const rorSeries = computeRoR(recentForRoR.map(s => [s.t, s.bt]));
   if(rorSeries.length){
-    document.getElementById('mRoR').textContent = rorSeries[rorSeries.length - 1][1].toFixed(1);
+    document.getElementById('mRoR').textContent = rorSeries[rorSeries.length - 1][1].toFixed(1) + ' ℃/分';
   }
 
   if(editedRoast.length > 0){
