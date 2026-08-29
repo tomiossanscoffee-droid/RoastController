@@ -23,6 +23,16 @@ ROAST = [[0, 190], [60, 100], [120, 155], [180, 185], [300, 210], [450, 230], [5
 FAN = [[0, 50], [1, 80], [6, 76], [515, 56]]
 
 
+# 標高による1ハゼ豆温度の補正。JS側と同じ答えになることを突き合わせる。
+ALT_BUCKETS = ["1000m未満", "1000-1500m", "1500-2000m", "2000m以上", "指定なし", ""]
+ALT_CASES = [[b, s] for b in ALT_BUCKETS for s in (0, 2, 4, -3)]
+
+
+def _altitude_offsets():
+    import roastlib.energy as E
+    return [E.altitude_fc_offset(b, s) for b, s in ALT_CASES]
+
+
 def test_短すぎるカーブはNoneを返す():
     assert estimate([], []) is None
     assert estimate([[0, 190]], []) is None
@@ -203,6 +213,7 @@ def test_JavaScript側と同じ数値になる():
                 r"function energyLatentHeat\(tC\)\{.*?\n\}",
                 r"function energySatPressureRel\(tC\)\{.*?\n\}",
                 r"function energyBurstFraction\(tB, E\)\{.*?\n\}",
+                r"function energyAltitudeFcOffset\(bucket, slope\)\{.*?\n\}",
                 r"const ROAST_INDEX_BANDS = .*?\n\}",
                 r"function estimateRoastEnergy\(roastPoints, fanPoints\)\{.*?\n\}"):
         m = re.search(pat, html, re.S)
@@ -214,6 +225,7 @@ console.log(JSON.stringify({{
   totalKcal: r.totalKcal, roastIndex: r.roastIndex, endBeanTemp: r.endBeanTemp,
   level: r.roastIndexLevel, n: r.series.length,
   crackStart: r.crackStart, crackEnd: r.crackEnd,
+  altOffsets: {json.dumps(ALT_CASES)}.map(([b, s]) => energyAltitudeFcOffset(b, s)),
   mid: r.series[Math.floor(r.series.length/2)],
 }}));
 """
@@ -226,6 +238,8 @@ console.log(JSON.stringify({{
     assert math.isclose(js["roastIndex"], py["roast_index"], rel_tol=1e-9)
     assert js["crackStart"] == py["crack_start"]
     assert js["crackEnd"] == py["crack_end"]
+    for got, want in zip(js["altOffsets"], _altitude_offsets()):
+        assert math.isclose(got, want, abs_tol=1e-9)
     assert math.isclose(js["endBeanTemp"], py["end_bean_temp"], rel_tol=1e-9)
     assert js["level"] == py["roast_index_level"]
     mid_py = py["series"][len(py["series"]) // 2]

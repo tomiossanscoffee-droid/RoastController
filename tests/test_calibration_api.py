@@ -115,10 +115,9 @@ def test_較正が推定に効く(srv):
 def fitted_only(srv):
     """較正で当てはめた分だけを取り出す。
 
-    1ハゼ豆温度とチャフ量は較正ではなく設定で決めるので、常に入っている。
+    チャフ量は較正ではなく設定で決めるので、常に入っている。
     """
     ov = dict(srv._calibration_overrides())
-    ov.pop("T_FC_BEAN", None)
     ov.pop("CHAFF_G", None)
     return ov
 
@@ -137,19 +136,49 @@ def test_知らない定数名は無視する(srv, tmp_path):
     assert fitted_only(srv) == {"U0": 0.004}
 
 
-def test_1ハゼ豆温度の設定がモデルに渡る(srv):
-    """設定で決めた1ハゼ豆温度が、推定に効くこと。"""
+def test_標高の補正が推定に効く(srv):
+    """標高帯に応じて1ハゼ豆温度が変わり、1ハゼの時刻が動くこと。"""
     import roastlib.energy as E
-    assert srv._calibration_overrides()["T_FC_BEAN"] == E.T_FC_BEAN
-    asyncio.run(srv.set_app_settings(FakeRequest({"firstCrackBeanTemp": 203})))
-    assert srv._calibration_overrides()["T_FC_BEAN"] == 203.0
+    # 既定は傾き0 = どの標高でも基準値のまま
+    assert srv._fc_bean_temp_for("2000m以上") == E.T_FC_BEAN
+    assert srv._fc_bean_temp_for("1000m未満") == E.T_FC_BEAN
+
+    asyncio.run(srv.set_app_settings(FakeRequest({"altitudeFcSlope": 4.0})))
+    assert srv._fc_bean_temp_for("1500-2000m") == E.T_FC_BEAN      # 基準の帯は動かない
+    assert srv._fc_bean_temp_for("1000m未満") < E.T_FC_BEAN         # 低地は低い
+    assert srv._fc_bean_temp_for("2000m以上") > E.T_FC_BEAN         # 高地は高い
+    assert srv._fc_bean_temp_for("") == E.T_FC_BEAN                # 未入力は補正しない
+    assert srv._fc_bean_temp_for("指定なし") == E.T_FC_BEAN
+
     prof = srv.beancal.CALIBRATION_PROFILE
-    base = E.estimate(prof["roast"], prof["fan"])
-    hot = E.estimate(prof["roast"], prof["fan"], cal={"T_FC_BEAN": 203.0})
-    # 爆ぜる温度を上げれば、1ハゼは遅くなる
-    assert hot["crack_start"] > base["crack_start"]
+    low = E.estimate(prof["roast"], prof["fan"],
+                     cal={"T_FC_BEAN": srv._fc_bean_temp_for("1000m未満")})
+    high = E.estimate(prof["roast"], prof["fan"],
+                      cal={"T_FC_BEAN": srv._fc_bean_temp_for("2000m以上")})
+    # 爆ぜる温度が高いほど1ハゼは遅い
+    assert high["crack_start"] > low["crack_start"]
     # 豆温度のカーブそのものは動かない(いつ爆ぜるかだけが変わる)
-    assert hot["series"][100]["bean"] == base["series"][100]["bean"]
+    assert high["series"][100]["bean"] == low["series"][100]["bean"]
+
+
+def test_標高が後から入っても推定に反映される(srv):
+    """豆情報に標高を後で入力する使い方があるので、キャッシュが残らないこと。"""
+    asyncio.run(srv.set_app_settings(FakeRequest({"altitudeFcSlope": 6.0})))
+    prof = srv.beancal.CALIBRATION_PROFILE
+    before = srv._profile_estimate(prof["roast"], prof["fan"], 0.10, "")
+    after = srv._profile_estimate(prof["roast"], prof["fan"], 0.10, "1000m未満")
+    # 標高を入れたら別の答えになる(キャッシュのキーに入っている)
+    assert after != before or after["end_bean_temp"] == before["end_bean_temp"]
+    # 標高を消せば元に戻る
+    again = srv._profile_estimate(prof["roast"], prof["fan"], 0.10, "")
+    assert again == before
+
+
+def test_豆情報を保存すると推定のキャッシュを捨てる(srv):
+    """後から標高を入力したとき、一覧の値が古いまま残らないこと。"""
+    srv._PROFILE_ESTIMATE_CACHE[("dummy",)] = {"x": 1}
+    srv._clear_profile_estimate_cache()
+    assert srv._PROFILE_ESTIMATE_CACHE == {}
 
 
 def test_チャフ量の設定がモデルに渡る(srv):
@@ -174,7 +203,7 @@ def test_チャフ量は範囲に収める(srv):
         assert srv._chaff_g() == want, f"{sent} → {want}"
 
 
-def test_1ハゼ豆温度は範囲に収める(srv):
-    for sent, want in ((100, 185.0), (999, 210.0), (203, 203.0), ("abc", 196.0)):
-        asyncio.run(srv.set_app_settings(FakeRequest({"firstCrackBeanTemp": sent})))
-        assert srv._first_crack_bean_temp() == want, f"{sent} → {want}"
+def test_標高の補正は範囲に収める(srv):
+    for sent, want in ((-99, -10.0), (99, 10.0), (3.5, 3.5), ("abc", 0.0), (0, 0.0)):
+        asyncio.run(srv.set_app_settings(FakeRequest({"altitudeFcSlope": sent})))
+        assert srv._altitude_fc_slope() == want, f"{sent} → {want}"
