@@ -733,25 +733,28 @@
   }
   .metric-card{
     background:var(--panel); border:1px solid var(--border);
-    border-radius:6px; padding:12px 14px;
-    display:flex; flex-direction:column;
+    border-radius:6px; padding:9px 12px;
   }
-  /* ラベルは2行ぶんの高さを確保する。長さがまちまちなので、確保しないと折り返した
-     カードだけ値が下がり、肝心の数字の高さが横に揃わない。
+  /* 高さを確保して揃えることはしない。ラベルもカードの2行目も、中身が1行しか
+     ないものが大半なので、全カードに2行ぶん取ると空白だけが残って間延びする。
+     値を1行に収まる長さにして(括弧書きは2行目へ回して)、自然な高さで並べる。
      日本語に大文字変換は効かず、英語のラベルだけ強調されて不揃いに見えるので
      text-transform は使わない。 */
   .metric-card .metric-label{
     font-size:10.5px; color:var(--text-muted); letter-spacing:0.04em;
-    line-height:1.35; min-height:2.7em;
+    line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  .metric-card .metric-value{ font-family:'IBM Plex Mono',monospace; font-size:22px; margin-top:2px; color:var(--amber); }
+  .metric-card .metric-value{
+    font-family:'IBM Plex Mono',monospace; font-size:21px; line-height:1.2;
+    margin-top:1px; color:var(--amber); white-space:nowrap;
+  }
   .metric-card .metric-value.small{ font-size:15px; color:var(--text); }
-  /* 主たる数値に添える2行目(最終温度の豆温度、Development Timeの見込み/実測の別)。
-     margin-top:auto でカードの下端に寄せ、2行目の有無で高さがずれないようにする。 */
+  /* 主たる数値に添える2行目(豆温度、割合、焙煎度など)。中身が無ければ高さも取らない。 */
   .metric-card .metric-sub{
-    font-family:'IBM Plex Mono',monospace; font-size:12.5px;
-    margin-top:auto; padding-top:3px; color:var(--text-muted); min-height:1.2em;
+    font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.3;
+    margin-top:1px; color:var(--text-muted);
   }
+  .metric-card .metric-sub:empty{ display:none; }
 
   .offset-row{
     display:flex; align-items:center; gap:10px; background:var(--panel);
@@ -1208,6 +1211,7 @@
       <div class="metric-card" title="生豆重量 ÷ 焙煎後重量 の推定値。浅1.140〜 / 中1.170〜 / 中深1.195〜 / 深1.220〜">
         <div class="metric-label">推定焙煎指数</div>
         <div class="metric-value mono" id="ovRoastIndex">--</div>
+        <div class="metric-sub mono" id="ovRoastIndexLevel"></div>
       </div>
     </div>
 
@@ -6734,8 +6738,9 @@ function updateProfileOverview(){
   } else {
     document.getElementById('ovEndBeanTemp').textContent = '豆 --';
   }
-  document.getElementById('ovRoastIndex').textContent = est
-    ? `${est.roastIndex.toFixed(3)} (${est.roastIndexLevel})` : '--';
+  // 値は1行に収める。焙煎度は2行目へ回す(括弧付きだと折り返してカードが伸びる)
+  document.getElementById('ovRoastIndex').textContent = est ? est.roastIndex.toFixed(3) : '--';
+  document.getElementById('ovRoastIndexLevel').textContent = est ? est.roastIndexLevel : '';
   updateFcConsistencyNote();
   // 「1ハゼ確認」ボタンで実測の1ハゼが記録されている場合は、計画上の推定ではなく
   // 実測値(押した時点 → 焙煎終了=加熱終了・冷却開始)を表示する。実測欄(mDTR)と
@@ -6746,15 +6751,17 @@ function updateProfileOverview(){
       : (liveSamples.length ? liveSamples[liveSamples.length - 1].t : actualFcTime);
     const devTime = Math.max(0, endT - actualFcTime);
     const pct = endT > 0 ? (devTime / endT * 100) : 0;
-    if(label) label.textContent = fcTimeIsInferred ? '1ハゼ推定' : '実測';
-    document.getElementById('ovDevTime').textContent = `${fmtMMSS(devTime)} (${pct.toFixed(1)}%)`;
+    document.getElementById('ovDevTime').textContent = fmtMMSS(devTime);
+    if(label) label.textContent =
+      `${pct.toFixed(1)}% ・${fcTimeIsInferred ? '1ハゼ推定' : '実測'}`;
     return;
   }
-  if(label) label.textContent = '見込み';
   const dt = computeStaticDevTime();
   document.getElementById('ovDevTime').textContent = !dt ? '未設定'
     : dt.belowFirstCrack ? '1ハゼ温度未満'
-    : `${fmtMMSS(dt.devTime)} (${dt.pct.toFixed(1)}%)`;
+    : fmtMMSS(dt.devTime);
+  if(label) label.textContent = (dt && !dt.belowFirstCrack)
+    ? `${dt.pct.toFixed(1)}% ・見込み` : '見込み';
 }
 
 function updateStaticMetrics(){
