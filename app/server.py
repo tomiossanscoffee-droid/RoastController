@@ -102,6 +102,10 @@ VAPID_PRIVATE_KEY_PATH = Path(os.environ.get("ROAST_VAPID_KEY_PATH", str(REPO_RO
 PUSH_SUBSCRIPTIONS_PATH = Path(os.environ.get("ROAST_PUSH_SUBSCRIPTIONS_PATH", str(REPO_ROOT / "push_subscriptions.json")))
 LAST_SENT_PROFILE_PATH = Path(os.environ.get("ROAST_LAST_SENT_PROFILE_PATH", str(REPO_ROOT / "last_sent_profile.json")))
 UNSAVED_ROAST_COUNTS_PATH = Path(os.environ.get("ROAST_UNSAVED_COUNTS_PATH", str(REPO_ROOT / "unsaved_roast_counts.json")))
+# 「いま焙煎する豆」。豆を選んでからプロファイルを選ぶのが本来の順番なので、
+# 焙煎が終わってから記録に紐づけるのではなく、先に選んでおけるようにする。
+# 端末をまたいで同じ豆を指すよう、ブラウザではなくサーバーに置く。
+SELECTED_BEAN_PATH = Path(os.environ.get("ROAST_SELECTED_BEAN_PATH", str(REPO_ROOT / "selected_bean.json")))
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -2292,6 +2296,7 @@ async def websocket_endpoint(websocket: WebSocket):
         "roast_start_t": _roast_start_t,
         "last_telemetry": _last_telemetry,
         "selected_profile": _last_selected_profile,
+        "selected_bean": _selected_bean_payload(),
         "fc_time": _last_fc_time,
         "sc_time": _last_sc_time,
         "telemetry_history": _telemetry_history,
@@ -2403,6 +2408,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         "fan": msg.get("fan"),
                         "cooldown": msg.get("cooldown"),
                     })
+
+                elif action == "select_bean":
+                    # どの端末で選んでも、他の端末の表示と焙煎記録の紐づけ先が揃うようにする
+                    _save_selected_bean_id(msg.get("bean_purchase_id") or None)
+                    await _broadcast({"type": "bean_selected", **_selected_bean_payload()})
 
                 elif action == "record_first_crack":
                     # 片方の端末で「ハゼた!」を記録したら、もう片方にも反映する。
@@ -2522,6 +2532,60 @@ BEAN_ALTITUDE_BUCKETS = ["1000m未満", "1000-1500m", "1500-2000m", "2000m以上
 # 絞り込み用のfilter_options(現在の絞り込み条件に連動して候補が減る)とは別に、
 # 常に全件から集めた候補を返す。
 _BEAN_PURCHASE_SUGGEST_FIELDS = ["country", "region", "process", "source", "crop_year"]
+
+
+def _load_selected_bean_id() -> Optional[str]:
+    """いま焙煎する豆のid。選んでいなければNone。
+
+    豆を選ばずに焙煎を始めることもできる(選ばせないと始められないと、
+    急いでいるときに邪魔になる)。その場合は今までどおり、焙煎後に記録から
+    紐づけられる。
+    """
+    if not SELECTED_BEAN_PATH.exists():
+        return None
+    try:
+        pid = json.loads(SELECTED_BEAN_PATH.read_text(encoding="utf-8")).get("bean_purchase_id")
+    except Exception:  # noqa: BLE001
+        return None
+    if not pid:
+        return None
+    # 豆そのものが消されていたら、選択も無かったことにする
+    return pid if pid in _load_bean_purchases() else None
+
+
+def _save_selected_bean_id(pid: Optional[str]) -> None:
+    SELECTED_BEAN_PATH.write_text(
+        json.dumps({"bean_purchase_id": pid or None}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+
+
+def _selected_bean_payload() -> dict:
+    pid = _load_selected_bean_id()
+    if not pid:
+        return {"bean_purchase_id": None, "label": "", "altitude": ""}
+    p = _load_bean_purchases()[pid]
+    return {
+        "bean_purchase_id": pid,
+        "label": _bean_purchase_label(p),
+        "altitude": str(p.get("altitude") or ""),
+    }
+
+
+@app.get("/api/selected_bean")
+def get_selected_bean():
+    return JSONResponse(_selected_bean_payload())
+
+
+@app.put("/api/selected_bean")
+async def set_selected_bean(request: Request):
+    body = await request.json()
+    pid = body.get("bean_purchase_id") or None
+    if pid and pid not in _load_bean_purchases():
+        return JSONResponse({"error": "その豆は見つかりません"}, status_code=404)
+    _save_selected_bean_id(pid)
+    payload = _selected_bean_payload()
+    await _broadcast({"type": "bean_selected", **payload})
+    return JSONResponse(payload)
 
 
 def _load_bean_purchases() -> dict:

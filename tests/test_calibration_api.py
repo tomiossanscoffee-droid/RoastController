@@ -19,7 +19,7 @@ sys.path.insert(0, str(REPO))
 PATH_KEYS = ("CALIBRATION", "APP_SETTINGS", "FAVORITES", "CUSTOM_PROFILES",
              "ROAST_RECORDS", "BEAN_PURCHASES", "GUIDE_TEMPS",
              "PUSH_SUBSCRIPTIONS", "MOBILE_HOST", "LAST_SENT_PROFILE",
-             "ROAST_COUNTS")
+             "ROAST_COUNTS", "SELECTED_BEAN")
 
 
 class FakeRequest:

@@ -215,6 +215,11 @@
   .modal-actions{ display:flex; flex-direction:column; gap:8px; margin-top:16px; }
   .modal-actions .btn{ width:100%; }
   .dup-confirm-item{ color:var(--text-muted); font-size:12px; }
+  .roast-bean-line{
+    margin:0 16px 12px; padding:8px 10px; border:1px solid var(--border); border-radius:6px;
+    font-size:13px; color:var(--text-muted); line-height:1.4;
+  }
+  .roast-bean-line b{ color:var(--text); font-weight:600; }
 </style>
 </head>
 <body>
@@ -225,6 +230,10 @@
 </header>
 
 <div class="roaster-state" id="roasterState" style="display:none; margin:0 16px 12px;">-</div>
+
+<!-- いま焙煎する豆。選ぶのはPC版から。ここでは、機械の前で「どの豆を入れるのか」を
+     確かめられるようにするためだけに出す(未選択でも焙煎はできる)。 -->
+<div class="roast-bean-line" id="roastBeanLine" style="display:none;">焙煎する豆: <b id="roastBeanName"></b></div>
 
 <!-- 1. プロファイルを送信 -->
 <div class="section" style="padding-bottom:0;">
@@ -1265,6 +1274,10 @@ async function autoCreateRoastRecord(){
         roasted_at: new Date().toISOString(),
         duration: roastDoneAtTime, max_temp: maxTemp, dev_time: devTime, fc_time: actualFcTime,
         fc_time_inferred: fcTimeIsInferred, error_spans: errorSpans,
+        // 2ハゼの実測と、焙煎前に選んでおいた豆。どちらも豆温度モデルの学習に効く。
+        // 記録を保存するのがPC版かこちらかは、その時の権利取得で決まるため、
+        // こちら側でも同じ内容を送らないと、端末次第で欠けた記録になる。
+        sc_time: actualScTime, bean_purchase_id: selectedBeanId,
         roast_curve: curve, fan_curve: fanCurve,
       }),
     });
@@ -1370,8 +1383,20 @@ function applyFirstCrackTime(t){
 }
 
 function applySecondCrackTime(t){
+  // 1ハゼより前の2ハゼは有り得ない(他端末からの反映が前後した場合の備え)
+  if(t !== null && actualFcTime !== null && t <= actualFcTime) return;
   actualScTime = t;
   updateCrackButtonLabel();
+}
+
+// いま焙煎する豆。選ぶのはPC版で、こちらは表示と焙煎記録への紐づけだけ。
+let selectedBeanId = null;
+function applySelectedBean(payload){
+  selectedBeanId = (payload && payload.bean_purchase_id) || null;
+  const row = document.getElementById('roastBeanLine');
+  if(!row) return;
+  row.style.display = selectedBeanId ? '' : 'none';
+  document.getElementById('roastBeanName').textContent = (payload && payload.label) || '';
 }
 
 function recordCrack(){
@@ -1911,6 +1936,7 @@ function connectWS(){
         currentRoasterState = msg.roaster_state;
       }
       hadPriorConnection = true;
+      if(msg.selected_bean) applySelectedBean(msg.selected_bean);
       // 他端末で選択中(閲覧・編集中)のプロファイルがあれば、送信済みプロファイルより
       // 優先してこちらを反映する(まだ何も選んでいない場合のみ)。
       if(!currentProfile){
@@ -1992,6 +2018,9 @@ function connectWS(){
         applyFirstCrackTime(msg.t);
         log(`ハゼ記録が他端末から反映されました(経過時間 ${fmtMMSS(msg.t)})`);
       }
+    }
+    else if(msg.type === 'bean_selected'){
+      applySelectedBean(msg);
     }
     else if(msg.type === 'second_crack_recorded'){
       if(msg.t !== null && msg.t !== undefined && msg.t !== actualScTime){

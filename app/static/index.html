@@ -271,6 +271,9 @@
   .profile-item .icon-btn:disabled{ opacity:.3; cursor:default; }
   .profile-item .icon-btn:disabled:hover{ background:none; color:var(--text-muted); }
   .profile-item .icon-btn.fav-on{ color:var(--amber); }
+  /* いま焙煎する豆として選んでいる購入豆 */
+  .profile-item.bean-picked{ border-color:var(--amber); }
+  .profile-item .icon-btn.bean-pick-on{ color:var(--amber); }
   /* 生豆紹介シートを取り込み済みのプリセットに付ける印(一覧・タブボタン共通)。
      お気に入りの★(amber)と紛れないよう、別色(teal)の菱形にしている。 */
   .sheet-mark{
@@ -282,7 +285,28 @@
 
   .top-actions{ margin-bottom:14px; }
 
-  .settings-section{ margin-top:auto; padding-top:8px; }
+  /* いま焙煎する豆。豆を選んでからプロファイルを選ぶのが本来の順番なので、
+     送信ボタンより上に置いて、その順で目に入るようにする。選ばなくても
+     焙煎はできるので、未選択でも警告色にはしない。 */
+  .roast-bean-bar{
+    border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-bottom:10px;
+    background:var(--panel-2, transparent);
+  }
+  .roast-bean-bar .rb-caption{
+    font-size:10.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;
+    margin-bottom:3px;
+  }
+  .roast-bean-bar .rb-name{ font-size:13px; color:var(--text); line-height:1.35; word-break:break-word; }
+  .roast-bean-bar.empty .rb-name{ color:var(--text-muted); }
+  .roast-bean-bar .rb-actions{ display:flex; gap:6px; margin-top:7px; }
+  .roast-bean-bar .rb-actions .btn{ width:auto; flex:1; padding:4px 6px; font-size:11.5px; }
+
+  /* 設定は「設定」ボタンを押した時だけ出す。閉じているのが普段の姿なので、
+     開いたときはプロファイル一覧と入れ替わりに、サイドバーの上から並べる
+     (margin-top:autoのままだと下端に貼り付き、上に大きな空白ができる)。 */
+  .settings-section{ padding-top:8px; }
+  /* サイドバーの一番下に置く、設定ではないリンク(権利表示・モバイル版)。 */
+  .sidebar-footer{ margin-top:auto; padding-top:12px; }
   .settings-title{
     font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;
     margin-bottom:8px;
@@ -840,6 +864,17 @@
       <div class="roaster-state" id="roasterState" style="display:none;">-</div>
     </div>
 
+    <!-- 焙煎する豆 → プロファイル → 送信、の順に並べる。豆は選ばなくても焙煎でき、
+         その場合は今までどおり焙煎後に記録から紐づけられる。 -->
+    <div class="roast-bean-bar empty" id="roastBeanBar">
+      <div class="rb-caption">焙煎する豆</div>
+      <div class="rb-name" id="roastBeanName">選んでいません(選ばなくても焙煎できます)</div>
+      <div class="rb-actions">
+        <button class="btn small" id="btnPickRoastBean">豆を選ぶ</button>
+        <button class="btn small" id="btnClearRoastBean" style="display:none;">外す</button>
+      </div>
+    </div>
+
     <div class="top-actions">
       <button class="btn primary" id="btnSend" style="width:100%;" disabled>プロファイルを送信</button>
       <button class="btn small" id="btnResendLast" style="width:100%; display:none;"></button>
@@ -852,6 +887,11 @@
         <span>連続焙煎モード</span>
       </label>
       <button class="btn small" id="btnExit" style="width:100%;">終了</button>
+      <!-- 設定は普段は畳んでおく。滅多に触らない項目(ガイド線・豆温度モデルの前提・
+           較正)が常に見えていると、プロファイル一覧の表示領域を圧迫するため。
+           押すとプロファイル一覧と入れ替わりに設定が出る。 -->
+      <button class="btn small" id="btnSettings" style="width:100%; margin-top:6px;"
+              title="設定と豆温度モデルの較正を開きます">⚙ 設定</button>
     </div>
 
     <!-- プロファイル送信後〜焙煎完了(または未接続)までは、誤って別のプロファイルを
@@ -917,7 +957,7 @@
     </div>
     </div><!-- /profileSelectionArea -->
 
-    <div class="settings-section">
+    <div class="settings-section" id="settingsSection" style="display:none;">
       <div class="settings-title">設定</div>
       <!-- 画面の配色。実体は :root と [data-theme=...] のCSS変数(app/static/index.html上部)。
            グラフの線の色も同じ変数から取るので、切り替えるとグラフも一緒に変わる。 -->
@@ -1085,6 +1125,10 @@
           <button class="btn small" id="btnCalLogsClear" style="width:auto;">採用をやめる</button>
         </div>
       </div>
+    </div>
+
+    <!-- 設定ではないので、設定を畳んでも消えないようサイドバー直下に置く。 -->
+    <div class="sidebar-footer">
       <div class="app-about-link"><a id="btnAbout">ⓘ アプリについて / 権利表示</a></div>
       <!-- モバイル版から「PC版を開く」で来た場合に、URLを打ち直さず戻れるようにする。
            同じホスト・ポートのまま /mobile を開くので、Tailscale経由でもLAN経由でも
@@ -1611,7 +1655,23 @@ function updatePreheatMetricsVisibility(){
 let profileSelectLocked = false;
 function setProfileSelectLocked(locked){
   profileSelectLocked = locked;
-  document.getElementById('profileSelectionArea').style.display = locked ? 'none' : '';
+  applySidebarView();
+}
+
+// サイドバーに何を出すか。プロファイル一覧と設定は場所を取り合うので、
+// 「送信中でロックされているか」と「設定を開いているか」の両方から一箇所で決める
+// (別々にstyle.displayを触ると、ロック解除の拍子に設定の裏から一覧が出てくる)。
+let settingsOpen = false;
+function applySidebarView(){
+  const sel = document.getElementById('profileSelectionArea');
+  const set = document.getElementById('settingsSection');
+  if(sel) sel.style.display = (settingsOpen || profileSelectLocked) ? 'none' : '';
+  if(set) set.style.display = settingsOpen ? '' : 'none';
+  const b = document.getElementById('btnSettings');
+  if(b){
+    b.textContent = settingsOpen ? '✕ 設定を閉じる' : '⚙ 設定';
+    b.classList.toggle('primary', settingsOpen);
+  }
 }
 // サーバーからのroaster_state(sync時の復元も含む)を見て、ロックの解除だけを行う
 // (ロック自体は送信時にのみ行うため、ここでは解除方向のみ扱う)。
@@ -2189,6 +2249,79 @@ function duplicateAsNewPurchase(data){
   });
 }
 
+// ------------------------------------------------------------
+// いま焙煎する豆
+// ------------------------------------------------------------
+// 本来の順番は「豆を選ぶ → プロファイルを選ぶ → 焙煎する」なので、焙煎が終わって
+// から記録に紐づけるのではなく、先に選んでおけるようにする。選ばずに焙煎を始めても
+// 構わない(急いでいるときに選択を強制すると邪魔になる)。その場合は今までどおり、
+// 焙煎後に記録から紐づけられる。
+//
+// 選択はサーバーに置く。PCで選んでスマホで焙煎を見る使い方があり、記録を保存する
+// 端末がどちらになるかは決まっていないため、ブラウザごとに持つと豆が付かない記録が
+// できてしまう。
+let selectedBeanId = null;
+let selectedBeanLabel = '';
+
+function renderRoastBeanBar(){
+  const bar = document.getElementById('roastBeanBar');
+  const name = document.getElementById('roastBeanName');
+  const pick = document.getElementById('btnPickRoastBean');
+  const clear = document.getElementById('btnClearRoastBean');
+  if(!bar) return;
+  const has = !!selectedBeanId;
+  bar.classList.toggle('empty', !has);
+  name.textContent = has ? selectedBeanLabel : '選んでいません(選ばなくても焙煎できます)';
+  pick.textContent = has ? '別の豆にする' : '豆を選ぶ';
+  clear.style.display = has ? '' : 'none';
+}
+
+// 選び直したら、購入豆の一覧と開いている詳細の表示も合わせる。
+function refreshBeanPickUI(){
+  renderRoastBeanBar();
+  if(currentTab === 'records'){
+    loadRecordsList(document.getElementById('recordsSearchBox').value);
+  }
+  const b = document.getElementById('btnPickThisBean');
+  if(b && currentRecordOpenBeanId){
+    b.textContent = selectedBeanId === currentRecordOpenBeanId
+      ? '✓ この豆で焙煎します(押すと外す)' : 'この豆で焙煎する';
+  }
+}
+
+function applySelectedBean(payload){
+  selectedBeanId = (payload && payload.bean_purchase_id) || null;
+  selectedBeanLabel = (payload && payload.label) || '';
+  refreshBeanPickUI();
+}
+
+// id を null にすると選択を外す。
+async function pickRoastBean(id){
+  try {
+    const res = await fetch(`${API}/api/selected_bean`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bean_purchase_id: id || null}),
+    });
+    if(!res.ok){ log('豆を選べませんでした。'); return; }
+    applySelectedBean(await res.json());
+    log(selectedBeanId ? `焙煎する豆を「${selectedBeanLabel}」にしました。`
+                       : '焙煎する豆の選択を外しました。');
+  } catch(e){ log('豆を選べませんでした。'); }
+}
+
+async function loadSelectedBean(){
+  try { applySelectedBean(await fetchJSON(`${API}/api/selected_bean`)); }
+  catch(e){ renderRoastBeanBar(); }
+}
+
+document.getElementById('btnPickRoastBean').onclick = () => {
+  // 設定を開いていると一覧が隠れているので、先に閉じてから購入豆タブへ移す。
+  if(settingsOpen){ settingsOpen = false; applySidebarView(); }
+  switchTab('records');
+  document.querySelector('.sidebar').scrollTop = 0;
+};
+document.getElementById('btnClearRoastBean').onclick = () => pickRoastBean(null);
+
 async function loadRecordsList(q){
   const listEl = document.getElementById('recordsList');
   listEl.innerHTML = '<div style="padding:12px; color:var(--text-muted); font-size:12px;">読み込み中…</div>';
@@ -2243,10 +2376,18 @@ function renderBeanListItem(it, isChild){
   if(it.purchase_date) metaParts.push(it.purchase_date);
   if(it.price_per_kg != null) metaParts.push(`${it.price_per_kg}円/kg`);
   const label = isChild ? (it.crop_year ? `${it.crop_year}年` : (it.purchase_date || it.label)) : it.label;
-  return `<div class="profile-item${isChild ? ' bean-tree-child-item' : ''}" data-record-id="${it.id}" onclick="openBeanPurchaseDetail('${it.id}')">
+  // 一覧から直接「この豆で焙煎する」を選べるようにする。詳細を開かないと選べないと、
+  // 焙煎のたびに1画面余分に踏むことになる。
+  const picked = selectedBeanId === it.id;
+  return `<div class="profile-item${isChild ? ' bean-tree-child-item' : ''}${picked ? ' bean-picked' : ''}" data-record-id="${it.id}" onclick="openBeanPurchaseDetail('${it.id}')">
     <div class="item-main">
       <div>${escapeHtml(label)}</div>
       <div class="item-meta">${escapeHtml(metaParts.join(' ・ '))}</div>
+    </div>
+    <div class="item-actions">
+      <button class="icon-btn bean-pick-btn${picked ? ' bean-pick-on' : ''}"
+              title="${picked ? 'いま焙煎する豆に選んでいます(押すと外します)' : 'この豆で焙煎する'}"
+              onclick="event.stopPropagation(); pickRoastBean(${picked ? 'null' : `'${it.id}'`});">${picked ? '●' : '○'}</button>
     </div>
   </div>`;
 }
@@ -2407,6 +2548,7 @@ async function openBeanPurchaseDetail(id, prefill){
     <div class="record-actions">
       <button class="btn small primary" id="btnSaveBeanPurchase">保存</button>
       <span id="beanPurchaseSaveStatus" class="bean-info-save-status"></span>
+      ${id ? `<button class="btn small" id="btnPickThisBean" style="width:auto;">${selectedBeanId === id ? '✓ この豆で焙煎します(押すと外す)' : 'この豆で焙煎する'}</button>` : ''}
       ${id ? '<button class="btn small" id="btnDuplicateBeanPurchase" style="width:auto;">＋ 別の購入日で登録</button>' : ''}
       ${id ? '<button class="btn small record-delete" id="btnDeleteBeanPurchase">この豆を削除</button>' : ''}
     </div>
@@ -2425,6 +2567,8 @@ async function openBeanPurchaseDetail(id, prefill){
   if(id) document.getElementById('btnAddManualRoastRecord').onclick = () => renderAddPastRoastRecordPanel(id);
   if(id) document.getElementById('btnDeleteBeanPurchase').onclick = () => deleteBeanPurchase(id);
   if(id) document.getElementById('btnDuplicateBeanPurchase').onclick = () => duplicateAsNewPurchase(data);
+  if(id) document.getElementById('btnPickThisBean').onclick =
+    () => pickRoastBean(selectedBeanId === id ? null : id);
 
   if(id) await loadBeanRoastRecordList(currentRecordOpenBeanGroupKey);
 }
@@ -3054,6 +3198,8 @@ async function autoCreateRoastRecord(){
         roasted_at: new Date().toISOString(),
         duration: roastDoneAtTime, max_temp: maxTemp, dev_time: devTime, fc_time: actualFcTime,
         fc_time_inferred: fcTimeIsInferred, sc_time: actualScTime, error_spans: errorSpans,
+        // 焙煎前に選んでおいた豆。選んでいなければサーバー側が今までどおり推測する。
+        bean_purchase_id: selectedBeanId,
         roast_curve: curve, fan_curve: fanCurve,
       }),
     });
@@ -7205,6 +7351,13 @@ function connectWS(){
       // 他端末が問い合わせ中(重複確認)のまま、この端末が後から開いた・再接続した
       // 場合にも、同じダイアログを追いつけるようにする。
       if(msg.duplicate_confirm){ showDuplicateConfirmDialog(msg.duplicate_confirm); }
+      // 他端末で選んだ「焙煎する豆」に追いつく
+      if(msg.selected_bean) applySelectedBean(msg.selected_bean);
+    }
+    else if(msg.type === 'bean_selected'){
+      applySelectedBean(msg);
+      log(msg.bean_purchase_id ? `焙煎する豆が「${msg.label}」になりました。`
+                               : '焙煎する豆の選択が外れました。');
     }
     else if(msg.type === 'continuous_roast'){
       setContinuousRoastUI(msg.enabled === true);
@@ -7708,6 +7861,7 @@ document.getElementById('continuousDelayInput').addEventListener('change', async
   } catch(err){ /* 保存に失敗した場合は次回起動時に元の設定へ戻る */ }
 });
 initAppSettings();
+loadSelectedBean();   // いま焙煎する豆(サーバーに置いてある)
 
 function setRoasterStateText(text){
   const el = document.getElementById('roasterState');
@@ -8016,6 +8170,18 @@ document.getElementById('btnExit').onclick = async () => {
     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:-apple-system,sans-serif;color:#ede7dd;background:#1c1917;">サーバーを終了しました。このタブを閉じてください。</div>';
   }
 };
+// 設定の開け閉め。開くたびに、他の画面での操作で古くなりうる表示を作り直す
+// (ガイド線との辻褄・焙煎ログからの学習結果は、焙煎したり豆情報を直すと変わる)。
+document.getElementById('btnSettings').onclick = () => {
+  settingsOpen = !settingsOpen;
+  applySidebarView();
+  if(settingsOpen){
+    document.querySelector('.sidebar').scrollTop = 0;
+    updateFcConsistencyNote();
+    loadCalibrationFromLogs();
+  }
+};
+
 let filterOptionsRefreshTimer = null;
 document.getElementById('searchBox').addEventListener('input', (e) => {
   searchProfiles(e.target.value, 'profileList', currentTab);
@@ -8026,6 +8192,7 @@ document.getElementById('searchBox').addEventListener('input', (e) => {
 });
 
 // 初期表示
+applySidebarView();          // 設定は畳んだ状態から始める
 setSearchBoxVisibility('searchBox', 'preset');
 populateCategoryFilter('preset', 'categoryFilter');
 searchProfiles('', 'profileList', 'preset');
