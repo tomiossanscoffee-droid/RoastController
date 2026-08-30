@@ -64,11 +64,36 @@ from . import energy as E
 CALIBRATION_UUID = "0001700000000000"
 
 CALIBRATION_PROFILE = {
-    "name": "豆温度モデル 校正用",
+    "name": "豆温度モデル 校正用(深煎り)",
     "roast": [[0, 185], [60, 95], [240, 180], [440, 216], [600, 240], [680, 247]],
     "fan": [[0, 50], [1, 80], [300, 70], [680, 60]],
     "cooldown": [700, 60],
 }
+
+# ■ 浅煎り用(2026-08 追加)
+# 深煎り用だけでは、1ハゼより後の温度域しか裏づけが取れない。豆の水の大半は
+# 1ハゼの前後で抜けるので、そこで止めた焙煎の重量が、いちばん効く実測になる。
+#
+# 440秒までは深煎り用とまったく同じ形にしてある。こうすると2つの焙煎の違いが
+# 「1ハゼの前後で抜けた水」だけになり、焙煎後の重量の差がそのまま答えになる。
+# 停止は1ハゼが終わってから約30秒後(豆208℃)。使う人の言う浅煎りの範囲
+# 「1ハゼが始まって、ハゼが終わって少し温度があるくらい」に当たる。
+# 1ハゼ前後の豆RoRは8.2℃/分で、時刻を±5秒読み違えても豆温度で±0.7℃に収まる
+# (深煎り用より更にゆるやか)。焙煎指数1.124は浅煎りの帯の真ん中。
+CALIBRATION_PROFILE_LIGHT = {
+    "name": "豆温度モデル 校正用(浅煎り)",
+    "roast": [[0, 185], [60, 95], [240, 180], [440, 216], [560, 222]],
+    "fan": [[0, 50], [1, 80], [300, 70], [560, 60]],
+    "cooldown": [580, 60],
+}
+
+# 較正に使えるプロファイル。測った値はプロファイルごとに持ち、当てはめは
+# 両方をまとめて見る(片方だけでも構わない)。
+CALIBRATION_PROFILES = {
+    "deep": CALIBRATION_PROFILE,
+    "light": CALIBRATION_PROFILE_LIGHT,
+}
+CALIBRATION_KIND_LABELS = {"deep": "深煎り", "light": "浅煎り"}
 
 # 2ハゼのときの豆温度(℃)。測れないので一般に言われる値を置いている。
 T_SC_BEAN = 225.0
@@ -86,6 +111,11 @@ CAL_BOUNDS = {
     "H_ENDO": (0.2, 5.0),        # 終盤の吸熱
     "K_PYRO": (0.05, 20.0),      # 乾物の分解(指数の効き方が緩いので広めに取る)
     "K_DRY": (0.1, 10.0),        # 乾燥の速さ(表面・内部を同じ倍率で動かす)
+    # 密閉水が抜けきるまでの温度の幅。既定10℃に対して5〜25℃。
+    # 浅煎り用と深煎り用の両方を焼いて初めて決まる(片方だけでは、乾物の分解と
+    # 見分けが付かない)。範囲は、狭すぎるとハゼの間に潜熱が集中して豆温度が
+    # 止まり、広すぎると1ハゼより手前で水が抜けすぎる、という両側から取った。
+    "VENT_SPREAD": (0.5, 2.5),
 }
 
 MEASUREMENT_KEYS = ("fcStart", "fcEnd", "scStart", "greenG", "roastedG",
@@ -101,6 +131,7 @@ MEASUREMENT_KEYS = ("fcStart", "fcEnd", "scStart", "greenG", "roastedG",
 BOUND_LABELS = {
     "U0": "熱の入りやすさ", "CRACK_SPREAD": "ハゼの続く長さ",
     "H_ENDO": "終盤の吸熱", "K_PYRO": "乾物の分解", "K_DRY": "乾燥の速さ",
+    "VENT_SPREAD": "水が抜ける温度の幅",
 }
 BOUND_REASONS = {
     "U0": "1ハゼが早すぎる(または遅すぎる)ため、これ以上熱の入りを強められません"
@@ -110,6 +141,8 @@ BOUND_REASONS = {
     "K_PYRO": "焙煎後の重さが、含水率の設定と噛み合っていません"
               "(設定の生豆の含水率を見直すと収まることがあります)。",
     "K_DRY": "途中で止めたときの重さが、その時刻にしては減りすぎ(または減らなすぎ)です。",
+    "VENT_SPREAD": "浅煎りと深煎りの焙煎後の重さの差が、モデルで表せる範囲から"
+                   "外れています。",
 }
 
 
@@ -127,6 +160,8 @@ def _overrides(scale: dict) -> dict:
     if "K_DRY" in scale:
         out["K_SURFACE"] = E.K_SURFACE * scale["K_DRY"]
         out["K_INNER"] = E.K_INNER * scale["K_DRY"]
+    if "VENT_SPREAD" in scale:
+        out["VENT_SPREAD"] = E.VENT_SPREAD * scale["VENT_SPREAD"]
     return out
 
 
@@ -144,6 +179,12 @@ def _bisect(lo: float, hi: float, value_of, target: float, rising: bool,
 
     rising=True なら x を大きくすると value_of も大きくなる関係。
     範囲の外に答えがある場合は端で止まる(呼び出し側が CAL_BOUNDS で判断する)。
+
+    観測が複数あるときは、それぞれの値の合計を value_of、実測の合計を target に
+    する。どの観測もその定数に対して同じ向きに動くので、合計も単調になり、
+    「全部からの外れがいちばん小さいところ」に落ちる。2乗和を谷探しで最小化する
+    やり方も試したが、届かなかった場合に一定の大きな値が並ぶ平らな区間ができて
+    谷探しが迷子になった(単調性を使うこちらの方が確実)。
     """
     for _ in range(iters):
         mid = (lo + hi) / 2
@@ -178,29 +219,22 @@ def _abort_points(measurements: dict, abort_at, abort_g) -> list:
     return points
 
 
-def _minimize(lo: float, hi: float, f, rounds: int = 40) -> float:
-    """[lo, hi] で f を最も小さくする点を探す(黄金分割)。
+def _roast_cases(measurements: dict, profile) -> list:
+    """測定値を、プロファイルごとの一覧にそろえる。
 
-    二分法と違い「目標値にぴったり合わせる」のではなく、複数の測定点からの
-    外れをまとめて小さくするために使う。fは山が1つ(下に凸)であることを前提に
-    しているが、外れの2乗和は乾燥の速さに対してそうなっている。
+    新しい形: {"roasts": {"deep": {...}, "light": {...}}}
+    古い形  : 測定値をそのまま(深煎り用のプロファイルで測ったものとして扱う)
     """
-    phi = 0.6180339887498949
-    a, b = lo, hi
-    c, d = b - phi * (b - a), a + phi * (b - a)
-    fc, fd = f(c), f(d)
-    for _ in range(rounds):
-        if b - a < (hi - lo) * 1e-4:
-            break
-        if fc < fd:
-            b, d, fd = d, c, fc
-            c = b - phi * (b - a)
-            fc = f(c)
-        else:
-            a, c, fc = c, d, fd
-            d = a + phi * (b - a)
-            fd = f(d)
-    return (a + b) / 2.0
+    roasts = measurements.get("roasts")
+    if isinstance(roasts, dict):
+        out = []
+        for kind, meas in roasts.items():
+            prof = CALIBRATION_PROFILES.get(kind)
+            if prof and isinstance(meas, dict) and meas:
+                out.append((kind, prof, meas))
+        if out:
+            return sorted(out, key=lambda x: x[0])
+    return [("deep", profile or CALIBRATION_PROFILE, measurements)]
 
 
 def fit(measurements: dict, moisture: float = E.MOISTURE,
@@ -208,25 +242,24 @@ def fit(measurements: dict, moisture: float = E.MOISTURE,
     """測定値から定数の上書き値を求める。
 
     measurements: MEASUREMENT_KEYS のうち入っているものだけを使う。
-        fcStart / fcEnd / scStart / abortAt … 焙煎開始からの秒数
-        greenG / roastedG / abortG … グラム
+        fcStart / fcEnd / scStart … 焙煎開始からの秒数
+        greenG / roastedG … グラム
+        aborts … 途中で止めて量った重量 [{"t": 秒, "g": グラム}, ...]
+        roasts … プロファイルごとに上記をまとめた辞書(浅煎り用・深煎り用)
     戻り値:
         {"overrides": {定数名: 値}, "scale": {定数名: 既定値に対する倍率},
          "notes": [人が読む説明], "used": [使った測定項目]}
+
+    浅煎り用と深煎り用の両方を焼いてあれば、両方からの外れがいちばん小さくなる
+    ように1組の定数を決める。深煎り用だけでは1ハゼより後しか裏づけが取れず、
+    豆の水の大半が抜ける1ハゼ前後が合っているかを確かめられないため。
     """
-    prof = profile or CALIBRATION_PROFILE
-    roast, fan = prof["roast"], prof["fan"]
     scale: dict = {}
     notes: list = []
     used: list = []
 
-    def series(extra: Optional[dict] = None):
-        cal = _overrides({**scale, **(extra or {})})
-        r = E.estimate(roast, fan, moisture=moisture, cal=cal)
-        return r
-
-    def num(key):
-        v = measurements.get(key)
+    def num(meas, key):
+        v = meas.get(key)
         if v is None or v == "":
             return None
         try:
@@ -235,72 +268,104 @@ def fit(measurements: dict, moisture: float = E.MOISTURE,
             return None
         return v if v > 0 else None
 
-    fc_start, fc_end = num("fcStart"), num("fcEnd")
-    sc_start = num("scStart")
-    green_g = num("greenG") or E.BEAN_G
-    roasted_g = num("roastedG")
-    abort_at, abort_g = num("abortAt"), num("abortG")
-    aborts = _abort_points(measurements, abort_at, abort_g)
+    cases = []
+    for kind, prof, meas in _roast_cases(measurements, profile):
+        green = num(meas, "greenG") or E.BEAN_G
+        cases.append({
+            "kind": kind,
+            "roast": prof["roast"], "fan": prof["fan"],
+            "endT": prof["roast"][-1][0],
+            "fcStart": num(meas, "fcStart"), "fcEnd": num(meas, "fcEnd"),
+            "scStart": num(meas, "scStart"),
+            "greenG": green, "roastedG": num(meas, "roastedG"),
+            "aborts": _abort_points(meas, num(meas, "abortAt"), num(meas, "abortG")),
+        })
+
+    def series(case, extra: Optional[dict] = None):
+        cal = _overrides({**scale, **(extra or {})})
+        return E.estimate(case["roast"], case["fan"], moisture=moisture, cal=cal)
+
+    def fit_one(name, cases_used, value_of, target_of, rising):
+        """その定数を、使えるすべての焙煎の観測に合わせて決める。
+
+        観測が複数あるときは合計どうしを突き合わせる(_bisectの説明を参照)。
+        """
+        if not cases_used:
+            return False
+        lo, hi = CAL_BOUNDS[name]
+
+        def total(x):
+            got = 0.0
+            for c in cases_used:
+                v = value_of(c, series(c, {name: x}))
+                if v is None:
+                    return None      # 1つでも届かなければ「届かない側」として扱う
+                got += v
+            return got
+
+        target = sum(target_of(c) for c in cases_used)
+        scale[name] = _bisect(lo, hi, total, target, rising=rising)
+        return True
 
     # 序盤→終盤の順に決めていく。定数どうしは互いに効くので(たとえば乾燥が遅いと
     # 熱容量が残って豆が上がりにくくなる)、1周では収まらない。4周まわすと、
     # 当てはめた定数で焼き直したときの時刻の再現が数秒以内に落ち着く。
-    # 1周あたりの計算は5項目×二分法24回で、全部入れても数秒で終わる。
     for _round in range(4):
         # ---- 乾燥の速さ: 途中で止めて量った重量 ----
-        if aborts:
-            def mass_error(x):
-                """全ての測定点での重量のずれ(g)の2乗和。小さいほど良い。"""
-                r = series({"K_DRY": x})
-                return sum((_mass_at(r, t, green_g) * 1000.0 - g) ** 2 for t, g in aborts)
-            lo, hi = CAL_BOUNDS["K_DRY"]
-            scale["K_DRY"] = _minimize(lo, hi, mass_error)
+        # 乾燥を速くするほど、その時刻の豆は軽くなる = rising=False
+        if fit_one("K_DRY", [c for c in cases if c["aborts"]],
+                   lambda c, r: sum(_mass_at(r, t, c["greenG"]) * 1000.0
+                                    for t, _ in c["aborts"]),
+                   lambda c: sum(g for _, g in c["aborts"]), rising=False):
             if _round == 0:
                 used.append("abort")
 
         # ---- 熱の入りやすさ: 1ハゼ開始時刻 ----
-        if fc_start:
-            # 1ハゼの「開始」は、豆が T_FC_BEAN に達した瞬間(ごく一部の細胞が
-            # 壊れ始める時点)。energy.burst_fraction の分布の置き方と揃えている。
-            def fc_time(x):
-                return series({"U0": x})["crack_start"]
-            lo, hi = CAL_BOUNDS["U0"]
-            # U0を上げるほど早く196℃に届く = 時刻は下がるので rising=False
-            scale["U0"] = _bisect(lo, hi, fc_time, fc_start, rising=False)
+        # 1ハゼの「開始」は、豆が T_FC_BEAN に達した瞬間(ごく一部の細胞が
+        # 壊れ始める時点)。energy.burst_fraction の分布の置き方と揃えている。
+        # U0を上げるほど早く196℃に届く = 時刻は下がるので rising=False
+        if fit_one("U0", [c for c in cases if c["fcStart"]],
+                   lambda c, r: r["crack_start"],
+                   lambda c: c["fcStart"], rising=False):
             if _round == 0:
                 used.append("fcStart")
 
         # ---- ハゼの続く長さ: 1ハゼ終了 - 開始 ----
-        if fc_start and fc_end and fc_end > fc_start:
-            want = fc_end - fc_start
-            def crack_len(x):
-                r = series({"CRACK_SPREAD": x})
-                a, b = r["crack_start"], r["crack_end"]
-                return None if (a is None or b is None) else b - a
-            lo, hi = CAL_BOUNDS["CRACK_SPREAD"]
-            scale["CRACK_SPREAD"] = _bisect(lo, hi, crack_len, want, rising=True)
+        def crack_len(c, r):
+            a, b = r["crack_start"], r["crack_end"]
+            return None if (a is None or b is None) else b - a
+
+        if fit_one("CRACK_SPREAD",
+                   [c for c in cases if c["fcStart"] and c["fcEnd"]
+                    and c["fcEnd"] > c["fcStart"]],
+                   crack_len, lambda c: c["fcEnd"] - c["fcStart"], rising=True):
             if _round == 0:
                 used.append("fcEnd")
 
         # ---- 終盤の熱収支: 2ハゼ開始時刻 ----
-        if sc_start:
-            def sc_time(x):
-                return _time_at_bean(series({"H_ENDO": x})["series"], T_SC_BEAN)
-            lo, hi = CAL_BOUNDS["H_ENDO"]
-            # H_ENDOを上げるほど吸熱が増えて遅くなる = rising=True
-            scale["H_ENDO"] = _bisect(lo, hi, sc_time, sc_start, rising=True)
+        # H_ENDOを上げるほど吸熱が増えて遅くなる = rising=True
+        if fit_one("H_ENDO", [c for c in cases if c["scStart"]],
+                   lambda c, r: _time_at_bean(r["series"], T_SC_BEAN),
+                   lambda c: c["scStart"], rising=True):
             if _round == 0:
                 used.append("scStart")
 
         # ---- 乾物の分解: 焙煎後の重量 ----
-        if roasted_g and roasted_g < green_g:
-            want_index = green_g / roasted_g
-            def index_of(x):
-                return series({"K_PYRO": x})["roast_index"]
-            lo, hi = CAL_BOUNDS["K_PYRO"]
-            scale["K_PYRO"] = _bisect(lo, hi, index_of, want_index, rising=True)
+        # 重量そのものではなく焙煎指数で合わせる。生豆の量が違っても比べられる。
+        weighed = [c for c in cases if c["roastedG"] and c["roastedG"] < c["greenG"]]
+        if fit_one("K_PYRO", weighed,
+                   lambda c, r: r["roast_index"],
+                   lambda c: c["greenG"] / c["roastedG"], rising=True):
             if _round == 0:
                 used.append("roastedG")
+
+        # 水が抜ける温度の幅(VENT_SPREAD)も、浅煎りと深煎りの焙煎後の重さの差から
+        # 決められないか試したが、自動では当てはめないことにした。焙煎後の重量に
+        # 出る違いが幅5〜25℃の全域で焙煎指数0.025ぶん(深煎り側で0.9g)しかなく、
+        # 実測のばらつき(0.2g)に対して足りない。乾物の分解と取り合いになって、
+        # 4周まわす間に両者が振動し、範囲の端に張り付いてしまう。
+        # 定数としては上書きできるようにしてある(CALIBRATABLE)ので、実測が
+        # 貯まって根拠が出たときに手で決められる。
 
     overrides = _overrides(scale)
     for name, mul in sorted(scale.items()):

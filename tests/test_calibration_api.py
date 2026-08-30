@@ -44,13 +44,19 @@ def test_校正用プロファイルを取得できる(srv):
 def test_較正前は既定値で予想だけ返る(srv):
     d = body_of(srv.get_calibration())
     assert d["scale"] == {} and d["overrides"] == {}
-    assert d["expected"]["fcStart"] > 0
-    assert d["expected"]["scStart"] > d["expected"]["fcStart"]
+    # 予想は較正用プロファイルごとに返る(深煎り用・浅煎り用)
+    assert set(d["expected"]) == {"deep", "light"}
+    assert d["expected"]["deep"]["fcStart"] > 0
+    assert d["expected"]["deep"]["scStart"] > d["expected"]["deep"]["fcStart"]
+    # 浅煎り用は2ハゼまで届かない
+    assert d["expected"]["light"]["scStart"] is None
+    # 浅煎り用のほうが軽く焼ける = 焙煎後は重い
+    assert d["expected"]["light"]["roastedG"] > d["expected"]["deep"]["roastedG"]
 
 
 def test_測定値を入れると較正され保存される(srv, tmp_path):
     # モデルの予想から少しずらした、到達できる範囲の測定値
-    exp = body_of(srv.get_calibration())["expected"]
+    exp = body_of(srv.get_calibration())["expected"]["deep"]
     meas = {"fcStart": exp["fcStart"] - 20, "fcEnd": exp["fcEnd"] - 10,
             "scStart": exp["scStart"] - 25, "greenG": 50,
             "roastedG": exp["roastedG"] - 0.8, "abortAt": 360, "abortG": 46.6}
@@ -59,9 +65,40 @@ def test_測定値を入れると較正され保存される(srv, tmp_path):
     saved = json.loads((sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).read_text(encoding="utf-8"))
     assert saved["measurements"]["fcStart"] == meas["fcStart"]
     # 較正後の予想が実測に近づいていること
-    after = body_of(srv.get_calibration())
-    assert abs(after["fitted"]["fcStart"] - meas["fcStart"]) <= 6
-    assert abs(after["fitted"]["roastedG"] - meas["roastedG"]) <= 0.2
+    after = body_of(srv.get_calibration())["fitted"]["deep"]
+    assert abs(after["fcStart"] - meas["fcStart"]) <= 6
+    assert abs(after["roastedG"] - meas["roastedG"]) <= 0.2
+
+
+def test_プロファイルごとに測定値を受け取れる(srv, tmp_path):
+    """浅煎り用と深煎り用の両方を焼いた場合。"""
+    exp = body_of(srv.get_calibration())["expected"]
+    body = {"roasts": {
+        "deep": {"fcStart": exp["deep"]["fcStart"], "greenG": 50,
+                 "roastedG": exp["deep"]["roastedG"] - 0.5},
+        "light": {"fcStart": exp["light"]["fcStart"], "greenG": 50,
+                  "roastedG": exp["light"]["roastedG"] - 0.5},
+    }}
+    d = body_of(asyncio.run(srv.set_calibration(FakeRequest(body))))
+    saved = json.loads((sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).read_text(encoding="utf-8"))
+    assert set(saved["measurements"]["roasts"]) == {"deep", "light"}
+    # 両方の焙煎後の重量に近づいていること
+    after = body_of(srv.get_calibration())["fitted"]
+    for kind in ("deep", "light"):
+        want = body["roasts"][kind]["roastedG"]
+        assert abs(after[kind]["roastedG"] - want) <= 0.6, kind
+
+
+def test_浅煎り用は深煎り用と途中まで同じ形(srv):
+    """2つの焙煎後の重量の差が、そのまま1ハゼ前後で抜けた水になるようにしてある。"""
+    deep = body_of(srv.get_calibration_profile("deep"))
+    light = body_of(srv.get_calibration_profile("light"))
+    assert deep["roast"][:4] == light["roast"][:4]
+    assert light["roast"][-1][0] < deep["roast"][-1][0]
+    # どちらも焙煎機に送れる形であること
+    for p in (deep, light):
+        assert len(p["uuid"]) == 16 and p["uuid"].isdigit()
+        assert p["cooldown"][0] > p["roast"][-1][0]
 
 
 def test_一項目だけでも受け付ける(srv):

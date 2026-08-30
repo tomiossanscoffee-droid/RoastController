@@ -1108,6 +1108,17 @@
           </span>
         </div>
 
+        <!-- 較正用プロファイルは2つある。440秒までは同じ形で、止めるところだけが
+             違う。豆の水の大半が抜けるのは1ハゼの前後なので、そこで止めたほう
+             (浅煎り用)の焙煎後の重量がいちばん効く実測になる。両方焼くと、
+             2つの重量の差がそのまま「1ハゼの前後で抜けた水」を表す。 -->
+        <div class="settings-title" style="margin-top:12px;">どちらの校正用プロファイルか</div>
+        <div class="tabs" style="margin-bottom:6px;">
+          <div class="tab-btn active" id="calKindDeep" onclick="switchCalKind('deep')">深煎り用</div>
+          <div class="tab-btn" id="calKindLight" onclick="switchCalKind('light')">浅煎り用</div>
+        </div>
+        <div class="settings-note" id="calKindNote" style="margin-bottom:6px;"></div>
+
         <div class="settings-num-row" title="1ハゼの音が聞こえ始めた時刻(2回目のハゼ音)。mm:ss または 秒で入れられます">
           <label for="calFcStart">1ハゼ開始</label>
           <span class="settings-num-field"><input type="text" id="calFcStart" placeholder="7:19"></span>
@@ -1116,7 +1127,7 @@
           <label for="calFcEnd">1ハゼ終了</label>
           <span class="settings-num-field"><input type="text" id="calFcEnd" placeholder="8:23"></span>
         </div>
-        <div class="settings-num-row" title="2ハゼの音が聞こえ始めた時刻">
+        <div class="settings-num-row" id="calScRow" title="2ハゼの音が聞こえ始めた時刻">
           <label for="calScStart">2ハゼ開始</label>
           <span class="settings-num-field"><input type="text" id="calScStart" placeholder="10:24"></span>
         </div>
@@ -1132,7 +1143,8 @@
              かえって外れるので、何点でも入れられるようにしてある(実際、3分の1点
              だけで当てはめると乾燥の速さが6.1倍まで振れた)。 -->
         <div class="settings-note" style="margin-top:8px;">
-          途中で止めて量った重量(何点でも。多いほど重量の変化に合います):
+          (任意)途中で止めて量った重量。<b>浅煎り用を焼けば、この行は要りません</b>
+          — 最後まで焼いて量るほうが、冷却の途中で止めるより正確だからです:
         </div>
         <div id="calAbortRows"></div>
         <button class="btn small" id="btnCalAbortAdd" style="width:auto; margin-top:4px;">＋ 行を追加</button>
@@ -1293,7 +1305,7 @@
       <!-- 焙煎指数(生豆÷焙煎後)と、その逆数(焙煎後÷生豆=歩留まり)を並べる。
            指数は焙煎度の目安として、歩留まりは「50gが何gになるか」を掴むのに使う。
            どちらも同じ数字の裏表なので、片方だけだと毎回頭の中で割ることになる。 -->
-      <div class="metric-card" title="生豆重量 ÷ 焙煎後重量 の推定値。浅1.106〜 / 中1.136〜 / 中深1.170〜 / 深1.199〜。括弧内はその逆数(歩留まり)">
+      <div class="metric-card" title="生豆重量 ÷ 焙煎後重量 の推定値。浅1.099〜 / 中1.129〜 / 中深1.158〜 / 深1.188〜。横の値はその逆数(歩留まり)">
         <div class="metric-label">推定焙煎指数</div>
         <div class="metric-value mono" id="ovRoastIndex">--</div>
         <div class="metric-sub mono" id="ovRoastIndexLevel"></div>
@@ -1896,7 +1908,7 @@ const ENERGY = {
   BEAN_G: 50.0, MOISTURE: 0.10,          // 生豆50g・含水率10%
   C_DRY: 1.70, C_W: 4.18,                // 比熱 kJ/(kg·K)
   T_START: 20.0, T_FC_BEAN: 196.0,       // 投入時の豆温度 / 1ハゼの豆温度
-  U0: 0.00306, FAN_REF: 70.0, FAN_EXP: 0.8,
+  U0: 0.0032728, FAN_REF: 70.0, FAN_EXP: 0.8,
   // 熱の入りやすさは乾き具合で変わる。濡れている間はU_WET倍(表面の蒸発冷却と
   // 内部の温度勾配)、乾くほど多孔質になって入りやすくなる。これが無いと投入直後に
   // 豆が空気温度を追い越してしまう。
@@ -1918,11 +1930,11 @@ const ENERGY = {
   // チャフ(薄皮)は乾物の一部だが、熱で分解して飛ぶのではなく乾いて剥がれる。
   // 分解と混ぜていると、温度依存の分解とほぼ一定のチャフの違いが吸収されてしまう。
   CHAFF_G: 0.5,
-  K_SURFACE: 8.0e-3, K_INNER: 6.0e-4, CRACK_SPREAD: 1.8,
+  K_SURFACE: 4.832e-3, K_INNER: 3.624e-4, CRACK_SPREAD: 1.612,
   // 密閉水が水蒸気として抜けていく温度の中心と幅。音として聞こえるハゼより
   // ずっと広い温度域にわたる(energy.py の VENT_SHIFT / VENT_SPREAD と同じ)。
   VENT_SHIFT: 6.0, VENT_SPREAD: 10.0,
-  EA: 65000.0, K_PYRO: 3265.3, H_ENDO: 2095.0, R_GAS: 8.314,
+  EA: 65000.0, K_PYRO: 2308.7, H_ENDO: 1611.1, R_GAS: 8.314,
   // SUBSTEPSは8。1ハゼ付近の水の放出が急なため、4回だと潜熱の払いが
   // 1ステップおきに振動する(roastlib/energy.py の説明を参照)。
   DT: 1.0, SUBSTEPS: 8, KJ_PER_KCAL: 4.184,
@@ -1977,8 +1989,8 @@ function energyBurstFraction(tB, E){
 
 // 使う人の基準(浅=1ハゼ開始〜終了+少し / 中深=2ハゼが始まる頃まで /
 // 深=2ハゼ以降)を豆温度に読み替えて出した帯。energy.py と必ず揃えること。
-const ROAST_INDEX_BANDS = [['浅煎り',1.106,1.136],['中煎り',1.136,1.170],
-                           ['中深煎り',1.170,1.199],['深煎り',1.199,Infinity]];
+const ROAST_INDEX_BANDS = [['浅煎り',1.099,1.129],['中煎り',1.129,1.158],
+                           ['中深煎り',1.158,1.188],['深煎り',1.188,Infinity]];
 function roastIndexLevel(index){
   for(const [name, lo, hi] of ROAST_INDEX_BANDS){ if(index >= lo && index < hi) return name; }
   return index < ROAST_INDEX_BANDS[0][1] ? ROAST_INDEX_BANDS[0][0]
@@ -5819,15 +5831,11 @@ async function loadCalibration(){
     if(!res.ok) return;
     calibrationData = await res.json();
     applyCalibrationToEnergy(calibrationData.overrides);
-    for(const [id, key] of [['calFcStart','fcStart'],['calFcEnd','fcEnd'],['calScStart','scStart']]){
-      const v = (calibrationData.measurements || {})[key];
-      if(v) document.getElementById(id).value = fmtMMSS(v);
-    }
-    for(const [id, key] of [['calGreenG','greenG'],['calRoastedG','roastedG']]){
-      const v = (calibrationData.measurements || {})[key];
-      if(v) document.getElementById(id).value = v;
-    }
-    renderCalAbortRows(calibrationData.measurements || {});
+    // 測定値はプロファイルごとに持つ。古い形(1つぶんだけ)は深煎り用として読む。
+    const m = calibrationData.measurements || {};
+    calEntries.deep = (m.roasts && m.roasts.deep) || (m.roasts ? {} : m);
+    calEntries.light = (m.roasts && m.roasts.light) || {};
+    writeCalForm(calEntries[calKind]);
     renderCalibrationResult(calibrationData);
     updateStaticMetrics();
   } catch(e){ /* 読めなくても既定値のまま使える */ }
@@ -5836,22 +5844,30 @@ async function loadCalibration(){
 function renderCalibrationResult(data){
   const el = document.getElementById('calResult');
   if(!el) return;
-  const exp = data.expected || {};
   const t = v => (v == null ? '--' : fmtMMSS(v));
+  const labels = data.kindLabels || {deep: '深煎り', light: '浅煎り'};
+  const one = (m) => `1ハゼ ${t(m.fcStart)}〜${t(m.fcEnd)}`
+    + (m.scStart != null ? ` ／ 2ハゼ ${t(m.scStart)}` : '')
+    + ` ／ 焙煎後 ${m.roastedG ?? '--'}g (指数 ${m.roastIndex ?? '--'})`;
   const lines = [];
-  lines.push('<b>いまのモデルの予想</b>(校正用プロファイルを焼いた場合)<br>' +
-    `1ハゼ ${t(exp.fcStart)}〜${t(exp.fcEnd)} ／ 2ハゼ ${t(exp.scStart)} ／ ` +
-    `焙煎後 ${exp.roastedG ?? '--'}g (指数 ${exp.roastIndex ?? '--'})`);
+  // プロファイルごとに「焼いたらこうなるはず」を並べる。実際に量った値と
+  // 見比べれば、どちらの焙煎度でずれているのかが分かる。
+  lines.push('<b>いまのモデルの予想</b>(校正用プロファイルを焼いた場合)');
+  for(const [kind, m] of Object.entries(data.expected || {})){
+    lines.push(`　${labels[kind] || kind}用: ${one(m)}`);
+  }
   if(data.scale && Object.keys(data.scale).length){
     const NAMES = {U0:'熱の入りやすさ', CRACK_SPREAD:'ハゼの続く長さ',
-                   H_ENDO:'終盤の吸熱', K_PYRO:'乾物の分解', K_DRY:'乾燥の速さ'};
+                   H_ENDO:'終盤の吸熱', K_PYRO:'乾物の分解', K_DRY:'乾燥の速さ',
+                   VENT_SPREAD:'水が抜ける温度の幅'};
     const parts = Object.entries(data.scale)
       .map(([k, v]) => `${NAMES[k] || k} ${v.toFixed(2)}倍`).join(' ／ ');
     lines.push(`<b>較正済み</b>(既定値に対して) ${parts}`);
     if(data.fitted){
-      const f = data.fitted;
-      lines.push(`較正後の予想: 1ハゼ ${t(f.fcStart)}〜${t(f.fcEnd)} ／ 2ハゼ ${t(f.scStart)} ／ ` +
-                 `焙煎後 ${f.roastedG ?? '--'}g (指数 ${f.roastIndex ?? '--'})`);
+      lines.push('較正後の予想:');
+      for(const [kind, f] of Object.entries(data.fitted)){
+        lines.push(`　${labels[kind] || kind}用: ${one(f)}`);
+      }
     }
   } else {
     lines.push('まだ較正していません(プリセットから当てはめた既定値で計算しています)。');
@@ -5869,7 +5885,7 @@ document.getElementById('btnCalOpen').onclick = () => {
 
 document.getElementById('btnCalLoadProfile').onclick = async () => {
   try {
-    const res = await fetch(`${API}/api/calibration_profile`, {cache: 'no-store'});
+    const res = await fetch(`${API}/api/calibration_profile?kind=${calKind}`, {cache: 'no-store'});
     if(!res.ok){ log('校正用プロファイルを読み込めませんでした。'); return; }
     const data = await res.json();
     endRoastingSession();
@@ -5931,15 +5947,64 @@ document.getElementById('btnCalAbortAdd').onclick = () => {
   };
 };
 
-document.getElementById('btnCalApply').onclick = async () => {
-  const body = {
-    fcStart: parseCalTime(document.getElementById('calFcStart').value),
-    fcEnd: parseCalTime(document.getElementById('calFcEnd').value),
-    scStart: parseCalTime(document.getElementById('calScStart').value),
-    greenG: Number(document.getElementById('calGreenG').value) || null,
-    roastedG: Number(document.getElementById('calRoastedG').value) || null,
+// 較正用プロファイルは2つある。入力欄は共通で、中身だけkindごとに持ち替える。
+let calKind = 'deep';
+const calEntries = {deep: {}, light: {}};
+const CAL_KIND_NOTES = {
+  deep: '2ハゼまで焼くほう。ハゼの時刻と終盤の熱収支が決まります。',
+  light: '1ハゼが終わって少し先(豆208℃)で止めるほう。'
+       + '豆の水の大半が抜けるのは1ハゼの前後なので、<b>ここで止めた焙煎後の重量が'
+       + 'いちばん効く実測</b>です。最後まで焼いて、冷めてから量ってください。',
+};
+
+function readCalForm(){
+  const v = id => document.getElementById(id).value;
+  const out = {
+    fcStart: parseCalTime(v('calFcStart')),
+    fcEnd: parseCalTime(v('calFcEnd')),
+    greenG: Number(v('calGreenG')) || null,
+    roastedG: Number(v('calRoastedG')) || null,
     aborts: collectCalAbortRows(),
   };
+  // 浅煎り用は2ハゼまで届かないので、そもそも測れない
+  if(calKind === 'deep') out.scStart = parseCalTime(v('calScStart'));
+  for(const k of Object.keys(out)) if(out[k] === null) delete out[k];
+  if(!out.aborts || !out.aborts.length) delete out.aborts;
+  return out;
+}
+
+function writeCalForm(m){
+  m = m || {};
+  const set = (id, val) => { document.getElementById(id).value = val ?? ''; };
+  set('calFcStart', m.fcStart ? fmtMMSS(m.fcStart) : '');
+  set('calFcEnd', m.fcEnd ? fmtMMSS(m.fcEnd) : '');
+  set('calScStart', m.scStart ? fmtMMSS(m.scStart) : '');
+  set('calGreenG', m.greenG || '');
+  set('calRoastedG', m.roastedG || '');
+  renderCalAbortRows(m);
+}
+
+function switchCalKind(kind){
+  if(kind !== 'deep' && kind !== 'light') return;
+  calEntries[calKind] = readCalForm();      // いま画面にある分を控える
+  calKind = kind;
+  document.getElementById('calKindDeep').classList.toggle('active', kind === 'deep');
+  document.getElementById('calKindLight').classList.toggle('active', kind === 'light');
+  document.getElementById('calScRow').style.display = kind === 'deep' ? '' : 'none';
+  document.getElementById('calKindNote').innerHTML = CAL_KIND_NOTES[kind];
+  // 焙煎後の重さの目安は、どちらを焼くかで違う
+  document.getElementById('calRoastedG').placeholder = kind === 'deep' ? '40.9' : '44.4';
+  document.getElementById('calFcEnd').placeholder = kind === 'deep' ? '8:28' : '8:51';
+  writeCalForm(calEntries[kind]);
+}
+
+document.getElementById('btnCalApply').onclick = async () => {
+  calEntries[calKind] = readCalForm();
+  const roasts = {};
+  for(const [kind, m] of Object.entries(calEntries)){
+    if(m && Object.keys(m).length) roasts[kind] = m;
+  }
+  const body = {roasts};
   const btn = document.getElementById('btnCalApply');
   btn.disabled = true; btn.textContent = '計算中…';
   try {
@@ -5961,10 +6026,8 @@ document.getElementById('btnCalApply').onclick = async () => {
 document.getElementById('btnCalReset').onclick = async () => {
   try {
     await fetch(`${API}/api/calibration`, {method: 'DELETE'});
-    for(const id of ['calFcStart','calFcEnd','calScStart','calGreenG','calRoastedG']){
-      document.getElementById(id).value = '';
-    }
-    renderCalAbortRows({});
+    calEntries.deep = {}; calEntries.light = {};
+    writeCalForm({});
     await loadCalibration();
     refreshEstimateDatasets();
     if(chart) chart.update('none');
@@ -5973,6 +6036,7 @@ document.getElementById('btnCalReset').onclick = async () => {
   } catch(e){ log('既定値に戻せませんでした。'); }
 };
 
+switchCalKind('deep');   // 説明文と入力欄の出し分けを初期化してから読む
 loadCalibration();
 loadCalibrationFromLogs();
 

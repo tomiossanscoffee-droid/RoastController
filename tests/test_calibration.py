@@ -73,10 +73,16 @@ def test_校正用プロファイルは2ハゼまで届く():
 def test_校正用プロファイルは普段焼く範囲に収まる():
     """焼き飛ばした条件で定数を当てはめても、普段の焙煎には役立たない。
 
-    実在の深煎りプリセットは1.250〜1.258。
+    深煎り用は深煎りの帯、浅煎り用は浅煎りの帯に収まっていること
+    (実在の深煎りプリセットの推定指数は1.193〜1.217、浅煎りは1.099〜1.118)。
     """
-    r = E.estimate(P["roast"], P["fan"])
-    assert 1.22 < r["roast_index"] < 1.30
+    deep = E.estimate(P["roast"], P["fan"])
+    assert E.roast_index_level(deep["roast_index"]) == "深煎り", deep["roast_index"]
+    assert 1.18 < deep["roast_index"] < 1.26
+    light = E.estimate(C.CALIBRATION_PROFILE_LIGHT["roast"],
+                       C.CALIBRATION_PROFILE_LIGHT["fan"])
+    assert E.roast_index_level(light["roast_index"]) == "浅煎り", light["roast_index"]
+    assert 1.08 < light["roast_index"] < 1.14
 
 
 def test_校正用プロファイルは1ハゼ付近がゆるやか():

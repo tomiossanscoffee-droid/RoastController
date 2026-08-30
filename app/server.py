@@ -809,16 +809,20 @@ def _refit_calibration_if_stale_async() -> None:
 
 
 @app.get("/api/calibration_profile")
-def get_calibration_profile():
+def get_calibration_profile(kind: str = "deep"):
     """校正用プロファイル。焙煎機に送れるよう、プリセットと同じ形で返す。
 
-    1ハゼ前後で豆がゆるやかに上がるよう作ってあり、時刻を±5秒読み違えても
-    温度換算で±1℃に収まる。2ハゼまで届き、それでいて焙煎指数は実在の深煎り
-    プリセットと同じ範囲に収まる(roastlib/calibration.py 参照)。
+    kind="deep"  2ハゼまで焼くほう。ハゼの時刻と終盤の熱収支が測れる。
+    kind="light" 1ハゼが終わって少し先で止めるほう。豆の水の大半が抜けるのは
+                 1ハゼの前後なので、そこで止めた焙煎後の重量がいちばん効く実測に
+                 なる(モデルの違いが焙煎後の重量に1.39g出る。深煎り用は0.77g)。
+    どちらも440秒までは同じ形にしてあるので、2つの焙煎後の重量の差が、そのまま
+    「1ハゼの前後で抜けた水」を表す。
     """
-    prof = beancal.CALIBRATION_PROFILE
+    prof = beancal.CALIBRATION_PROFILES.get(kind) or beancal.CALIBRATION_PROFILE
     return JSONResponse({
-        "id": "calibration",
+        "id": f"calibration_{kind}" if kind != "deep" else "calibration",
+        "kind": kind if kind in beancal.CALIBRATION_PROFILES else "deep",
         "name": prof["name"],
         "country": "", "bean": "", "roast_level": "",
         # 焙煎機に送るのに必須。空だとプロファイルを組み立てられず、送信しても
@@ -902,12 +906,20 @@ def get_calibration():
     data = _load_calibration()
     # モデルが「こうなるはず」と予想する値も返す。実測値を入れる前の目安になり、
     # 入れた後は、どれだけずれていたかが分かる。
-    prof = beancal.CALIBRATION_PROFILE
     moisture = _bean_moisture_frac()
-    data["expected"] = _calibration_expected(prof, moisture, {})
-    if data.get("overrides"):
-        data["fitted"] = _calibration_expected(prof, moisture, _calibration_overrides())
-    data["profile"] = prof
+    ov = _calibration_overrides() if data.get("overrides") else None
+    # プロファイルごとに「こうなるはず」を出す。浅煎り用・深煎り用の両方を
+    # 焼いた場合に、どちらがどれだけ合っているかを並べて見せるため。
+    data["expected"] = {}
+    data["fitted"] = {}
+    for kind, prof in beancal.CALIBRATION_PROFILES.items():
+        data["expected"][kind] = _calibration_expected(prof, moisture, {})
+        if ov:
+            data["fitted"][kind] = _calibration_expected(prof, moisture, ov)
+    if not data["fitted"]:
+        data.pop("fitted")
+    data["profiles"] = beancal.CALIBRATION_PROFILES
+    data["kindLabels"] = beancal.CALIBRATION_KIND_LABELS
     data["scSecondCrackBeanTemp"] = beancal.T_SC_BEAN
     return JSONResponse(data)
 
@@ -931,14 +943,9 @@ def _calibration_expected(prof: dict, moisture: float, cal: dict) -> dict:
     }
 
 
-@app.put("/api/calibration")
-async def set_calibration(request: Request):
-    """測定値を保存し、その場で定数を当てはめ直す。
-
-    入っている項目だけを使うので、1つだけ測って入れることもできる。
-    """
-    body = await request.json()
-    measurements = {}
+def _clean_measurements(body: dict) -> dict:
+    """1つのプロファイルぶんの測定値を、数値として読めるものだけにそろえる。"""
+    out = {}
     for key in beancal.MEASUREMENT_KEYS:
         if key == "aborts":
             continue
@@ -950,7 +957,7 @@ async def set_calibration(request: Request):
         except (TypeError, ValueError):
             continue
         if v > 0:
-            measurements[key] = v
+            out[key] = v
     # 途中で止めて量った重量は何点でも受け取る。1点だけだと、その点に引っぱられて
     # 他の時刻の重量がかえって外れる(roastlib/calibration.py の説明を参照)。
     aborts = []
@@ -964,7 +971,31 @@ async def set_calibration(request: Request):
         if t > 0 and g > 0 and not any(abs(t - x["t"]) < 1e-6 for x in aborts):
             aborts.append({"t": t, "g": g})
     if aborts:
-        measurements["aborts"] = sorted(aborts, key=lambda x: x["t"])
+        out["aborts"] = sorted(aborts, key=lambda x: x["t"])
+    return out
+
+
+@app.put("/api/calibration")
+async def set_calibration(request: Request):
+    """測定値を保存し、その場で定数を当てはめ直す。
+
+    入っている項目だけを使うので、1つだけ測って入れることもできる。
+    """
+    body = await request.json()
+    # プロファイルごとに分かれた形({"roasts": {"deep": {...}, "light": {...}}})と、
+    # 1つぶんをそのまま入れた古い形の両方を受ける。
+    roasts = body.get("roasts")
+    if isinstance(roasts, dict):
+        cleaned = {}
+        for kind, meas in roasts.items():
+            if kind not in beancal.CALIBRATION_PROFILES or not isinstance(meas, dict):
+                continue
+            one = _clean_measurements(meas)
+            if one:
+                cleaned[kind] = one
+        measurements = {"roasts": cleaned} if cleaned else {}
+    else:
+        measurements = _clean_measurements(body)
     if not measurements:
         return JSONResponse({"error": "測定値がひとつも入っていません"}, status_code=400)
     result = beancal.fit(measurements, moisture=_bean_moisture_frac())
