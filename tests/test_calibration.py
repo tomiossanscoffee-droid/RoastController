@@ -201,3 +201,61 @@ def test_seriesに残存重量が入っている():
     assert s[-1]["mass"] < s[0]["mass"]
     # 焙煎中に増えることはない
     assert all(b["mass"] <= a["mass"] + 1e-12 for a, b in zip(s, s[1:]))
+
+
+# ---- 焙煎ログから学ぶ ----
+
+def _fake_record(fc_t, sc_t=None, inferred=False, curve=None):
+    r = E.estimate(P["roast"], P["fan"])
+    return {
+        "roast_curve": curve if curve is not None else [[p["t"], p["air"]] for p in r["series"]],
+        "fan_curve": P["fan"],
+        "fc_time": fc_t, "fc_time_inferred": inferred, "sc_time": sc_t,
+    }
+
+
+def test_1ハゼ確認を押した記録だけを使う():
+    """ガイド温度からの推定値で較正すると、モデルの入力で自分を較正することになる。"""
+    res = C.learn_from_logs([
+        _fake_record(400.0),                    # 実測 → 使う
+        _fake_record(400.0, inferred=True),     # 推定 → 使わない
+        _fake_record(None),                     # 未記録 → 使わない
+        _fake_record(400.0, curve=[]),          # カーブなし → 使わない
+    ])
+    assert res["fc"]["n"] == 1
+    assert res["skipped"]["推定値のみ"] == 1
+    assert res["skipped"]["1ハゼ未記録"] == 1
+    assert res["skipped"]["カーブなし"] == 1
+
+
+def test_2ハゼも実測から集められる():
+    res = C.learn_from_logs([_fake_record(400.0, 560.0), _fake_record(410.0, 570.0)])
+    assert res["fc"]["n"] == 2 and res["sc"]["n"] == 2
+    # 2ハゼは1ハゼより高い温度になる
+    assert res["sc"]["median"] > res["fc"]["median"]
+
+
+def test_2ハゼが1ハゼより前なら使わない():
+    res = C.learn_from_logs([_fake_record(400.0, 300.0)])
+    assert res["fc"]["n"] == 1 and res["sc"]["n"] == 0
+
+
+def test_記録が増えるほどばらつきが出る():
+    """1件だけならばらつき0。複数集めて初めて確からしさが見える。"""
+    one = C.learn_from_logs([_fake_record(400.0)])
+    assert one["fc"]["n"] == 1 and one["fc"]["sd"] == 0.0
+    many = C.learn_from_logs([_fake_record(t) for t in (380.0, 400.0, 420.0)])
+    assert many["fc"]["n"] == 3 and many["fc"]["sd"] > 0
+    assert many["fc"]["min"] < many["fc"]["median"] < many["fc"]["max"]
+
+
+def test_範囲外の時刻は使わない():
+    res = C.learn_from_logs([_fake_record(99999.0), _fake_record(-5.0)])
+    assert res["fc"]["n"] == 0
+    assert res["skipped"]["時刻が範囲外"] >= 1
+
+
+def test_記録が無ければ空で返る():
+    res = C.learn_from_logs([])
+    assert res["fc"]["n"] == 0 and res["fc"]["median"] is None
+    assert res["sc"]["n"] == 0

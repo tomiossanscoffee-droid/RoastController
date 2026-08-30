@@ -249,6 +249,75 @@ def fit(measurements: dict, moisture: float = E.MOISTURE,
     return {"overrides": overrides, "scale": scale, "notes": notes, "used": used}
 
 
+# ------------------------------------------------------------
+# 焙煎ログから学ぶ
+# ------------------------------------------------------------
+# 較正用プロファイルを焼くのは1回きりだが、普段の焙煎ログは焼くたびに増える。
+# 「1ハゼ確認」を押した記録には、実測の吸入温度カーブと、本当に音が聞こえた時刻が
+# 揃っている。その時刻にモデルが出す豆温度を集めれば、1ハゼの豆温度そのものを
+# 実測から決められる。記録が増えるほど中央値は安定し、ばらつきも見えるようになる。
+#
+# 2ハゼも同じやり方で決められる。較正では2ハゼの豆温度を225℃と仮定していて、
+# これが5項目のうち最も弱い前提だった。実測できればその仮定が要らなくなる。
+#
+# ■ 使う記録を選ぶ条件
+#   ・実測カーブがある
+#   ・「1ハゼ確認」を押している(fc_time_inferred が偽)。ガイド温度からの推定値は
+#     モデルの入力から作った値なので、使うと自分で自分を較正することになる
+#   ・その時刻がカーブの範囲に入っている
+def learn_from_logs(records, moisture=E.MOISTURE, cal=None, altitude_of=None):
+    """焙煎ログから、1ハゼ・2ハゼの豆温度を集める。
+
+    records: 焙煎記録の一覧(roast_curve / fan_curve / fc_time / fc_time_inferred /
+             sc_time を持つ辞書)
+    altitude_of: 記録→標高帯 を返す関数(標高補正を効かせる場合)
+    戻り値: {"fc": {...}, "sc": {...}, "skipped": {理由: 件数}}
+    """
+    fc_temps, sc_temps = [], []
+    skipped = {"カーブなし": 0, "1ハゼ未記録": 0, "推定値のみ": 0, "時刻が範囲外": 0}
+    for rec in records or []:
+        curve = rec.get("roast_curve") or []
+        if len(curve) < 2:
+            skipped["カーブなし"] += 1
+            continue
+        fc_t = rec.get("fc_time")
+        if fc_t is None:
+            skipped["1ハゼ未記録"] += 1
+            continue
+        if rec.get("fc_time_inferred"):
+            # ガイド温度から推し量った値。これで較正すると循環する。
+            skipped["推定値のみ"] += 1
+            continue
+        c = dict(cal or {})
+        if altitude_of is not None:
+            c["T_FC_BEAN"] = E.T_FC_BEAN + E.altitude_fc_offset(altitude_of(rec))
+        r = E.estimate([[p[0], p[1]] for p in curve],
+                       [[p[0], p[1]] for p in (rec.get("fan_curve") or [])] or None,
+                       moisture=moisture, cal=c)
+        if not r:
+            skipped["カーブなし"] += 1
+            continue
+        s = r["series"]
+        t_end = s[-1]["t"]
+        if not (0 < fc_t <= t_end):
+            skipped["時刻が範囲外"] += 1
+            continue
+        fc_temps.append(s[min(int(fc_t), len(s) - 1)]["bean"])
+        sc_t = rec.get("sc_time")
+        if sc_t is not None and fc_t < sc_t <= t_end:
+            sc_temps.append(s[min(int(sc_t), len(s) - 1)]["bean"])
+
+    def stat(vals):
+        if not vals:
+            return {"n": 0, "median": None, "sd": None, "min": None, "max": None}
+        import statistics as st
+        return {"n": len(vals), "median": round(st.median(vals), 1),
+                "sd": round(st.pstdev(vals), 1) if len(vals) > 1 else 0.0,
+                "min": round(min(vals), 1), "max": round(max(vals), 1)}
+
+    return {"fc": stat(fc_temps), "sc": stat(sc_temps), "skipped": skipped}
+
+
 def _mass_at(result: dict, t: float, green_g: float) -> float:
     """焙煎開始から t 秒の時点での豆の重さ(kg)。
 

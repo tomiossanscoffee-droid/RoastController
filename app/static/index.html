@@ -1083,6 +1083,17 @@
           <button class="btn small" id="btnCalReset" style="width:auto;">既定値に戻す</button>
         </div>
         <div id="calResult" class="settings-note" style="margin-top:8px;"></div>
+        <!-- 焙煎ログから学ぶ。焼くたびに記録が増えるので、押すほど確からしくなる。 -->
+        <div class="settings-title" style="margin-top:14px;">焙煎ログから学ぶ</div>
+        <div class="settings-note" style="margin-bottom:6px;">
+          「1ハゼ確認」を押した記録から、1ハゼ・2ハゼの豆温度を実測で決めます。
+          焼くほど記録が増えて確かになります。
+        </div>
+        <div id="calLogsResult" class="settings-note"></div>
+        <div style="display:flex; gap:6px; margin-top:6px;">
+          <button class="btn small" id="btnCalLogsApply" style="width:auto;">この実測を採用する</button>
+          <button class="btn small" id="btnCalLogsClear" style="width:auto;">採用をやめる</button>
+        </div>
       </div>
       <div class="app-about-link"><a id="btnAbout">ⓘ アプリについて / 権利表示</a></div>
       <!-- モバイル版から「PC版を開く」で来た場合に、URLを打ち直さず戻れるようにする。
@@ -1137,6 +1148,14 @@
     <!-- カーブ編集・保存のためのボタン群。焙煎グラフ・味を推測でのみ意味を持つため、
          豆の情報・焙煎履歴のビューでは switchGraphView() でまとめて隠す。 -->
     <div class="main-toolbar" id="mainToolbar">
+      <!-- 編集の取り消し。カーブを触るまでは出さない(触っていなければ使えないので、
+           並んでいても迷うだけ)。別グループにしてあるので、右の操作とは
+           .main-toolbar の gap ぶん間隔が空く。 -->
+      <div class="toolbar-group" id="editHistoryGroup" style="display:none;">
+        <button class="btn small" id="btnUndo" disabled title="元に戻す (Cmd/Ctrl+Z)">↶ Undo</button>
+        <button class="btn small" id="btnRedo" disabled title="やり直し (Cmd/Ctrl+Shift+Z)">↷ Redo</button>
+        <button class="btn small" id="btnReset" disabled>最初に戻す</button>
+      </div>
       <div class="toolbar-group">
         <!-- 「温度ガイド線」はサイドバーの設定へ移した(2026-08)。焙煎機を見ながら
              一度決めたら滅多に変えない値であり、カーブ編集の操作とは性質が違うため。
@@ -1244,11 +1263,9 @@
           <button class="btn small" id="btnAbcRecheck" style="width:auto; margin-top:8px;">設定できたので再確認</button>
         </div>
         <div id="abcForm" style="display:none;">
-          <!-- Undo/Redo/最初に戻す: 産地・標高などの上に配置 -->
+          <!-- Undo/Redo/最初に戻すはツールバーへ移した(焙煎グラフでも使うため)。
+               ここにはABC生成の状態表示だけを残す。 -->
           <div class="edit-history-bar" id="editHistoryBar">
-            <button class="btn small" id="btnUndo" disabled title="元に戻す (Cmd/Ctrl+Z)">↶ Undo</button>
-            <button class="btn small" id="btnRedo" disabled title="やり直し (Cmd/Ctrl+Shift+Z)">↷ Redo</button>
-            <button class="btn small" id="btnReset" disabled>最初に戻す</button>
             <span id="generatorStatus" class="bean-info-save-status"></span>
           </div>
           <!-- 1列目: 産地・標高・焙煎度・基準値ボタン -->
@@ -1508,11 +1525,15 @@ const ROR_DATASET_KIND_BY_INDEX = {6: 'live', 7: 'profile', 11: 'history'};
 // 推定値(入熱・豆温度)の表示状態。RoRと同じく凡例クリックで切り替える。
 // 積算入熱は専用の軸を持つため、表示中だけ軸の目盛りを出す。
 let energyVisible = true;          // 積算入熱(kcal)
+// 入熱(W)。積算入熱を時間で微分したもので、その瞬間に豆へ入っている熱の勢い。
+// 線が増えて見づらくなるので、既定では出さない(凡例から出せる)。
+let heatRateVisible = false;
 let beanTempVisible = true;        // 豆温度(推定、プロファイルから)
 let beanTempHistoryVisible = true; // 豆温度(推定、焙煎ログの実測から)
 // 豆温度の帯は、どちらかの豆温度の線が出ていれば描く(線が無いと読みようがない)。
 function anyBeanTempVisible(){ return beanTempVisible || beanTempHistoryVisible; }
-const ENERGY_DATASET_KIND_BY_INDEX = {13: 'beanTemp', 14: 'energy', 15: 'beanTempHistory'};
+const ENERGY_DATASET_KIND_BY_INDEX = {13: 'beanTemp', 14: 'energy', 15: 'beanTempHistory',
+                                      16: 'heatRate'};
 let roastStartTime = null;
 let chart = null;
 // グラフの枠(#chartWrap)の高さが変わった時に、キャンバスを枠の大きさに合わせ直す。
@@ -1935,17 +1956,28 @@ function estimateRoastEnergy(roastPoints, fanPoints){
 // 焙煎ログは点数が多く(1秒刻み・冷却込みで900点前後)、1回の計算に5ms以上かかる。
 // ドラッグ中もrenderChart()から呼ばれうるので、同じログなら結果を使い回す。
 let beanTempSeriesCache = {key: null, result: []};
-function beanTempSeriesFrom(roastPoints, fanPoints){
+// 焙煎ログの実測カーブから豆温度を推定する。
+// altitudeBucket は「その記録の豆」の標高帯。渡さないと、いま選んでいるプロファイルの
+// 標高で計算してしまい、別の豆の記録に他の豆の補正が掛かる。
+function beanTempSeriesFrom(roastPoints, fanPoints, altitudeBucket){
   if(!roastPoints || roastPoints.length < 2) return [];
+  const tFc = ENERGY_BASE_T_FC_BEAN
+            + energyAltitudeFcOffset(altitudeBucket || '', altitudeFcSlope);
   // 全点をJSON化すると点数が多いときに逆に重いので、等間隔に9点だけ拾って鍵にする。
   // 別の記録が偶然同じ長さ・同じ端点でも、途中が違えば別物と判定できる。
-  let key = roastPoints.length + '/' + (fanPoints ? fanPoints.length : 0) + '/' + energyAssumptionKey();
+  let key = roastPoints.length + '/' + (fanPoints ? fanPoints.length : 0) + '/'
+          + energyAssumptionKey() + '/' + tFc;
   for(let i = 0; i < 9; i++){
     const p = roastPoints[Math.min(Math.floor(roastPoints.length * i / 8), roastPoints.length - 1)];
     key += '|' + p[0] + ',' + p[1];
   }
   if(beanTempSeriesCache.key === key) return beanTempSeriesCache.result;
-  const est = estimateRoastEnergy(roastPoints, fanPoints || null);
+  // その記録の豆の標高で計算する。計算の間だけ差し替えて、必ず元に戻す。
+  const saved = ENERGY.T_FC_BEAN;
+  ENERGY.T_FC_BEAN = tFc;
+  let est;
+  try { est = estimateRoastEnergy(roastPoints, fanPoints || null); }
+  finally { ENERGY.T_FC_BEAN = saved; }
   const result = est
     ? est.series.filter((s, i) => i % 5 === 0 || i === est.series.length - 1)
                 .map(s => ({x: s.t, y: s.bean}))
@@ -2780,7 +2812,8 @@ function renderRecordMiniChart(curve, record = null){
   const rorData = computeRoR(curve).map(p => ({x: p[0], y: p[1]}));
   const fanData = (record && record.fan_curve) ? record.fan_curve.map(p => ({x: p[0], y: p[1]})) : [];
   // 実測の吸入温度・風量から豆温度を推定する。1秒刻みだと点が多すぎるので5秒ごとに間引く。
-  const recordBeanTempData = beanTempSeriesFrom(curve, record && record.fan_curve);
+  const recordBeanTempData = beanTempSeriesFrom(curve, record && record.fan_curve,
+                                                record && record.altitude_bucket);
   const showRoR = recordRorVisible && rorData.length > 0;
   // 風量の記録が無い記録では、前の記録での表示状態が残っていても軸を出さない。
   const showFan = recordFanVisible && fanData.length > 0;
@@ -3024,7 +3057,7 @@ async function autoCreateRoastRecord(){
         roast_variant: target.variant,
         roasted_at: new Date().toISOString(),
         duration: roastDoneAtTime, max_temp: maxTemp, dev_time: devTime, fc_time: actualFcTime,
-        fc_time_inferred: fcTimeIsInferred, error_spans: errorSpans,
+        fc_time_inferred: fcTimeIsInferred, sc_time: actualScTime, error_spans: errorSpans,
         roast_curve: curve, fan_curve: fanCurve,
       }),
     });
@@ -4108,7 +4141,9 @@ function loadGeneratedProfileIntoEditor(data){
   document.getElementById('verifiedBadge').innerHTML = '';
   document.getElementById('btnSend').disabled = false;
   document.getElementById('btnSave').disabled = false;
-  document.getElementById('btnReset').disabled = false;
+  // 「最初に戻す」の可否と表示は updateHistoryButtons() に任せる
+  // (カーブを触っていない状態では出さない)
+  updateHistoryButtons();
   document.getElementById('btnOverwriteSave').style.display = 'none';
   document.getElementById('offsetInput').disabled = false;
   document.getElementById('offsetMinus').disabled = false;
@@ -4766,7 +4801,6 @@ function loadProfileIntoEditor(data){
     badge.innerHTML = '';
   }
   document.getElementById('btnSend').disabled = false;
-  document.getElementById('btnReset').disabled = false;
   document.getElementById('btnSave').disabled = false;
   // 保存済みプロファイルを読み込んでいる場合のみ、同じファイルへの上書き保存を出す
   // (プリセット・IKAWAはそもそも上書きできる保存済みファイルが無いため)。
@@ -5046,8 +5080,14 @@ function resetToOriginal(){
   updateStaticMetrics();
 }
 function updateHistoryButtons(){
-  document.getElementById('btnUndo').disabled = undoStack.length === 0;
-  document.getElementById('btnRedo').disabled = redoStack.length === 0;
+  const canUndo = undoStack.length > 0, canRedo = redoStack.length > 0;
+  document.getElementById('btnUndo').disabled = !canUndo;
+  document.getElementById('btnRedo').disabled = !canRedo;
+  document.getElementById('btnReset').disabled = !canUndo && !canRedo;
+  // カーブを一度も触っていなければ出さない。触ったら出し、プロファイルを
+  // 選び直して履歴が空になればまた隠れる。
+  const g = document.getElementById('editHistoryGroup');
+  if(g) g.style.display = (canUndo || canRedo) ? '' : 'none';
 }
 document.getElementById('btnUndo').onclick = undo;
 document.getElementById('btnRedo').onclick = redo;
@@ -5354,6 +5394,69 @@ function applyCalibrationToEnergy(overrides){
   beanTempSeriesCache = {key: null, result: []};
 }
 
+// 焙煎ログからの学習結果を出す。件数とばらつきも一緒に出して、
+// どれくらい当てにしてよいかが分かるようにする。
+async function loadCalibrationFromLogs(){
+  const el = document.getElementById('calLogsResult');
+  if(!el) return;
+  try {
+    const res = await fetch(`${API}/api/calibration/from_logs`, {cache: 'no-store'});
+    if(!res.ok){ el.textContent = '集計できませんでした。'; return; }
+    const d = await res.json();
+    const lines = [];
+    const fmt = (s, name, def) => s.n === 0
+      ? `${name}: 使える記録がまだありません`
+      : `${name}: <b>${s.median}℃</b>(${s.n}件・ばらつき±${s.sd}℃・`
+        + `${s.min}〜${s.max}℃) モデルの既定は${def}℃`;
+    lines.push(fmt(d.fc, '1ハゼの豆温度', d.current.modelDefaultFc));
+    lines.push(fmt(d.sc, '2ハゼの豆温度', d.current.modelDefaultSc));
+    const skipped = Object.entries(d.skipped || {}).filter(([, v]) => v > 0)
+      .map(([k, v]) => `${k} ${v}件`).join(' / ');
+    if(skipped) lines.push(`使わなかった記録: ${skipped}`);
+    const ap = d.applied || {};
+    if(ap.fcBeanTemp !== undefined || ap.scBeanTemp !== undefined){
+      const p = [];
+      if(ap.fcBeanTemp !== undefined) p.push(`1ハゼ ${ap.fcBeanTemp}℃(${ap.fcN}件)`);
+      if(ap.scBeanTemp !== undefined) p.push(`2ハゼ ${ap.scBeanTemp}℃(${ap.scN}件)`);
+      lines.push(`<b>採用中</b>: ${p.join(' / ')}`);
+    } else {
+      lines.push('まだ採用していません(モデルの既定値で計算しています)。');
+    }
+    el.innerHTML = lines.join('<br>');
+  } catch(e){ el.textContent = '集計できませんでした。'; }
+}
+
+async function refreshAfterCalibrationChange(){
+  await loadCalibration();
+  await loadCalibrationFromLogs();
+  refreshEstimateDatasets();
+  if(chart) chart.update('none');
+  updateStaticMetrics();
+}
+
+document.getElementById('btnCalLogsApply').onclick = async () => {
+  const btn = document.getElementById('btnCalLogsApply');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/api/calibration/from_logs`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+    const d = await res.json();
+    if(!res.ok){ log(`採用できませんでした: ${d.error || ''}`); return; }
+    await refreshAfterCalibrationChange();
+    log('焙煎ログの実測を、豆温度モデルに採用しました。');
+  } catch(e){ log('採用できませんでした。'); }
+  finally { btn.disabled = false; }
+};
+
+document.getElementById('btnCalLogsClear').onclick = async () => {
+  try {
+    await fetch(`${API}/api/calibration/from_logs`, {method: 'DELETE'});
+    await refreshAfterCalibrationChange();
+    log('焙煎ログからの採用をやめ、モデルの既定値に戻しました。');
+  } catch(e){ log('戻せませんでした。'); }
+};
+
 async function loadCalibration(){
   try {
     const res = await fetch(`${API}/api/calibration`, {cache: 'no-store'});
@@ -5466,6 +5569,7 @@ document.getElementById('btnCalReset').onclick = async () => {
 };
 
 loadCalibration();
+loadCalibrationFromLogs();
 
 // ------------------------------------------------------------
 // モバイル版アクセス用のLANアドレス表示 + QRコード
@@ -5882,10 +5986,12 @@ function renderChart(){
                                     .map(s => ({x:s.t, y:s.bean})) : [];
   const energyData = energyEst ? energyEst.series.filter((s,i) => i % 5 === 0 || i === energyEst.series.length-1)
                                     .map(s => ({x:s.t, y:s.kcal})) : [];
+  const heatRateData = energyEst ? heatRateSeriesFrom(energyEst.series) : [];
   // 焙煎ログを重ねている時は、そのログの実測値からも豆温度を推定する。
   const historyBeanTempData = historyOverlayRecord
     ? beanTempSeriesFrom(historyOverlayRecord.roast.map(p => [p[0], p[1]]),
-                         (historyOverlayRecord.fan || []).map(p => [p[0], p[1]])) : [];
+                         (historyOverlayRecord.fan || []).map(p => [p[0], p[1]]),
+                         historyOverlayRecord.altitude_bucket) : [];
   const liveData = liveSamples.map(s => ({x:s.t, y:s.bt}));
   const liveFanData = liveSamples
     .filter(s => s.fan !== null && s.fan !== undefined)
@@ -6020,6 +6126,10 @@ function renderChart(){
         { label:'豆温度(ログ)', data:historyBeanTempData, borderColor:cssVar('--line-bean-log'),
           borderDash:[2,2], pointRadius:0, borderWidth:1.5, tension:0.15,
           cubicInterpolationMode:'monotone', yAxisID:'yTemp', hidden:!beanTempHistoryVisible },
+        // 入熱(W)。積算入熱の傾き = その瞬間に豆へ入っている熱の勢い。
+        { label:'入熱', data:heatRateData, borderColor:cssVar('--line-energy'),
+          borderDash:[6,3], pointRadius:0, borderWidth:1.4, tension:0.15,
+          cubicInterpolationMode:'monotone', yAxisID:'yHeat', hidden:!heatRateVisible },
       ]
     },
     options: {
@@ -6037,6 +6147,8 @@ function renderChart(){
             ticks:{color:cssVar('--axis'), font:{size:12 * ts}}, grid:{display:false}, min:ROR_AXIS_MIN, max:ROR_AXIS_MAX },
         // 積算入熱は0から単調に増えるだけなので、目盛りは表示中だけ出す(RoRと同じ扱い)。
         yEnergy:{ position:'right', display:energyVisible, title:{display:!compact,text:'積算入熱(kcal)',color:cssVar('--axis'),font:{size:12 * ts}},
+            ticks:{color:cssVar('--axis'), font:{size:12 * ts}}, grid:{display:false}, min:0 },
+        yHeat:{ position:'right', display:heatRateVisible, title:{display:!compact,text:'入熱(W)',color:cssVar('--axis'),font:{size:12 * ts}},
             ticks:{color:cssVar('--axis'), font:{size:12 * ts}}, grid:{display:false}, min:0 },
       },
       plugins:{
@@ -6078,6 +6190,11 @@ function renderChart(){
           else if(ekind === 'energy'){
             energyVisible = ci.isDatasetVisible(idx);
             ci.options.scales.yEnergy.display = energyVisible;
+            ci.update();
+          }
+          else if(ekind === 'heatRate'){
+            heatRateVisible = ci.isDatasetVisible(idx);
+            ci.options.scales.yHeat.display = heatRateVisible;
             ci.update();
           }
         },
@@ -6566,6 +6683,24 @@ function onDragMove(e){
   updateStaticMetrics();
 }
 
+// 積算入熱(kcal)を時間で微分して、その瞬間の入熱(W)にする。
+// 1秒ごとの差は細かく揺れるので、前後をまたぐ窓で均してから間引く。
+const HEAT_RATE_WINDOW_S = 10;
+function heatRateSeriesFrom(series){
+  if(!series || series.length < 2) return [];
+  const w = HEAT_RATE_WINDOW_S;
+  const out = [];
+  for(let i = 0; i < series.length; i += 5){
+    const a = Math.max(0, i - w), b = Math.min(series.length - 1, i + w);
+    if(b <= a) continue;
+    const dt = series[b].t - series[a].t;
+    if(dt <= 0) continue;
+    // kcal/s → W。1 kcal = 4184 J。
+    out.push({x: series[i].t, y: (series[b].kcal - series[a].kcal) / dt * 4184});
+  }
+  return out;
+}
+
 // グラフ上の「豆温度(推定)」「積算入熱(推定)」を、今の編集カーブから作り直す。
 // renderChart()を通らない経路(ドラッグ中)から使う。
 function refreshEstimateDatasets(){
@@ -6575,6 +6710,10 @@ function refreshEstimateDatasets(){
     ? est.series.filter((s,i) => i % 5 === 0 || i === est.series.length-1).map(fn) : [];
   chart.data.datasets[13].data = thin(s => ({x:s.t, y:s.bean}));
   chart.data.datasets[14].data = thin(s => ({x:s.t, y:s.kcal}));
+  // 入熱(積算入熱の傾き)も同じ経路で作り直す
+  if(chart.data.datasets[16]){
+    chart.data.datasets[16].data = est ? heatRateSeriesFrom(est.series) : [];
+  }
 }
 function onDragEnd(){
   const draggedDataset = draggingIndex !== null ? draggingDataset : null;
@@ -6594,6 +6733,10 @@ function onDragEnd(){
 // ------------------------------------------------------------
 let actualFcTime = null; // 実測: 「ハゼた」ボタンを押した時点の、焙煎開始からの経過秒
 let fcTimeIsInferred = false; // trueなら、ボタンが押されなかったため1ハゼ設定温度への到達から推定した値
+// 実測: 2ハゼを記録した時点の経過秒。1ハゼを記録したあとだけ記録できる。
+// 2ハゼは豆温度モデルの弱点(較正で225℃と仮定している)を実測で埋められる数少ない
+// 手がかりなので、押してもらえるようボタンを1ハゼの次に出す。
+let actualScTime = null;
 let roastDoneAtTime = null; // 実測: 「焙煎完了・冷却中」に遷移した時点の、焙煎開始からの経過秒(DTのカウントをここで止める)
 // 焙煎中に容器エラー等(推定ステータスが"エラー:"始まり)が発生していた区間
 // (焙煎開始からの経過秒)。[{"start":.., "end":..|null}, ...]。グラフの色分けに使う。
@@ -6845,11 +6988,51 @@ function updateActualDTR(t){
 
 // ハゼ記録の反映処理を切り出しておき、自分でタップした時(recordFirstCrack)と
 // 他端末から反映された時(WSのfirst_crack_recorded)の両方から呼べるようにする。
+// ボタンの文字は、いまどこまで記録したかで変える。
+// 未記録 → 1ハゼ確認 / 1ハゼ済み → 2ハゼ確認 / 両方済み → 記録し直し
+function updateCrackButtonLabel(){
+  const b = document.getElementById('btnFirstCrack');
+  if(!b) return;
+  if(actualFcTime === null){
+    b.textContent = '1ハゼ確認';
+  } else if(actualScTime === null){
+    b.textContent = `2ハゼ確認 (1ハゼ ${fmtMMSS(actualFcTime)}${fcTimeIsInferred ? '・推定' : ''})`;
+  } else {
+    b.textContent = `記録済み 1ハゼ ${fmtMMSS(actualFcTime)} / 2ハゼ ${fmtMMSS(actualScTime)}`
+                  + ' ・ 再タップで取り直し';
+  }
+}
+
 function applyFirstCrackTime(t){
   fcTimeIsInferred = false;  // 手動記録は推定より優先し、フラグを解除する
   actualFcTime = t;
-  document.getElementById('btnFirstCrack').textContent = `ハゼ記録済み (${fmtMMSS(actualFcTime)}) ・ 再タップで記録し直し`;
+  actualScTime = null;       // 1ハゼを取り直したら2ハゼは意味を失う
+  updateCrackButtonLabel();
   updateActualDTR(actualFcTime);
+}
+
+function applySecondCrackTime(t){
+  actualScTime = t;
+  updateCrackButtonLabel();
+}
+
+// ボタンは1つで、押すたびに 1ハゼ → 2ハゼ → 取り直し と進む。
+function recordCrack(){
+  if(!hasStartedRoasting || liveSamples.length === 0){
+    log('焙煎中(実測データがある状態)でないと記録できません。');
+    return;
+  }
+  const t = liveSamples[liveSamples.length - 1].t;
+  // 1ハゼが「推定」で入っている場合も、押されたら手動記録として取り直す
+  if(actualFcTime !== null && !fcTimeIsInferred && actualScTime === null){
+    applySecondCrackTime(t);
+    log(`2ハゼを記録しました(経過時間 ${fmtMMSS(t)})`);
+    if(ws && ws.readyState === WebSocket.OPEN){
+      try { sendWS({action: 'record_second_crack', t}); } catch(e){ /* 同期の失敗は致命的ではない */ }
+    }
+    return;
+  }
+  recordFirstCrack();
 }
 
 function recordFirstCrack(){
@@ -6859,7 +7042,7 @@ function recordFirstCrack(){
   }
   const t = liveSamples[liveSamples.length - 1].t;
   applyFirstCrackTime(t);
-  log(`ハゼを記録しました(経過時間 ${fmtMMSS(t)})`);
+  log(`1ハゼを記録しました(経過時間 ${fmtMMSS(t)})`);
   if(ws && ws.readyState === WebSocket.OPEN){
     try { sendWS({action: 'record_first_crack', t}); } catch(e){ /* 同期は失敗しても致命的ではない */ }
   }
@@ -6960,6 +7143,7 @@ function connectWS(){
       }
       if(msg.fc_time !== null && msg.fc_time !== undefined){
         applyFirstCrackTime(msg.fc_time);
+        if(msg.sc_time !== null && msg.sc_time !== undefined) applySecondCrackTime(msg.sc_time);
       }
       // リロード・スリープ復帰・遅れて接続した場合でも、焙煎中(予熱〜排出)なら
       // 焙煎ログの紐づけ先を「実際に送信されたプロファイル」に復元しておく。
@@ -7055,7 +7239,13 @@ function connectWS(){
     else if(msg.type === 'first_crack_recorded'){
       if(msg.t !== null && msg.t !== undefined && msg.t !== actualFcTime){
         applyFirstCrackTime(msg.t);
-        log(`ハゼ記録が他端末から反映されました(経過時間 ${fmtMMSS(msg.t)})`);
+        log(`1ハゼの記録が他端末から反映されました(経過時間 ${fmtMMSS(msg.t)})`);
+      }
+    }
+    else if(msg.type === 'second_crack_recorded'){
+      if(msg.t !== null && msg.t !== undefined && msg.t !== actualScTime){
+        applySecondCrackTime(msg.t);
+        log(`2ハゼの記録が他端末から反映されました(経過時間 ${fmtMMSS(msg.t)})`);
       }
     }
     else if(msg.type === 'auto_save_claim_result'){
@@ -7630,7 +7820,7 @@ function onRoasterState(state){
       if(inferred !== null){
         actualFcTime = inferred;
         fcTimeIsInferred = true;
-        document.getElementById('btnFirstCrack').textContent = `1ハゼ推定 (${fmtMMSS(actualFcTime)}) ・ タップで手動記録に変更`;
+        updateCrackButtonLabel();
       }
     }
     updateActualDTR(roastDoneAtTime);
@@ -7673,7 +7863,8 @@ function clearLiveTrace(){
   document.getElementById('mRoR').textContent = '--';
   document.getElementById('mFan').textContent = '--';
   document.getElementById('mProgress').textContent = '--%';
-  document.getElementById('btnFirstCrack').textContent = '1ハゼ確認';
+  actualScTime = null;
+  updateCrackButtonLabel();
   if(chart){
     chart.data.datasets[3].data = [];
     chart.data.datasets[5].data = [];
@@ -7744,7 +7935,7 @@ function onTelemetry(msg){
 // ------------------------------------------------------------
 // ボタン操作
 // ------------------------------------------------------------
-document.getElementById('btnFirstCrack').onclick = recordFirstCrack;
+document.getElementById('btnFirstCrack').onclick = recordCrack;
 
 // 未接続でも自動接続してから送信する共通処理(通常送信・前回のプロファイル再送で共用)
 function sendProfilePayload(payload, logMsg){

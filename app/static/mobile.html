@@ -1346,11 +1346,49 @@ document.getElementById('btnDuplicateConfirmSkip').onclick = () => resolveDuplic
 
 // ハゼ記録の反映処理を切り出しておき、自分でタップした時(recordFirstCrack)と
 // 他端末から反映された時(WSのfirst_crack_recorded)の両方から呼べるようにする。
+// ボタンは1つで、押すたびに 1ハゼ → 2ハゼ → 取り直し と進む(PC版と同じ)。
+let actualScTime = null;
+
+function updateCrackButtonLabel(){
+  const b = document.getElementById('btnFirstCrack');
+  if(!b) return;
+  if(actualFcTime === null){
+    b.textContent = '1ハゼ確認';
+  } else if(actualScTime === null){
+    b.textContent = `2ハゼ確認 (1ハゼ ${fmtMMSS(actualFcTime)}${fcTimeIsInferred ? '・推定' : ''})`;
+  } else {
+    b.textContent = `1ハゼ ${fmtMMSS(actualFcTime)} / 2ハゼ ${fmtMMSS(actualScTime)} ・ 再タップで取り直し`;
+  }
+}
+
 function applyFirstCrackTime(t){
   fcTimeIsInferred = false;  // 手動記録は推定より優先し、フラグを解除する
   actualFcTime = t;
-  document.getElementById('btnFirstCrack').textContent = `記録済み (${fmtMMSS(actualFcTime)}) ・ 再タップで記録し直し`;
+  actualScTime = null;       // 1ハゼを取り直したら2ハゼは意味を失う
+  updateCrackButtonLabel();
   updateActualDTR(actualFcTime);
+}
+
+function applySecondCrackTime(t){
+  actualScTime = t;
+  updateCrackButtonLabel();
+}
+
+function recordCrack(){
+  if(!hasStartedRoasting || liveSamples.length === 0){
+    log('焙煎中(実測データがある状態)でないと記録できません。');
+    return;
+  }
+  const t = liveSamples[liveSamples.length - 1].t;
+  if(actualFcTime !== null && !fcTimeIsInferred && actualScTime === null){
+    applySecondCrackTime(t);
+    log(`2ハゼを記録しました(経過時間 ${fmtMMSS(t)})`);
+    if(ws && ws.readyState === WebSocket.OPEN){
+      try { sendWS({action: 'record_second_crack', t}); } catch(e){ /* 同期の失敗は致命的ではない */ }
+    }
+    return;
+  }
+  recordFirstCrack();
 }
 
 function recordFirstCrack(){
@@ -1360,7 +1398,7 @@ function recordFirstCrack(){
   }
   const t = liveSamples[liveSamples.length - 1].t;
   applyFirstCrackTime(t);
-  log(`ハゼを記録しました(経過時間 ${fmtMMSS(t)})`);
+  log(`1ハゼを記録しました(経過時間 ${fmtMMSS(t)})`);
   if(ws && ws.readyState === WebSocket.OPEN){
     try { sendWS({action: 'record_first_crack', t}); } catch(e){ /* 同期は失敗しても致命的ではない */ }
   }
@@ -1383,7 +1421,8 @@ function clearLiveTrace(){
   document.getElementById('mFan').textContent = '--';
   document.getElementById('mRemaining').textContent = '--:--';
   document.getElementById('mDTR').textContent = '未設定';
-  document.getElementById('btnFirstCrack').textContent = '1ハゼ確認';
+  actualScTime = null;
+  updateCrackButtonLabel();
   if(chart){
     chart.data.datasets[1].data = [];
     chart.data.datasets[2].data = [];
@@ -1641,7 +1680,7 @@ function releaseWakeLock(){
   if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock = null; }
 }
 
-document.getElementById('btnFirstCrack').onclick = recordFirstCrack;
+document.getElementById('btnFirstCrack').onclick = recordCrack;
 
 // バックグラウンドから戻ってきた際、スリープ中に見逃した完了に気づけるよう、
 // Wake Lockが解除されていたら再取得し、WebSocketが切断されたままなら
@@ -1730,7 +1769,7 @@ function onRoasterState(state){
       if(inferred !== null){
         actualFcTime = inferred;
         fcTimeIsInferred = true;
-        document.getElementById('btnFirstCrack').textContent = `1ハゼ推定 (${fmtMMSS(actualFcTime)}) ・ タップで手動記録に変更`;
+        updateCrackButtonLabel();
       }
     }
     updateActualDTR(roastDoneAtTime);
@@ -1886,6 +1925,7 @@ function connectWS(){
       }
       if(msg.fc_time !== null && msg.fc_time !== undefined){
         applyFirstCrackTime(msg.fc_time);
+        if(msg.sc_time !== null && msg.sc_time !== undefined) applySecondCrackTime(msg.sc_time);
       }
       // 焙煎中(予熱〜排出)なら、焙煎ログの紐づけ先を「実際に送信されたプロファイル」に
       // 復元しておく。焙煎していない時のmsg.profileは何日も前の「前回送信」のことが
@@ -1951,6 +1991,12 @@ function connectWS(){
       if(msg.t !== null && msg.t !== undefined && msg.t !== actualFcTime){
         applyFirstCrackTime(msg.t);
         log(`ハゼ記録が他端末から反映されました(経過時間 ${fmtMMSS(msg.t)})`);
+      }
+    }
+    else if(msg.type === 'second_crack_recorded'){
+      if(msg.t !== null && msg.t !== undefined && msg.t !== actualScTime){
+        applySecondCrackTime(msg.t);
+        log(`2ハゼの記録が他端末から反映されました(経過時間 ${fmtMMSS(msg.t)})`);
       }
     }
     else if(msg.type === 'auto_save_claim_result'){

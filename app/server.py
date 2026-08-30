@@ -154,7 +154,8 @@ CONTINUOUS_ROAST_DELAY_MIN = 5.0
 CONTINUOUS_ROAST_DELAY_MAX = 600.0
 # 焙煎完了後、どの端末からも保存要求が来ないと判断するまでの猶予(秒)
 UNHANDLED_ROAST_COUNT_DELAY = 20.0
-_last_fc_time: Optional[float] = None          # ハゼを記録した経過時間(秒)。新しい焙煎開始時にリセット。
+_last_fc_time: Optional[float] = None          # 1ハゼを記録した経過時間(秒)。新しい焙煎開始時にリセット。
+_last_sc_time: Optional[float] = None          # 2ハゼを記録した経過時間(秒)。同上。
 # 焙煎中にブラウザをリロードすると、それまでの実測ログ(liveSamples)はブラウザの
 # メモリ上にしか無いため消えてしまい、グラフがそこで途切れて見える不具合があった。
 # サーバー側でも今回の焙煎の実測値を保持しておき、再接続時にまとめて渡せるようにする。
@@ -649,9 +650,34 @@ def _altitude_fc_slope() -> float:
     return min(max(v, ALTITUDE_SLOPE_MIN), ALTITUDE_SLOPE_MAX)
 
 
+def _learned_fc_bean_temp() -> float:
+    """焙煎ログから学んだ1ハゼ豆温度。まだ採用していなければモデルの基準値。"""
+    v = (_load_calibration().get("learned") or {}).get("fcBeanTemp")
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return energy_module.T_FC_BEAN
+    # 極端な値は採らない(記録の取り違え・打ち間違いへの備え)
+    return v if 170.0 <= v <= 225.0 else energy_module.T_FC_BEAN
+
+
+def _learned_sc_bean_temp() -> float:
+    """焙煎ログから学んだ2ハゼ豆温度。無ければ較正が置いている仮定値。"""
+    v = (_load_calibration().get("learned") or {}).get("scBeanTemp")
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return beancal.T_SC_BEAN
+    return v if 200.0 <= v <= 260.0 else beancal.T_SC_BEAN
+
+
 def _fc_bean_temp_for(altitude_bucket: str) -> float:
-    """その標高帯での1ハゼ豆温度。標高が分からなければ基準値のまま。"""
-    return energy_module.T_FC_BEAN + energy_module.altitude_fc_offset(
+    """その標高帯での1ハゼ豆温度。
+
+    基準は「焙煎ログから学んだ値」があればそれ、無ければモデルの既定値。
+    そこに標高の補正を足す。標高が分からなければ基準値のまま。
+    """
+    return _learned_fc_bean_temp() + energy_module.altitude_fc_offset(
         altitude_bucket, _altitude_fc_slope())
 
 
@@ -766,6 +792,64 @@ def get_calibration_profile():
     })
 
 
+@app.get("/api/calibration/from_logs")
+def calibration_from_logs():
+    """焙煎ログから1ハゼ・2ハゼの豆温度を集めて返す。
+
+    「1ハゼ確認」を押した記録だけを使う。ガイド温度からの推定値はモデルの入力から
+    作った値なので、使うと自分で自分を較正することになる。
+    """
+    recs = list(_load_roast_records().values())
+    res = beancal.learn_from_logs(
+        recs, moisture=_bean_moisture_frac(),
+        cal=_calibration_overrides(),
+        altitude_of=lambda r: _record_altitude_bucket(r))
+    res["applied"] = (_load_calibration().get("learned") or {})
+    res["current"] = {"fcBeanTemp": _learned_fc_bean_temp(),
+                      "scBeanTemp": _learned_sc_bean_temp(),
+                      "modelDefaultFc": energy_module.T_FC_BEAN,
+                      "modelDefaultSc": beancal.T_SC_BEAN}
+    return JSONResponse(res)
+
+
+@app.put("/api/calibration/from_logs")
+async def apply_calibration_from_logs(request: Request):
+    """焙煎ログから学んだ値を採用する(bodyが空なら現時点の集計をそのまま採る)。"""
+    body = await request.json() if await request.body() else {}
+    recs = list(_load_roast_records().values())
+    res = beancal.learn_from_logs(
+        recs, moisture=_bean_moisture_frac(),
+        cal=_calibration_overrides(),
+        altitude_of=lambda r: _record_altitude_bucket(r))
+    learned = {}
+    if body.get("useFc", True) and res["fc"]["n"] > 0:
+        learned["fcBeanTemp"] = res["fc"]["median"]
+        learned["fcN"] = res["fc"]["n"]
+        learned["fcSd"] = res["fc"]["sd"]
+    if body.get("useSc", True) and res["sc"]["n"] > 0:
+        learned["scBeanTemp"] = res["sc"]["median"]
+        learned["scN"] = res["sc"]["n"]
+        learned["scSd"] = res["sc"]["sd"]
+    if not learned:
+        return JSONResponse({"error": "使える焙煎ログがまだありません"}, status_code=400)
+    data = _load_calibration()
+    data["learned"] = learned
+    CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _clear_profile_estimate_cache()
+    _warm_profile_estimate_cache_async()
+    return JSONResponse({"ok": True, "learned": learned})
+
+
+@app.delete("/api/calibration/from_logs")
+def clear_calibration_from_logs():
+    data = _load_calibration()
+    if data.pop("learned", None) is not None:
+        CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _clear_profile_estimate_cache()
+    _warm_profile_estimate_cache_async()
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/calibration")
 def get_calibration():
     data = _load_calibration()
@@ -794,7 +878,7 @@ def _calibration_expected(prof: dict, moisture: float, cal: dict) -> dict:
     return {
         "fcStart": r["crack_start"],
         "fcEnd": r["crack_end"],
-        "scStart": at(beancal.T_SC_BEAN),
+        "scStart": at(_learned_sc_bean_temp()),
         "roastedG": round(r["roasted_g"], 1),
         "roastIndex": round(r["roast_index"], 3),
     }
@@ -2113,7 +2197,8 @@ async def _continuous_restart_after_delay() -> None:
 
 
 def _on_state(state: str):
-    global _last_roaster_state, _roast_start_t, _last_fc_time, _last_auto_record_id, _error_spans
+    global _last_roaster_state, _roast_start_t, _last_fc_time, _last_sc_time
+    global _last_auto_record_id, _error_spans
     global _auto_save_claim, _duplicate_confirm, _roast_counted
     # エラー状態("エラー:"始まり)への出入りを検知し、グラフ上で色分け表示できるよう
     # 区間(開始・終了の経過時間)を記録する。座標はliveSamples/fc_timeと同じ、
@@ -2127,6 +2212,7 @@ def _on_state(state: str):
         _roast_start_t = _last_telemetry["t"] if _last_telemetry else None
         # 前回の焙煎のハゼ記録・実測ログ・自動保存記録IDが新しい焙煎に持ち越されないようにリセットする
         _last_fc_time = None
+        _last_sc_time = None
         _telemetry_history.clear()
         _last_auto_record_id = None
         _error_spans = []
@@ -2198,7 +2284,8 @@ def _on_state(state: str):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    global _session, _last_sent_profile, _last_selected_profile, _last_fc_time, _last_auto_record_id
+    global _session, _last_sent_profile, _last_selected_profile, _last_fc_time, _last_sc_time
+    global _last_auto_record_id
     global _continuous_roast
     global _auto_save_claim, _duplicate_confirm
     await websocket.accept()
@@ -2215,6 +2302,7 @@ async def websocket_endpoint(websocket: WebSocket):
         "last_telemetry": _last_telemetry,
         "selected_profile": _last_selected_profile,
         "fc_time": _last_fc_time,
+        "sc_time": _last_sc_time,
         "telemetry_history": _telemetry_history,
         "auto_record_id": _last_auto_record_id,
         "error_spans": _error_spans,
@@ -2328,7 +2416,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif action == "record_first_crack":
                     # 片方の端末で「ハゼた!」を記録したら、もう片方にも反映する。
                     _last_fc_time = msg.get("t")
+                    # 1ハゼを取り直したら、その後の2ハゼは意味を失うので消す
+                    _last_sc_time = None
                     await _broadcast({"type": "first_crack_recorded", "t": _last_fc_time})
+
+                elif action == "record_second_crack":
+                    _last_sc_time = msg.get("t")
+                    await _broadcast({"type": "second_crack_recorded", "t": _last_sc_time})
 
                 elif action == "roast_record_saved":
                     # 焙煎記録が自動保存された直後、そのidを覚えておく。
@@ -2649,8 +2743,35 @@ def _roast_record_summary(rid: str, r: dict, beans: dict) -> dict:
         "duration": r.get("duration"),
         "max_temp": r.get("max_temp"),
         "dev_time": r.get("dev_time"),
+        "fc_time": r.get("fc_time"),
+        "fc_time_inferred": r.get("fc_time_inferred"),
+        "sc_time": r.get("sc_time"),
+        "altitude_bucket": _record_altitude_bucket(r),
         "has_curve": bool(r.get("roast_curve")),
     }
+
+
+def _record_altitude_bucket(rec: dict) -> str:
+    """その焙煎記録の豆の標高帯。分からなければ空文字。
+
+    記録は「どのプロファイルで焼いたか」だけを持っているので、標高はそのプロファイル
+    の豆情報から都度引く。あとで豆情報に標高を入れた場合も、次に読んだときには
+    反映される(記録側に焼き込まない)。
+    """
+    src, pid = rec.get("profile_source"), rec.get("profile_id")
+    try:
+        if src == "preset" and pid is not None:
+            db = get_db()
+            row = db.get_profile(int(pid))
+            if row is not None:
+                return _preset_beaninfo_fields(ModelFactory.from_series(row).name)["altitude_bucket"]
+        if src == "custom" and pid is not None:
+            p = _load_custom().get(str(pid))
+            if p:
+                return _custom_beaninfo(p)["altitude"]
+    except Exception:  # noqa: BLE001
+        return ""
+    return ""
 
 
 @app.get("/api/roast_records")
@@ -2699,6 +2820,9 @@ def get_roast_record(rid: str):
     bean = beans.get(bpid) if bpid else None
     result["bean_label"] = _bean_purchase_label(bean) if bean else ""
     result["bean_group_key"] = _bean_purchase_group_key(bean) if bean else None
+    # 豆温度の推定に使う標高。記録には焼き込まず、そのつどプロファイルの豆情報から引く
+    # (あとから豆情報に標高を入れた場合も、次に読んだときに効く)。
+    result["altitude_bucket"] = _record_altitude_bucket(r)
     result["bean_crop_year"] = bean.get("crop_year") if bean else None
     result["bean_purchase_date"] = bean.get("purchase_date") if bean else None
     return JSONResponse(result)
