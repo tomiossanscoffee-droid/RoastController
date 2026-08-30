@@ -3,23 +3,15 @@
 
 このリポジトリの他のサーバーテストと同じく、HTTPを介さず関数を直接呼ぶ
 (TestClientはhttpxを要求するため、依存を増やさない)。
-保存先は環境変数で差し替えて、実際の calibration.json を触らないようにする。
+保存先は conftest.py の srv フィクスチャがまとめて差し替える
+(実際の calibration.json や焙煎記録を触らないため)。
 """
 import asyncio
-import importlib
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-PATH_KEYS = ("CALIBRATION", "APP_SETTINGS", "FAVORITES", "CUSTOM_PROFILES",
-             "ROAST_RECORDS", "BEAN_PURCHASES", "GUIDE_TEMPS",
-             "PUSH_SUBSCRIPTIONS", "MOBILE_HOST", "LAST_SENT_PROFILE",
-             "ROAST_COUNTS", "SELECTED_BEAN")
+from conftest import sandbox_path
 
 
 class FakeRequest:
@@ -30,15 +22,6 @@ class FakeRequest:
 
     async def json(self):
         return self._body
-
-
-@pytest.fixture()
-def srv(tmp_path, monkeypatch):
-    for name in PATH_KEYS:
-        monkeypatch.setenv(f"ROAST_{name}_PATH", str(tmp_path / f"{name}.json"))
-    import app.server as server
-    importlib.reload(server)
-    return server
 
 
 def body_of(response):
@@ -73,7 +56,7 @@ def test_測定値を入れると較正され保存される(srv, tmp_path):
             "roastedG": exp["roastedG"] - 0.8, "abortAt": 360, "abortG": 46.6}
     d = put(srv, meas)
     assert set(d["scale"]) == {"U0", "CRACK_SPREAD", "H_ENDO", "K_PYRO", "K_DRY"}
-    saved = json.loads((tmp_path / "CALIBRATION.json").read_text(encoding="utf-8"))
+    saved = json.loads((sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).read_text(encoding="utf-8"))
     assert saved["measurements"]["fcStart"] == meas["fcStart"]
     # 較正後の予想が実測に近づいていること
     after = body_of(srv.get_calibration())
@@ -96,9 +79,9 @@ def test_数値でない値は捨てる(srv):
 
 def test_既定値に戻せる(srv, tmp_path):
     put(srv, {"fcStart": 420})
-    assert (tmp_path / "CALIBRATION.json").exists()
+    assert (sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).exists()
     srv.clear_calibration()
-    assert not (tmp_path / "CALIBRATION.json").exists()
+    assert not (sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).exists()
     assert body_of(srv.get_calibration())["scale"] == {}
 
 
@@ -123,14 +106,14 @@ def fitted_only(srv):
 
 
 def test_壊れた保存ファイルでも既定値で動く(srv, tmp_path):
-    (tmp_path / "CALIBRATION.json").write_text("{壊れている", encoding="utf-8")
+    (sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).write_text("{壊れている", encoding="utf-8")
     assert fitted_only(srv) == {}
     assert body_of(srv.get_calibration())["scale"] == {}
 
 
 def test_知らない定数名は無視する(srv, tmp_path):
     """保存ファイルを手で編集された場合に、変な値をモデルへ流し込まない。"""
-    (tmp_path / "CALIBRATION.json").write_text(
+    (sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).write_text(
         json.dumps({"overrides": {"U0": 0.004, "SOMETHING_ELSE": 1.0, "K_PYRO": "x"}}),
         encoding="utf-8")
     assert fitted_only(srv) == {"U0": 0.004}
@@ -147,7 +130,7 @@ def test_標高の補正は焙煎ログから学ぶまで効かない(srv):
 def test_学んだ傾きが1ハゼ豆温度に効く(srv, tmp_path):
     """焙煎ログから学んだ値だけがモデルに入ること。"""
     import roastlib.energy as E
-    (tmp_path / "CALIBRATION.json").write_text(
+    (sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).write_text(
         json.dumps({"learned": {"fcBeanTemp": 199.0, "altitudeSlope": 4.0}}),
         encoding="utf-8")
     assert srv._altitude_fc_slope() == 4.0
@@ -170,14 +153,14 @@ def test_学んだ傾きが1ハゼ豆温度に効く(srv, tmp_path):
 def test_おかしな傾きは採らない(srv, tmp_path):
     """手で編集された場合に、変な値をモデルへ流し込まない。"""
     for v in (-99, 99, "abc", None):
-        (tmp_path / "CALIBRATION.json").write_text(
+        (sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).write_text(
             json.dumps({"learned": {"altitudeSlope": v}}), encoding="utf-8")
         assert srv._altitude_fc_slope() == 0.0, v
 
 
 def test_プロファイルの推定に標高は効かない(srv, tmp_path):
     """どの豆を焼くかは焙煎するまで決まらないので、プロファイル側では補正しない。"""
-    (tmp_path / "CALIBRATION.json").write_text(
+    (sandbox_path(tmp_path, "ROAST_CALIBRATION_PATH")).write_text(
         json.dumps({"learned": {"fcBeanTemp": 199.0, "altitudeSlope": 6.0}}),
         encoding="utf-8")
     import inspect

@@ -2875,6 +2875,90 @@ def list_roast_records(
     return JSONResponse(results)
 
 
+def _profile_still_exists(source: str, pid) -> bool:
+    """そのプロファイルが今も選べるか(消された保存プロファイルを候補に出さない)。"""
+    if source == "custom":
+        return str(pid) in _load_custom()
+    if source == "preset":
+        try:
+            if not Path(DB_PATH).exists():
+                return False
+            return get_db().get_profile(int(pid)) is not None
+        except Exception:  # noqa: BLE001
+            return False
+    # IKAWAは実機へ送れないので候補にしない
+    return False
+
+
+@app.get("/api/bean_roast_candidates")
+def bean_roast_candidates(bean_purchase_id: str):
+    """その豆で前に焼いたプロファイルの候補。
+
+    豆を選んでからプロファイルを選ぶ流れのための一覧。「前にこの豆をどれで焼いて、
+    どんな焙煎度で、評価はどうだったか」が分かれば、そこから選び直せる。
+    生産年違いで買い直した同じ豆(group_keyが同じ)の記録もまとめて見る。
+
+    焙煎度は、プロファイルの設計値ではなく<b>実測カーブから推定した焙煎指数</b>を使う。
+    同じプロファイルでも焼き上がりは毎回違うため、「その時どう焼けたか」が知りたい。
+    """
+    beans = _load_bean_purchases()
+    bean = beans.get(bean_purchase_id)
+    if bean is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    group_key = _bean_purchase_group_key(bean)
+    moisture = _bean_moisture_frac()
+
+    by_profile: dict = {}
+    for rid, r in _load_roast_records().items():
+        b = beans.get(r.get("bean_purchase_id"))
+        if not b or _bean_purchase_group_key(b) != group_key:
+            continue
+        source, pid = r.get("profile_source") or "", r.get("profile_id")
+        if not source or pid is None:
+            continue
+        curve, _ = _clean_curve(r.get("roast_curve"))
+        fan, _ = _clean_curve(r.get("fan_curve"), "fan")
+        est = _profile_estimate(curve, fan, moisture) if curve else EMPTY_ESTIMATE
+        key = (source, str(pid))
+        entry = by_profile.setdefault(key, {
+            "profile_source": source,
+            "profile_id": pid,
+            "profile_name": r.get("profile_name") or "",
+            "available": _profile_still_exists(source, pid),
+            "roasts": [],
+        })
+        entry["roasts"].append({
+            "id": rid,
+            "profile_name": r.get("profile_name") or "",
+            "roasted_at": r.get("roasted_at"),
+            "rating": r.get("rating"),
+            "roast_index": est["roast_index"],
+            "roast_index_level": est["roast_index_level"],
+            "bean_crop_year": b.get("crop_year"),
+            "cup_comment": (r.get("cup_comment") or "")[:60],
+        })
+
+    results = []
+    for entry in by_profile.values():
+        entry["roasts"].sort(key=lambda x: x["roasted_at"] or "", reverse=True)
+        # 名前は記録ごとに違うことがある(浅め/深めに調整して送った場合)。
+        # 一番新しい記録の名前を代表にする。
+        newest_name = entry["roasts"][0]["profile_name"] if entry["roasts"] else ""
+        entry["profile_name"] = newest_name or entry["profile_name"]
+        entry["count"] = len(entry["roasts"])
+        entry["last_roasted_at"] = entry["roasts"][0]["roasted_at"] if entry["roasts"] else None
+        ratings = [x["rating"] for x in entry["roasts"] if x["rating"]]
+        entry["best_rating"] = max(ratings) if ratings else None
+        results.append(entry)
+    # よく焼いたもの・新しいものを上に
+    results.sort(key=lambda e: (e["last_roasted_at"] or ""), reverse=True)
+    return JSONResponse({
+        "bean_purchase_id": bean_purchase_id,
+        "bean_label": _bean_purchase_label(bean),
+        "candidates": results,
+    })
+
+
 @app.get("/api/roast_records/{rid}")
 def get_roast_record(rid: str):
     data = _load_roast_records()

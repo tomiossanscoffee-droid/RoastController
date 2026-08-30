@@ -234,7 +234,26 @@
     margin:0 16px 12px; padding:8px 10px; border:1px solid var(--border); border-radius:6px;
     font-size:13px; color:var(--text-muted); line-height:1.4;
   }
-  .roast-bean-line b{ color:var(--text); font-weight:600; }
+  .roast-bean-line b{ color:var(--text); font-weight:600; display:block; margin-top:2px; }
+  .roast-bean-line .rb-actions{ display:flex; gap:6px; margin-top:8px; }
+  .roast-bean-line .rb-actions .btn{ flex:1; margin:0; }
+  /* 焙煎する豆を選ぶパネル。新しい豆の登録はPC版だけで行う(入力欄が多いため)。 */
+  .bp-card{
+    border:1px solid var(--border); border-radius:8px; padding:11px 13px; margin-bottom:8px;
+    background:var(--panel);
+  }
+  .bp-card.selected{ border-color:var(--amber); background:var(--panel-2); }
+  .bp-card.unavailable{ opacity:.55; }
+  .bp-card .bp-name{ font-size:14px; color:var(--text); line-height:1.35; }
+  .bp-card .bp-meta{ font-size:11.5px; color:var(--text-muted); margin-top:3px; line-height:1.45; }
+  .bp-roast{ font-size:11.5px; color:var(--text-muted); margin-top:4px; line-height:1.5; }
+  .bp-roast .bp-level{ color:var(--text); }
+  .bp-roast .bp-star{ color:var(--amber); }
+  .bp-empty{ font-size:12.5px; color:var(--text-muted); padding:10px 0; line-height:1.6; }
+  .bp-section-title{
+    font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;
+    margin:14px 0 8px; font-weight:600;
+  }
 </style>
 </head>
 <body>
@@ -248,7 +267,24 @@
 
 <!-- いま焙煎する豆。選ぶのはPC版から。ここでは、機械の前で「どの豆を入れるのか」を
      確かめられるようにするためだけに出す(未選択でも焙煎はできる)。 -->
-<div class="roast-bean-line" id="roastBeanLine" style="display:none;">焙煎する豆: <b id="roastBeanName"></b></div>
+<!-- 焙煎する豆。PC版と同じものを見て・選べる。新しい豆の登録はPC版だけ。 -->
+<div class="roast-bean-line" id="roastBeanLine">
+  焙煎する豆:<b id="roastBeanName">選んでいません(選ばなくても焙煎できます)</b>
+  <div class="rb-actions">
+    <button class="btn small" id="btnPickRoastBean">豆を選ぶ</button>
+    <button class="btn small" id="btnClearRoastBean" style="display:none;">外す</button>
+  </div>
+</div>
+
+<!-- 豆を選ぶパネル。豆と、その豆で前に焼いたプロファイルを縦に並べる。 -->
+<div class="section" id="beanPickerPanel" style="display:none;">
+  <input id="beanPickerSearch" placeholder="豆を検索…">
+  <div class="bp-section-title">豆</div>
+  <div id="beanPickerList"></div>
+  <div class="bp-section-title" id="beanPickerCandTitle">この豆で焙煎したプロファイル</div>
+  <div id="beanPickerCandidates"></div>
+  <button class="btn small" id="btnBeanPickerClose">閉じる</button>
+</div>
 
 <!-- 重要な通知(エラー等)。ログはconsoleにしか出ないため、ここに数秒だけ出す。 -->
 <div class="notice-stack" id="noticeStack"></div>
@@ -1231,6 +1267,16 @@ function updateActualDTR(t){
 }
 
 // ------------------------------------------------------------
+document.getElementById('btnPickRoastBean').onclick =
+  () => beanPickerOpen ? closeBeanPicker() : openBeanPicker();
+document.getElementById('btnClearRoastBean').onclick = () => pickRoastBean(null);
+document.getElementById('btnBeanPickerClose').onclick = closeBeanPicker;
+let beanPickerSearchTimer = null;
+document.getElementById('beanPickerSearch').oninput = () => {
+  clearTimeout(beanPickerSearchTimer);
+  beanPickerSearchTimer = setTimeout(loadBeanPickerList, 250);
+};
+
 // 焙煎完了時の自動記録作成(PC版と同じ/api/roast_recordsを使う)
 // ------------------------------------------------------------
 // プリセットは一覧・編集画面と同じ「国名 農園 焙煎度」表示にする(生のファイル名は分かりにくいため)。
@@ -1428,14 +1474,153 @@ function applySecondCrackTime(t){
   updateCrackButtonLabel();
 }
 
-// いま焙煎する豆。選ぶのはPC版で、こちらは表示と焙煎記録への紐づけだけ。
+// ------------------------------------------------------------
+// 焙煎する豆
+// ------------------------------------------------------------
+// PC版と同じ選択をサーバーで共有する。機械の前で豆を替えることがあるので、
+// こちらからも選べるようにしてある。新しい豆の登録はPC版だけ(入力欄が多く、
+// 焙煎前に片手間で埋めるものではないため)。
 let selectedBeanId = null;
+let selectedBeanLabel = '';
+let beanPickerOpen = false;
+
+// 焙煎日時の表示(PC版のfmtRoastedAtと同じ。保存はISO文字列、表示はローカル時刻)
+function _pad2(n){ return String(n).padStart(2, '0'); }
+function fmtRoastedAt(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${_pad2(d.getMonth()+1)}-${_pad2(d.getDate())} `
+       + `${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`;
+}
+
 function applySelectedBean(payload){
   selectedBeanId = (payload && payload.bean_purchase_id) || null;
-  const row = document.getElementById('roastBeanLine');
-  if(!row) return;
-  row.style.display = selectedBeanId ? '' : 'none';
-  document.getElementById('roastBeanName').textContent = (payload && payload.label) || '';
+  selectedBeanLabel = (payload && payload.label) || '';
+  const name = document.getElementById('roastBeanName');
+  const clear = document.getElementById('btnClearRoastBean');
+  const pick = document.getElementById('btnPickRoastBean');
+  if(!name) return;
+  name.textContent = selectedBeanId ? selectedBeanLabel
+                                    : '選んでいません(選ばなくても焙煎できます)';
+  if(clear) clear.style.display = selectedBeanId ? '' : 'none';
+  if(pick) pick.textContent = selectedBeanId ? '別の豆にする' : '豆を選ぶ';
+  if(beanPickerOpen){ loadBeanPickerList(); }
+}
+
+async function pickRoastBean(id){
+  try {
+    const res = await fetch('/api/selected_bean', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bean_purchase_id: id || null}),
+    });
+    if(!res.ok){ logNotice('豆を選べませんでした。', 'error'); return; }
+    applySelectedBean(await res.json());
+  } catch(e){ logNotice('豆を選べませんでした。', 'error'); }
+}
+
+async function loadSelectedBean(){
+  try { applySelectedBean(await fetchJSON('/api/selected_bean')); }
+  catch(e){ /* 取れなければ未選択の表示のまま */ }
+}
+
+async function loadBeanPickerList(){
+  const listEl = document.getElementById('beanPickerList');
+  if(!listEl) return;
+  listEl.innerHTML = '<div class="bp-empty">読み込み中…</div>';
+  let items = [];
+  try {
+    const q = document.getElementById('beanPickerSearch').value || '';
+    items = await fetchJSON(`/api/bean_purchases?q=${encodeURIComponent(q)}`);
+  } catch(e){ listEl.innerHTML = '<div class="bp-empty">豆の一覧を読み込めませんでした。</div>'; return; }
+  if(!items.length){
+    listEl.innerHTML = '<div class="bp-empty">該当する豆がありません。'
+      + '新しい豆の登録はPC版から行えます。</div>';
+    renderBeanPickerCandidates(null);
+    return;
+  }
+  listEl.innerHTML = items.map(it => {
+    const meta = [it.process, it.variety, it.altitude, it.purchase_date]
+      .filter(Boolean).join(' ・ ');
+    const sel = selectedBeanId === it.id ? ' selected' : '';
+    return `<div class="bp-card${sel}" data-bean-id="${it.id}">
+      <div class="bp-name">${escapeHtml(it.label)}${selectedBeanId === it.id ? ' ●' : ''}</div>
+      <div class="bp-meta">${escapeHtml(meta)}</div>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('.bp-card').forEach(el => {
+    el.onclick = () => pickRoastBean(el.dataset.beanId);
+  });
+  loadBeanPickerCandidates(selectedBeanId);
+}
+
+async function loadBeanPickerCandidates(beanId){
+  const el = document.getElementById('beanPickerCandidates');
+  const title = document.getElementById('beanPickerCandTitle');
+  if(!el) return;
+  if(!beanId){
+    title.textContent = 'この豆で焙煎したプロファイル';
+    el.innerHTML = '<div class="bp-empty">豆を選ぶと、その豆で前に焼いたプロファイルが出ます。</div>';
+    return;
+  }
+  el.innerHTML = '<div class="bp-empty">読み込み中…</div>';
+  try {
+    const d = await fetchJSON(`/api/bean_roast_candidates?bean_purchase_id=${encodeURIComponent(beanId)}`);
+    title.textContent = `「${d.bean_label}」で焙煎したプロファイル`;
+    renderBeanPickerCandidates(d.candidates);
+  } catch(e){ el.innerHTML = '<div class="bp-empty">読み込めませんでした。</div>'; }
+}
+
+function renderBeanPickerCandidates(candidates){
+  const el = document.getElementById('beanPickerCandidates');
+  if(!el) return;
+  if(!candidates){ el.innerHTML = ''; return; }
+  if(!candidates.length){
+    el.innerHTML = '<div class="bp-empty">この豆での焙煎記録はまだありません。'
+      + '下の一覧からプロファイルを選んでください。</div>';
+    return;
+  }
+  el.innerHTML = candidates.map(c => {
+    // 1回ごとに「その時どう焼けたか」を出す。同じプロファイルでも毎回違うため。
+    const roasts = c.roasts.slice(0, 3).map(r => {
+      const level = r.roast_index_level
+        ? `<span class="bp-level">${escapeHtml(r.roast_index_level)}</span>`
+          + (r.roast_index != null ? `(指数 ${r.roast_index})` : '')
+        : '焙煎度は不明';
+      const stars = r.rating ? `<span class="bp-star">${'★'.repeat(r.rating)}</span>` : '未評価';
+      const year = r.bean_crop_year ? `[${escapeHtml(r.bean_crop_year)}年産] ` : '';
+      return `<div class="bp-roast">${year}${escapeHtml(fmtRoastedAt(r.roasted_at))}`
+           + ` ・ ${level} ・ ${stars}</div>`;
+    }).join('');
+    const more = c.count > 3 ? `<div class="bp-roast">ほか${c.count - 3}回</div>` : '';
+    const gone = c.available ? '' : '<div class="bp-roast">(このプロファイルは今はありません)</div>';
+    return `<div class="bp-card${c.available ? '' : ' unavailable'}"
+                 data-src="${escapeHtml(c.profile_source)}" data-pid="${escapeHtml(String(c.profile_id))}"
+                 data-ok="${c.available ? '1' : '0'}">
+      <div class="bp-name">${escapeHtml(c.profile_name || '(名称不明)')} <span class="bp-meta">${c.count}回</span></div>
+      ${roasts}${more}${gone}
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.bp-card').forEach(card => {
+    if(card.dataset.ok !== '1') return;
+    card.onclick = async () => {
+      closeBeanPicker();
+      switchTab(card.dataset.src);
+      await selectProfile(card.dataset.pid, card.dataset.src, null);
+    };
+  });
+}
+
+function openBeanPicker(){
+  beanPickerOpen = true;
+  document.getElementById('beanPickerPanel').style.display = '';
+  loadBeanPickerList();
+  document.getElementById('beanPickerPanel').scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function closeBeanPicker(){
+  beanPickerOpen = false;
+  document.getElementById('beanPickerPanel').style.display = 'none';
 }
 
 function recordCrack(){
@@ -2228,6 +2413,7 @@ populateCategoryFilter('preset');
 searchProfiles();
 renderChart();
 fetchLastSentProfile();
+loadSelectedBean();   // いま焙煎する豆(サーバーで共有)
 connectWS();
 
 // プリセット/IKAWAタブの表示を、元データの有無と設定の両方から決めて反映する
