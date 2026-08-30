@@ -20,6 +20,8 @@ roast_records.json
 bean_purchases.json
 last_sent_profile.json
 unsaved_roast_counts.json
+calibration.json
+selected_bean.json
 mobile_host.json
 
 # --- メーカー純正アプリ / IKAWA 由来のデータ(各自が抽出。再配布しない) ---
