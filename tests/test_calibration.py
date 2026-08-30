@@ -6,6 +6,7 @@
 #
 #   venv/bin/python -m pytest tests/test_calibration.py
 # ============================================================
+import math
 import sys
 from pathlib import Path
 
@@ -41,8 +42,11 @@ def observe(cal):
         "scStart": at(C.T_SC_BEAN),
         "greenG": 50.0,
         "roastedG": round(r["roasted_g"], 1),
-        "abortAt": 360.0,
-        "abortG": round(mass(360.0) * 1000.0, 1),
+        # 途中で止めて量った重量。1点だけだと乾燥の速さがほとんど決まらない
+        # (水の大半は1ハゼ前後まで豆の中に残るので、序盤の重量は乾燥の速さに
+        #  あまり反応しない)。実際の使い方どおり、複数の時刻で量った形にする。
+        "aborts": [{"t": t, "g": round(mass(t) * 1000.0, 1)}
+                   for t in (180.0, 300.0, 390.0, 480.0)],
     }
 
 
@@ -85,6 +89,68 @@ def test_校正用プロファイルは1ハゼ付近がゆるやか():
 
 # ---- 当てはめ ----
 
+def test_途中重量は1点でも受け付ける():
+    """古い形(abortAt/abortG の1組)のまま保存されている較正も動くこと。"""
+    r = E.estimate(P["roast"], P["fan"])
+    g = next(p["mass"] for p in r["series"] if p["t"] >= 360.0) * 1000.0
+    res = C.fit({"fcStart": 442.0, "abortAt": 360.0, "abortG": round(g, 1)})
+    assert "abort" in res["used"]
+    assert "K_DRY" in res["scale"]
+
+
+# 実機での参照測定(ケニア ニエリ・標高1800m・生豆50g、校正用プロファイル)。
+# モデルを直したときに、この実測から離れていないかを見るための基準。
+REFERENCE = {
+    "fcStart": 442.0, "fcEnd": 508.0, "scStart": 622.0,
+    "greenG": 50.0, "roastedG": 40.9,
+    "aborts": [{"t": 180.0, "g": 49.2}, {"t": 240.0, "g": 49.0},
+               {"t": 300.0, "g": 49.0}, {"t": 390.0, "g": 47.9}],
+}
+REFERENCE_COLOR_CHANGE = 240.0   # カラーチェンジの時刻(豆140〜150℃が目安)
+
+
+def test_実機の測定値を再現できる():
+    """実際に焼いて測った値に、較正後のモデルが合うこと。
+
+    ハゼの時刻・焙煎後の重量だけでなく、途中で量った重量とカラーチェンジの
+    時刻まで同時に合うかを見る。ここが崩れたらモデルを直した意味が無い。
+    """
+    res = C.fit(REFERENCE, moisture=0.11)
+    assert not res["notes"], f"範囲の端に張り付きました: {res['notes']}"
+    cal = dict(res["overrides"]); cal["CHAFF_G"] = 0.2
+    r = E.estimate(P["roast"], P["fan"], moisture=0.11, cal=cal)
+    s = r["series"]
+    at = lambda t: s[min(int(t), len(s) - 1)]
+    sc = next((p["t"] for p in s if p["bean"] >= C.T_SC_BEAN), None)
+    assert abs(r["crack_start"] - REFERENCE["fcStart"]) <= 8
+    assert abs(r["crack_end"] - REFERENCE["fcEnd"]) <= 10
+    assert sc is not None and abs(sc - REFERENCE["scStart"]) <= 10
+    assert abs(r["roasted_g"] - REFERENCE["roastedG"]) <= 0.5
+    # 途中で量った重量(はかりは0.1g刻み。0.6g以内なら実用上合っている)
+    for a in REFERENCE["aborts"]:
+        got = at(a["t"])["mass"] * 1000.0
+        assert abs(got - a["g"]) <= 0.6, f"{a['t']}秒: モデル{got:.2f}g 実測{a['g']}g"
+    # カラーチェンジのときの豆温度が、一般に言われる目安の範囲に入ること
+    cc = at(REFERENCE_COLOR_CHANGE)["bean"]
+    assert 138.0 <= cc <= 152.0, f"カラーチェンジ時の豆温度 {cc:.1f}℃"
+
+
+def test_途中重量が1点だけだと当てはめが暴れる():
+    """1点に合わせ込むと乾燥の速さが極端になり、他の時刻が外れる。
+
+    実際、3分の1点だけで当てはめたら乾燥が6.1倍まで振れ、終盤の吸熱も
+    範囲の端に張り付いた。複数点なら常識的な範囲に収まる。
+    """
+    single = {k: v for k, v in REFERENCE.items() if k != "aborts"}
+    single["abortAt"] = 180.0
+    single["abortG"] = 49.2
+    one = C.fit(single, moisture=0.11)
+    many = C.fit(REFERENCE, moisture=0.11)
+    assert abs(math.log(many["scale"]["K_DRY"])) < abs(math.log(one["scale"]["K_DRY"])), \
+        f"複数点 {many['scale']['K_DRY']:.2f} / 1点 {one['scale']['K_DRY']:.2f}"
+    assert not many["notes"], f"複数点でも端に張り付きました: {many['notes']}"
+
+
 def test_ずらした定数を当てはめで戻せる():
     true = {"U0": 1.15, "CRACK_SPREAD": 1.40, "H_ENDO": 0.85,
             "K_PYRO": 1.30, "K_DRY": 0.75}
@@ -95,7 +161,11 @@ def test_ずらした定数を当てはめで戻せる():
     }
     got = C.fit(observe(cal))["scale"]
     for k, want in true.items():
-        assert got[k] == pytest.approx(want, rel=0.10), f"{k}: 期待{want} 実際{got[k]}"
+        # 乾燥の速さ(K_DRY)だけは緩めに見る。水の大半が1ハゼ前後まで豆の中に
+        # 残るようになったので、途中の重量は乾燥の速さにあまり反応せず、元の値を
+        # ぴたりと当てるだけの手がかりが残っていない。
+        rel = 0.20 if k == "K_DRY" else 0.10
+        assert got[k] == pytest.approx(want, rel=rel), f"{k}: 期待{want} 実際{got[k]}"
 
 
 def test_当てはめた定数で焼き直すと測定値を再現する():
@@ -114,7 +184,9 @@ def test_当てはめた定数で焼き直すと測定値を再現する():
     assert abs(back["fcEnd"] - meas["fcEnd"]) <= 8
     assert abs(back["scStart"] - meas["scStart"]) <= 8
     assert abs(back["roastedG"] - meas["roastedG"]) <= 0.2
-    assert abs(back["abortG"] - meas["abortG"]) <= 0.3
+    for got, want in zip(back["aborts"], meas["aborts"]):
+        assert got["t"] == want["t"]
+        assert abs(got["g"] - want["g"]) <= 0.3, f"{want['t']}秒の重量"
 
 
 def test_一項目だけでも較正できる():

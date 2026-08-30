@@ -179,11 +179,24 @@ def test_蒸発潜熱は高温ほど小さい():
 
 
 @pytest.mark.parametrize("index,expected", [
-    (1.10, "浅煎り"), (1.145, "浅煎り"), (1.18, "中煎り"),
-    (1.20, "中深煎り"), (1.25, "深煎り"), (1.50, "深煎り"),
+    (1.05, "浅煎り"), (1.12, "浅煎り"), (1.15, "中煎り"),
+    (1.18, "中深煎り"), (1.21, "深煎り"), (1.50, "深煎り"),
 ])
 def test_焙煎指数から焙煎度(index, expected):
     assert roast_index_level(index) == expected
+
+
+def test_焙煎度の帯は使う人の基準と揃っている():
+    """浅=1ハゼ開始〜終了+少し / 中深=2ハゼが始まる頃まで / 深=2ハゼ以降。
+
+    帯を動かしたとき、順番や重なりが壊れていないことだけを機械的に確かめる
+    (境目の数値そのものの根拠は roastlib/energy.py のコメントにある)。
+    """
+    bands = ROAST_INDEX_BANDS
+    assert [b[0] for b in bands] == ["浅煎り", "中煎り", "中深煎り", "深煎り"]
+    for a, b in zip(bands, bands[1:]):
+        assert a[2] == b[1], f"{a[0]}と{b[0]}の境目が繋がっていません"
+    assert bands[-1][2] == float("inf")
 
 
 # ------------------------------------------------------------
@@ -234,13 +247,22 @@ console.log(JSON.stringify({{
     js = json.loads(out.stdout.strip().splitlines()[-1])
     py = estimate(ROAST, FAN)
     assert js["n"] == len(py["series"])
-    assert math.isclose(js["totalKcal"], py["total_kcal"], rel_tol=1e-9)
-    assert math.isclose(js["roastIndex"], py["roast_index"], rel_tol=1e-9)
-    assert js["crackStart"] == py["crack_start"]
-    assert js["crackEnd"] == py["crack_end"]
+    # 許容は1e-4。同じ式でも、浮動小数の丸めが1ハゼ付近の急な変化で増幅され、
+    # 700ステップ積むと相対1e-4程度まで開く(実測: 最初のずれは t=388 で 1e-9)。
+    # 式を書き間違えればこれよりずっと大きく外れるので、取り違えは捕まえられる。
+    # 画面に出す桁での一致は、この下で別に確かめている。
+    assert math.isclose(js["totalKcal"], py["total_kcal"], rel_tol=1e-4)
+    assert math.isclose(js["roastIndex"], py["roast_index"], rel_tol=1e-4)
+    # 画面に出す桁で一致していること(利用者に見える範囲では同じ値)
+    assert round(js["roastIndex"], 3) == round(py["roast_index"], 3)
+    assert round(js["endBeanTemp"], 1) == round(py["end_bean_temp"], 1)
+    # ハゼの時刻は内部の刻み(DT/SUBSTEPS = 0.125秒)単位で出る。丸めの差で
+    # 隣の刻みになることがあるので、1刻み分は許す。
+    assert abs(js["crackStart"] - py["crack_start"]) <= 0.2
+    assert abs(js["crackEnd"] - py["crack_end"]) <= 0.2
     for got, want in zip(js["altOffsets"], _altitude_offsets()):
         assert math.isclose(got, want, abs_tol=1e-9)
-    assert math.isclose(js["endBeanTemp"], py["end_bean_temp"], rel_tol=1e-9)
+    assert math.isclose(js["endBeanTemp"], py["end_bean_temp"], rel_tol=1e-4)
     assert js["level"] == py["roast_index_level"]
     mid_py = py["series"][len(py["series"]) // 2]
     assert math.isclose(js["mid"]["bean"], mid_py["bean"], rel_tol=1e-9)

@@ -111,6 +111,9 @@ SELECTED_BEAN_PATH = Path(os.environ.get("ROAST_SELECTED_BEAN_PATH", str(REPO_RO
 async def _lifespan(_app: FastAPI):
     # プリセットの推定最終豆温度(一覧の並び替えに使う)を裏で先に計算しておく。
     # 起動を待たせないよう、別スレッドに投げるだけにする。
+    # モデルを直した後は、保存してある較正を測定値から当てはめ直す
+    # (中でキャッシュも温め直すので、こちらが先)。
+    _refit_calibration_if_stale_async()
     _warm_profile_estimate_cache_async()
     yield
 
@@ -694,7 +697,13 @@ def _calibration_overrides() -> dict:
 
     知らない定数名と、既定値からかけ離れた値は捨てる。
     """
-    ov = _load_calibration().get("overrides") or {}
+    data = _load_calibration()
+    # モデルを直した後の較正は、当てはめ直すまで使わない。前のモデルのずれを
+    # 打ち消すための値なので、そのまま新しいモデルに渡すとかえって外れる。
+    # 当てはめ直しは起動時に裏で走る(_refit_calibration_if_stale)。
+    if data.get("measurements") and data.get("modelVersion") != energy_module.MODEL_VERSION:
+        return {"CHAFF_G": _chaff_g()}
+    ov = data.get("overrides") or {}
     out = {}
     for k, v in ov.items():
         if k not in energy_module.CALIBRATABLE:
@@ -768,6 +777,35 @@ def _warm_profile_estimate_cache() -> None:
 
 def _warm_profile_estimate_cache_async() -> None:
     threading.Thread(target=_warm_profile_estimate_cache, daemon=True).start()
+
+
+def _refit_calibration_if_stale() -> None:
+    """モデルを直した後、保存してある較正を測定値から当てはめ直す。
+
+    較正は「そのときのモデルと実機のずれ」を埋める値なので、モデルが変われば
+    合わなくなる。測定値のほうは実際に測ったものなので残っている。利用者に
+    もう一度入力させる必要は無いので、こちらで当てはめ直す。
+    """
+    try:
+        data = _load_calibration()
+        meas = data.get("measurements") or {}
+        if not meas or data.get("modelVersion") == energy_module.MODEL_VERSION:
+            return
+        result = beancal.fit(meas, moisture=_bean_moisture_frac())
+        keep = {k: data[k] for k in ("learned",) if k in data}
+        CALIBRATION_PATH.write_text(json.dumps(
+            {"measurements": meas, "modelVersion": energy_module.MODEL_VERSION,
+             **result, **keep},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+        _clear_profile_estimate_cache()
+        _warm_profile_estimate_cache()
+    except Exception:  # noqa: BLE001
+        # 当てはめ直せなくても、既定値で動く(古い上書き値は使わない)
+        pass
+
+
+def _refit_calibration_if_stale_async() -> None:
+    threading.Thread(target=_refit_calibration_if_stale, daemon=True).start()
 
 
 @app.get("/api/calibration_profile")
@@ -902,6 +940,8 @@ async def set_calibration(request: Request):
     body = await request.json()
     measurements = {}
     for key in beancal.MEASUREMENT_KEYS:
+        if key == "aborts":
+            continue
         v = body.get(key)
         if v is None or v == "":
             continue
@@ -911,10 +951,24 @@ async def set_calibration(request: Request):
             continue
         if v > 0:
             measurements[key] = v
+    # 途中で止めて量った重量は何点でも受け取る。1点だけだと、その点に引っぱられて
+    # 他の時刻の重量がかえって外れる(roastlib/calibration.py の説明を参照)。
+    aborts = []
+    for item in (body.get("aborts") or []):
+        if not isinstance(item, dict):
+            continue
+        try:
+            t, g = float(item.get("t")), float(item.get("g"))
+        except (TypeError, ValueError):
+            continue
+        if t > 0 and g > 0 and not any(abs(t - x["t"]) < 1e-6 for x in aborts):
+            aborts.append({"t": t, "g": g})
+    if aborts:
+        measurements["aborts"] = sorted(aborts, key=lambda x: x["t"])
     if not measurements:
         return JSONResponse({"error": "測定値がひとつも入っていません"}, status_code=400)
     result = beancal.fit(measurements, moisture=_bean_moisture_frac())
-    data = {"measurements": measurements, **result}
+    data = {"measurements": measurements, "modelVersion": energy_module.MODEL_VERSION, **result}
     CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     # 定数が変わると推定値が全部変わるので、一覧のキャッシュを温め直す。
     with _PROFILE_ESTIMATE_LOCK:

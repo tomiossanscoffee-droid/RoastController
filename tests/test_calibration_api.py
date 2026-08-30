@@ -146,8 +146,10 @@ def test_学んだ傾きが1ハゼ豆温度に効く(srv, tmp_path):
                       cal={"T_FC_BEAN": srv._fc_bean_temp_for("2000m以上")})
     # 爆ぜる温度が高いほど1ハゼは遅い
     assert high["crack_start"] > low["crack_start"]
-    # 豆温度のカーブそのものは動かない(いつ爆ぜるかだけが変わる)
-    assert high["series"][100]["bean"] == low["series"][100]["bean"]
+    # 豆温度のカーブは、序盤ではほとんど動かない(効くのは1ハゼ付近から)。
+    # 完全に同じにはならない: 密閉水が抜けていく分布も1ハゼ豆温度を中心に
+    # 置いているため、低温側にもごくわずかな裾が届く(0.001℃未満)。
+    assert abs(high["series"][100]["bean"] - low["series"][100]["bean"]) < 0.01
 
 
 def test_おかしな傾きは採らない(srv, tmp_path):

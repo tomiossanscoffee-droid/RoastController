@@ -89,7 +89,13 @@ CAL_BOUNDS = {
 }
 
 MEASUREMENT_KEYS = ("fcStart", "fcEnd", "scStart", "greenG", "roastedG",
-                    "abortAt", "abortG")
+                    "abortAt", "abortG", "aborts")
+
+# 途中で止めて量った重量。1点だけだと、その1点に引っぱられて他の時刻がかえって
+# 外れる(実際、3分の1点だけで当てはめたら乾燥が6.1倍になり、5分・6分30秒の
+# 重量が2g以上ずれた)。何点でも受け取り、全部からの外れの2乗和で決める。
+#   aborts: [{"t": 秒, "g": グラム}, ...]
+# 旧い形(abortAt / abortG の1組)もそのまま受け付ける。
 
 # 振り切ったときに何が起きているのかを、定数名ではなく言葉で伝える。
 BOUND_LABELS = {
@@ -150,6 +156,53 @@ def _bisect(lo: float, hi: float, value_of, target: float, rising: bool,
     return (lo + hi) / 2
 
 
+def _abort_points(measurements: dict, abort_at, abort_g) -> list:
+    """途中で量った重量を [(秒, グラム), ...] にそろえる。
+
+    新しい形(aborts の一覧)と、古い形(abortAt/abortG の1組)の両方を受ける。
+    時刻・重量として読めないものは黙って捨てる(手入力なので空欄が混ざる)。
+    """
+    points = []
+    for item in (measurements.get("aborts") or []):
+        if not isinstance(item, dict):
+            continue
+        try:
+            t, g = float(item.get("t")), float(item.get("g"))
+        except (TypeError, ValueError):
+            continue
+        if t > 0 and g > 0:
+            points.append((t, g))
+    if abort_at and abort_g and not any(abs(t - abort_at) < 1e-6 for t, _ in points):
+        points.append((abort_at, abort_g))
+    points.sort()
+    return points
+
+
+def _minimize(lo: float, hi: float, f, rounds: int = 40) -> float:
+    """[lo, hi] で f を最も小さくする点を探す(黄金分割)。
+
+    二分法と違い「目標値にぴったり合わせる」のではなく、複数の測定点からの
+    外れをまとめて小さくするために使う。fは山が1つ(下に凸)であることを前提に
+    しているが、外れの2乗和は乾燥の速さに対してそうなっている。
+    """
+    phi = 0.6180339887498949
+    a, b = lo, hi
+    c, d = b - phi * (b - a), a + phi * (b - a)
+    fc, fd = f(c), f(d)
+    for _ in range(rounds):
+        if b - a < (hi - lo) * 1e-4:
+            break
+        if fc < fd:
+            b, d, fd = d, c, fc
+            c = b - phi * (b - a)
+            fc = f(c)
+        else:
+            a, c, fc = c, d, fd
+            d = a + phi * (b - a)
+            fd = f(d)
+    return (a + b) / 2.0
+
+
 def fit(measurements: dict, moisture: float = E.MOISTURE,
         profile: Optional[dict] = None) -> dict:
     """測定値から定数の上書き値を求める。
@@ -187,24 +240,23 @@ def fit(measurements: dict, moisture: float = E.MOISTURE,
     green_g = num("greenG") or E.BEAN_G
     roasted_g = num("roastedG")
     abort_at, abort_g = num("abortAt"), num("abortG")
+    aborts = _abort_points(measurements, abort_at, abort_g)
 
     # 序盤→終盤の順に決めていく。定数どうしは互いに効くので(たとえば乾燥が遅いと
     # 熱容量が残って豆が上がりにくくなる)、1周では収まらない。4周まわすと、
     # 当てはめた定数で焼き直したときの時刻の再現が数秒以内に落ち着く。
     # 1周あたりの計算は5項目×二分法24回で、全部入れても数秒で終わる。
     for _round in range(4):
-        # ---- 乾燥の速さ: 中断した時点の重量 ----
-        if abort_at and abort_g:
-            target_lost = green_g - abort_g
-            if target_lost > 0:
-                def lost_at(x):
-                    r = series({"K_DRY": x})
-                    # 中断時点までに減った重量(g)。水の減りがほとんどを占める。
-                    return (green_g / 1000.0 - _mass_at(r, abort_at, green_g)) * 1000.0
-                lo, hi = CAL_BOUNDS["K_DRY"]
-                scale["K_DRY"] = _bisect(lo, hi, lost_at, target_lost, rising=True)
-                if _round == 0:
-                    used.append("abort")
+        # ---- 乾燥の速さ: 途中で止めて量った重量 ----
+        if aborts:
+            def mass_error(x):
+                """全ての測定点での重量のずれ(g)の2乗和。小さいほど良い。"""
+                r = series({"K_DRY": x})
+                return sum((_mass_at(r, t, green_g) * 1000.0 - g) ** 2 for t, g in aborts)
+            lo, hi = CAL_BOUNDS["K_DRY"]
+            scale["K_DRY"] = _minimize(lo, hi, mass_error)
+            if _round == 0:
+                used.append("abort")
 
         # ---- 熱の入りやすさ: 1ハゼ開始時刻 ----
         if fc_start:

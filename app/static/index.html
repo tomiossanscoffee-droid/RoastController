@@ -798,6 +798,11 @@
     margin-top:1px; color:var(--amber); white-space:nowrap;
   }
   .metric-card .metric-value.small{ font-size:15px; color:var(--text); }
+  /* 主たる数値の横に小さく添える値(焙煎指数の逆数=歩留まりなど)。
+     同じ大きさで並べるとカード幅(150px)に収まらないので、こちらだけ小さくする。 */
+  .metric-card .metric-value .metric-aside{
+    font-size:13px; color:var(--text-muted); margin-left:5px;
+  }
   /* 主たる数値に添える2行目(豆温度、割合、焙煎度など)。中身が無ければ高さも取らない。 */
   .metric-card .metric-sub{
     font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.3;
@@ -1062,31 +1067,6 @@
            (「1ハゼ 223℃」と「1ハゼの豆温度 196℃」が並ぶと、どちらが何の温度か
            分からなくなる。前者は焙煎機が測る吸入温度、後者はモデルの豆温度)。
            豆の投入量は50g固定なので、設定するのは含水率と1ハゼの豆温度だけ。 -->
-      <div class="settings-title" style="margin-top:12px;">豆温度モデルの前提(豆温度)</div>
-      <div class="settings-note" style="margin-bottom:6px;">
-        推定豆温度・推定入熱・推定焙煎指数に使います
-        (変えてもABCモード・味を推測は動きません)。
-      </div>
-      <div class="settings-num-row"
-           title="生豆の含水率(5〜15%)。推定入熱・推定焙煎指数に効きます">
-        <label for="beanMoistureInput">生豆の含水率</label>
-        <span class="settings-num-field">
-          <input type="number" id="beanMoistureInput" min="5" max="15" step="0.5" value="10">
-          <span>%</span>
-        </span>
-      </div>
-      <!-- チャフ(薄皮)の量。焙煎前後の重量差は水分と揮発性ガスだけではなく、
-           乾いて剥がれる薄皮の分もある。豆の種類で変わり、50gに対して1g未満。
-           乾物の分解に混ぜていると、分解は温度依存なのにチャフはほぼ一定という
-           違いが吸収され、当てはめていない焙煎度の指数がずれる。 -->
-      <div class="settings-num-row"
-           title="焙煎中に剥がれる薄皮の量(豆50gあたり0〜2g)。推定焙煎指数に効きます">
-        <label for="chaffInput">チャフの量</label>
-        <span class="settings-num-field">
-          <input type="number" id="chaffInput" min="0" max="2" step="0.1" value="0.5">
-          <span>g</span>
-        </span>
-      </div>
       <!-- 2つの設定は同じ現象を別の測り方で表している。モデルが両者を繋いでいるので、
            「この豆温度だと吸入温度は何度になる見込みか」を出して、ガイド線の設定と
            突き合わせられるようにする。強制はしない(片方を変えてももう片方は動かない)。 -->
@@ -1104,6 +1084,30 @@
           校正用プロファイルを焼いて、測れた項目だけ入れてください(ひとつでも構いません)。
         </div>
         <button class="btn small" id="btnCalLoadProfile" style="width:auto; margin:6px 0;">校正用プロファイルを読み込む</button>
+        <!-- 焼く前に決まっている豆の前提。較正で当てはめる定数と一緒に置く。
+             どちらも「この焙煎機とこの豆に合わせる」ための値で、普段は触らない。 -->
+        <div class="settings-note" style="margin-top:6px;">焼く前に分かっている豆の前提:</div>
+        <div class="settings-num-row"
+             title="生豆の含水率(5〜15%)。推定入熱・推定焙煎指数に効きます">
+          <label for="beanMoistureInput">生豆の含水率</label>
+          <span class="settings-num-field">
+            <input type="number" id="beanMoistureInput" min="5" max="15" step="0.5" value="10">
+            <span>%</span>
+          </span>
+        </div>
+        <!-- チャフ(薄皮)の量。焙煎前後の重量差は水分と揮発性ガスだけではなく、
+             乾いて剥がれる薄皮の分もある。豆の種類で変わり、50gに対して1g未満。
+             乾物の分解に混ぜていると、分解は温度依存なのにチャフはほぼ一定という
+             違いが吸収され、当てはめていない焙煎度の指数がずれる。 -->
+        <div class="settings-num-row"
+             title="焙煎中に剥がれる薄皮の量(豆50gあたり0〜2g)。推定焙煎指数に効きます">
+          <label for="chaffInput">チャフの量</label>
+          <span class="settings-num-field">
+            <input type="number" id="chaffInput" min="0" max="2" step="0.1" value="0.5">
+            <span>g</span>
+          </span>
+        </div>
+
         <div class="settings-num-row" title="1ハゼの音が聞こえ始めた時刻(2回目のハゼ音)。mm:ss または 秒で入れられます">
           <label for="calFcStart">1ハゼ開始</label>
           <span class="settings-num-field"><input type="text" id="calFcStart" placeholder="7:19"></span>
@@ -1124,14 +1128,14 @@
           <label for="calRoastedG">焙煎後の重さ</label>
           <span class="settings-num-field"><input type="number" id="calRoastedG" min="10" max="100" step="0.1" placeholder="39.6"><span>g</span></span>
         </div>
-        <div class="settings-num-row" title="途中で止めた時刻。mm:ss または 秒">
-          <label for="calAbortAt">途中で止めた時刻</label>
-          <span class="settings-num-field"><input type="text" id="calAbortAt" placeholder="6:00"></span>
+        <!-- 途中で止めて量った重量。1点だけだとそこに引っぱられて他の時刻の重量が
+             かえって外れるので、何点でも入れられるようにしてある(実際、3分の1点
+             だけで当てはめると乾燥の速さが6.1倍まで振れた)。 -->
+        <div class="settings-note" style="margin-top:8px;">
+          途中で止めて量った重量(何点でも。多いほど重量の変化に合います):
         </div>
-        <div class="settings-num-row" title="そのとき取り出した豆の重さ">
-          <label for="calAbortG">そのときの重さ</label>
-          <span class="settings-num-field"><input type="number" id="calAbortG" min="10" max="100" step="0.1" placeholder="46.6"><span>g</span></span>
-        </div>
+        <div id="calAbortRows"></div>
+        <button class="btn small" id="btnCalAbortAdd" style="width:auto; margin-top:4px;">＋ 行を追加</button>
         <div style="display:flex; gap:6px; margin-top:8px;">
           <button class="btn small" id="btnCalApply" style="width:auto;">この値で較正する</button>
           <button class="btn small" id="btnCalReset" style="width:auto;">既定値に戻す</button>
@@ -1286,7 +1290,10 @@
         <div class="metric-label">推定入熱</div>
         <div class="metric-value mono" id="ovEnergy">--</div>
       </div>
-      <div class="metric-card" title="生豆重量 ÷ 焙煎後重量 の推定値。浅1.140〜 / 中1.170〜 / 中深1.195〜 / 深1.220〜">
+      <!-- 焙煎指数(生豆÷焙煎後)と、その逆数(焙煎後÷生豆=歩留まり)を並べる。
+           指数は焙煎度の目安として、歩留まりは「50gが何gになるか」を掴むのに使う。
+           どちらも同じ数字の裏表なので、片方だけだと毎回頭の中で割ることになる。 -->
+      <div class="metric-card" title="生豆重量 ÷ 焙煎後重量 の推定値。浅1.106〜 / 中1.136〜 / 中深1.170〜 / 深1.199〜。括弧内はその逆数(歩留まり)">
         <div class="metric-label">推定焙煎指数</div>
         <div class="metric-value mono" id="ovRoastIndex">--</div>
         <div class="metric-sub mono" id="ovRoastIndexLevel"></div>
@@ -1448,9 +1455,12 @@
         <div class="metric-label">進行度(予定比)</div>
         <div class="metric-value mono" id="mProgress">--%</div>
       </div>
+      <!-- 値は1行に収め、但し書き(実測か見込みか・全体に対する割合)は2行目へ。
+           1行にまとめると150px幅のカードからはみ出して切れる(概要欄と同じ扱い)。 -->
       <div class="metric-card" id="mDTRCard">
         <div class="metric-label">Development Time</div>
-        <div class="metric-value mono" id="mDTR">未設定</div>
+        <div class="metric-value mono" id="mDTR">--</div>
+        <div class="metric-sub mono" id="mDTRSub">未設定</div>
       </div>
     </div>
 
@@ -1902,13 +1912,20 @@ const ENERGY = {
   ALTITUDE_FC_SLOPE: 0.0, ALTITUDE_FC_REF_M: 1750.0,
   ALTITUDE_BUCKET_M: {'1000m未満':750.0, '1000-1500m':1250.0,
                       '1500-2000m':1750.0, '2000m以上':2200.0},
-  FRAC_SURFACE: 0.25, FRAC_SEALED: 0.08,
+  // 2026-08: 実測(途中で止めて量った重量・カラーチェンジの時刻)に合わせて
+  // 配分を変えた。豆の水の大半は最後まで中に残る。roastlib/energy.py 参照。
+  FRAC_SURFACE: 0.10, FRAC_SEALED: 0.75,
   // チャフ(薄皮)は乾物の一部だが、熱で分解して飛ぶのではなく乾いて剥がれる。
   // 分解と混ぜていると、温度依存の分解とほぼ一定のチャフの違いが吸収されてしまう。
   CHAFF_G: 0.5,
-  K_SURFACE: 2.0e-3, K_INNER: 1.0e-3, CRACK_SPREAD: 1.8,
+  K_SURFACE: 8.0e-3, K_INNER: 6.0e-4, CRACK_SPREAD: 1.8,
+  // 密閉水が水蒸気として抜けていく温度の中心と幅。音として聞こえるハゼより
+  // ずっと広い温度域にわたる(energy.py の VENT_SHIFT / VENT_SPREAD と同じ)。
+  VENT_SHIFT: 6.0, VENT_SPREAD: 10.0,
   EA: 65000.0, K_PYRO: 3265.3, H_ENDO: 2095.0, R_GAS: 8.314,
-  DT: 1.0, SUBSTEPS: 4, KJ_PER_KCAL: 4.184,
+  // SUBSTEPSは8。1ハゼ付近の水の放出が急なため、4回だと潜熱の払いが
+  // 1ステップおきに振動する(roastlib/energy.py の説明を参照)。
+  DT: 1.0, SUBSTEPS: 8, KJ_PER_KCAL: 4.184,
 };
 
 function energyInterp(points, t){
@@ -1958,8 +1975,10 @@ function energyBurstFraction(tB, E){
   return 1.0 / (1.0 + Math.exp(-Math.max(Math.min(x, 60.0), -60.0)));
 }
 
-const ROAST_INDEX_BANDS = [['浅煎り',1.140,1.170],['中煎り',1.170,1.195],
-                           ['中深煎り',1.195,1.220],['深煎り',1.220,Infinity]];
+// 使う人の基準(浅=1ハゼ開始〜終了+少し / 中深=2ハゼが始まる頃まで /
+// 深=2ハゼ以降)を豆温度に読み替えて出した帯。energy.py と必ず揃えること。
+const ROAST_INDEX_BANDS = [['浅煎り',1.106,1.136],['中煎り',1.136,1.170],
+                           ['中深煎り',1.170,1.199],['深煎り',1.199,Infinity]];
 function roastIndexLevel(index){
   for(const [name, lo, hi] of ROAST_INDEX_BANDS){ if(index >= lo && index < hi) return name; }
   return index < ROAST_INDEX_BANDS[0][1] ? ROAST_INDEX_BANDS[0][0]
@@ -2021,7 +2040,11 @@ function estimateRoastEnergy(roastPoints, fanPoints){
         const broken = energyBurstFraction(tB, E);
         if(crackStart === null && broken >= 0.05) crackStart = tk;
         if(crackEnd === null && broken >= 0.95) crackEnd = tk;
-        const target = wSealed0 * (1.0 - broken);
+        // 水が抜けるのは音のハゼより広い温度域にわたる(energy.py と同じ)。
+        // 音(broken)は1ハゼの開始・終了の時刻に使い、放出は別の分布で決める。
+        const xVent = (tB - (E.T_FC_BEAN + E.VENT_SHIFT)) / E.VENT_SPREAD;
+        const vented = 1.0 / (1.0 + Math.exp(-Math.max(Math.min(xVent, 60.0), -60.0)));
+        const target = wSealed0 * (1.0 - vented);
         if(wSealed > target) rSealed = Math.min((wSealed - target) / h, wSealed / h);
       }
       const qLat = (rSurface + rInner + rSealed) * lat;
@@ -5796,15 +5819,15 @@ async function loadCalibration(){
     if(!res.ok) return;
     calibrationData = await res.json();
     applyCalibrationToEnergy(calibrationData.overrides);
-    for(const [id, key] of [['calFcStart','fcStart'],['calFcEnd','fcEnd'],['calScStart','scStart'],
-                            ['calAbortAt','abortAt']]){
+    for(const [id, key] of [['calFcStart','fcStart'],['calFcEnd','fcEnd'],['calScStart','scStart']]){
       const v = (calibrationData.measurements || {})[key];
       if(v) document.getElementById(id).value = fmtMMSS(v);
     }
-    for(const [id, key] of [['calGreenG','greenG'],['calRoastedG','roastedG'],['calAbortG','abortG']]){
+    for(const [id, key] of [['calGreenG','greenG'],['calRoastedG','roastedG']]){
       const v = (calibrationData.measurements || {})[key];
       if(v) document.getElementById(id).value = v;
     }
+    renderCalAbortRows(calibrationData.measurements || {});
     renderCalibrationResult(calibrationData);
     updateStaticMetrics();
   } catch(e){ /* 読めなくても既定値のまま使える */ }
@@ -5859,15 +5882,63 @@ document.getElementById('btnCalLoadProfile').onclick = async () => {
   } catch(e){ log('校正用プロファイルを読み込めませんでした。'); }
 };
 
+// 途中で止めて量った重量の入力行。1点だけだと当てはめがその点に引っぱられるので、
+// 何点でも入れられるようにしてある。空欄の行は送信時に捨てる。
+function calAbortRowHtml(t, g){
+  return `<div class="settings-num-row cal-abort-row">
+    <span class="settings-num-field"><input type="text" class="cal-abort-t" placeholder="3:00" value="${t}"></span>
+    <span class="settings-num-field"><input type="number" class="cal-abort-g" min="10" max="100" step="0.1" placeholder="49.2" value="${g}"><span>g</span></span>
+    <button class="icon-btn cal-abort-del" title="この行を消す">✕</button>
+  </div>`;
+}
+
+function renderCalAbortRows(measurements){
+  const wrap = document.getElementById('calAbortRows');
+  if(!wrap) return;
+  const rows = [];
+  for(const a of (measurements.aborts || [])) rows.push([fmtMMSS(a.t), a.g]);
+  // 古い形(1組だけ)で保存されている場合も読めるようにしておく
+  if(!rows.length && measurements.abortAt && measurements.abortG){
+    rows.push([fmtMMSS(measurements.abortAt), measurements.abortG]);
+  }
+  if(!rows.length) rows.push(['', '']);
+  wrap.innerHTML = rows.map(([t, g]) => calAbortRowHtml(t, g)).join('');
+  wrap.querySelectorAll('.cal-abort-del').forEach(b => {
+    b.onclick = () => {
+      b.closest('.cal-abort-row').remove();
+      if(!wrap.querySelector('.cal-abort-row')) wrap.innerHTML = calAbortRowHtml('', '');
+    };
+  });
+}
+
+function collectCalAbortRows(){
+  const out = [];
+  document.querySelectorAll('#calAbortRows .cal-abort-row').forEach(row => {
+    const t = parseCalTime(row.querySelector('.cal-abort-t').value);
+    const g = Number(row.querySelector('.cal-abort-g').value);
+    if(t && g > 0) out.push({t, g});
+  });
+  return out;
+}
+
+document.getElementById('btnCalAbortAdd').onclick = () => {
+  document.getElementById('calAbortRows').insertAdjacentHTML('beforeend', calAbortRowHtml('', ''));
+  const wrap = document.getElementById('calAbortRows');
+  const last = wrap.lastElementChild;
+  last.querySelector('.cal-abort-del').onclick = () => {
+    last.remove();
+    if(!wrap.querySelector('.cal-abort-row')) wrap.innerHTML = calAbortRowHtml('', '');
+  };
+};
+
 document.getElementById('btnCalApply').onclick = async () => {
   const body = {
     fcStart: parseCalTime(document.getElementById('calFcStart').value),
     fcEnd: parseCalTime(document.getElementById('calFcEnd').value),
     scStart: parseCalTime(document.getElementById('calScStart').value),
-    abortAt: parseCalTime(document.getElementById('calAbortAt').value),
     greenG: Number(document.getElementById('calGreenG').value) || null,
     roastedG: Number(document.getElementById('calRoastedG').value) || null,
-    abortG: Number(document.getElementById('calAbortG').value) || null,
+    aborts: collectCalAbortRows(),
   };
   const btn = document.getElementById('btnCalApply');
   btn.disabled = true; btn.textContent = '計算中…';
@@ -5890,9 +5961,10 @@ document.getElementById('btnCalApply').onclick = async () => {
 document.getElementById('btnCalReset').onclick = async () => {
   try {
     await fetch(`${API}/api/calibration`, {method: 'DELETE'});
-    for(const id of ['calFcStart','calFcEnd','calScStart','calAbortAt','calGreenG','calRoastedG','calAbortG']){
+    for(const id of ['calFcStart','calFcEnd','calScStart','calGreenG','calRoastedG']){
       document.getElementById(id).value = '';
     }
+    renderCalAbortRows({});
     await loadCalibration();
     refreshEstimateDatasets();
     if(chart) chart.update('none');
@@ -6203,14 +6275,27 @@ const cooldownLinesPlugin = {
     const endX = cooldownPoint[0];
     const ctx = c.ctx;
     ctx.save();
+    // 冷却開始と冷却完了目安は数十秒しか離れていないことが多く、同じ高さに
+    // 並べると文字が重なる。また、どちらもグラフの右端近くに来るため、線の右に
+    // 置くと枠からはみ出して切れる。置けるかを見てから、はみ出す側は線の左に、
+    // 重なる分は一段下げて描く。
+    const placed = [];   // 既に描いたラベルの範囲 {x0,x1,y}
+    ctx.font = '10px Inter, sans-serif';
     for(const [xVal, label, color] of [[startX,'冷却開始',cssVar('--line-cooldown')], [endX,'冷却完了目安',cssVar('--line-compare')]]){
       const px = xScale.getPixelForValue(xVal);
       if(px < area.left || px > area.right) continue;
       ctx.strokeStyle = color; ctx.setLineDash([3,3]); ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(px, area.top); ctx.lineTo(px, area.bottom); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = color; ctx.font = '10px Inter, sans-serif';
-      ctx.fillText(label, px + 4, area.top + 12);
+      const w = ctx.measureText(label).width;
+      // 右にはみ出すなら線の左側に出す。それでも左端を割るなら枠内に寄せる。
+      let x0 = (px + 4 + w > area.right) ? px - 4 - w : px + 4;
+      x0 = Math.min(Math.max(x0, area.left + 2), area.right - w - 2);
+      let y = area.top + 12;
+      while(placed.some(q => q.y === y && x0 < q.x1 && x0 + w > q.x0)) y += 12;
+      placed.push({x0, x1: x0 + w, y});
+      ctx.fillStyle = color;
+      ctx.fillText(label, x0, y);
     }
     ctx.restore();
   }
@@ -7270,8 +7355,13 @@ function updateProfileOverview(){
     document.getElementById('ovEndBeanTemp').textContent = '豆 --';
   }
   // 値は1行に収める。焙煎度は2行目へ回す(括弧付きだと折り返してカードが伸びる)
-  document.getElementById('ovRoastIndex').textContent = est ? est.roastIndex.toFixed(3) : '--';
-  document.getElementById('ovRoastIndexLevel').textContent = est ? est.roastIndexLevel : '';
+  // 指数と、その逆数(歩留まり)を横に並べる。逆数は「生豆50gが何gになるか」に
+  // 直結するので、同じ数字の裏表として一目で見えるようにする。
+  document.getElementById('ovRoastIndex').innerHTML = est
+    ? `${est.roastIndex.toFixed(3)}<span class="metric-aside">${(100 / est.roastIndex).toFixed(1)}%</span>`
+    : '--';
+  document.getElementById('ovRoastIndexLevel').textContent = est
+    ? `${est.roastIndexLevel} ・ ${ENERGY.BEAN_G}g→${(ENERGY.BEAN_G / est.roastIndex).toFixed(1)}g` : '';
   updateFcConsistencyNote();
   // 「1ハゼ確認」ボタンで実測の1ハゼが記録されている場合は、計画上の推定ではなく
   // 実測値(押した時点 → 焙煎終了=加熱終了・冷却開始)を表示する。実測欄(mDTR)と
@@ -7304,14 +7394,22 @@ function updateStaticMetrics(){
   if(editedRoast.length < 2) return;
   const dt = computeStaticDevTime();
   if(!dt){
-    document.getElementById('mDTR').textContent = '未設定 (Shift+クリックで指定)';
+    setDevTimeCard('--', 'Shift+クリックで1ハゼを指定');
     return;
   }
   if(dt.belowFirstCrack){
-    document.getElementById('mDTR').textContent = '1ハゼ温度未満';
+    setDevTimeCard('--', '1ハゼ温度に届きません');
     return;
   }
-  document.getElementById('mDTR').textContent = `${fmtMMSS(dt.devTime)} (計画上の推定, ${dt.pct.toFixed(1)}%)`;
+  setDevTimeCard(fmtMMSS(dt.devTime), `${dt.pct.toFixed(1)}% ・見込み`);
+}
+
+// Development Timeのカード。値だけを大きく出し、但し書きは2行目に回す。
+// 1行にまとめると、カード幅(150px)からはみ出して文字が切れる。
+function setDevTimeCard(value, sub){
+  document.getElementById('mDTR').textContent = value;
+  const el = document.getElementById('mDTRSub');
+  if(el) el.textContent = sub || '';
 }
 
 function updateActualDTR(t){
@@ -7321,8 +7419,8 @@ function updateActualDTR(t){
   const effectiveT = (roastDoneAtTime !== null) ? Math.min(t, roastDoneAtTime) : t;
   const devTime = effectiveT - actualFcTime;
   const pct = effectiveT > 0 ? (devTime / effectiveT * 100) : 0;
-  const label = fcTimeIsInferred ? '実測・1ハゼ推定' : '実測';
-  document.getElementById('mDTR').textContent = `${fmtMMSS(devTime)} (${label}, ${pct.toFixed(1)}%)`;
+  const label = fcTimeIsInferred ? '1ハゼ推定' : '実測';
+  setDevTimeCard(fmtMMSS(devTime), `${pct.toFixed(1)}% ・${label}`);
 }
 
 // ハゼ記録の反映処理を切り出しておき、自分でタップした時(recordFirstCrack)と
