@@ -271,9 +271,14 @@ def learn_from_logs(records, moisture=E.MOISTURE, cal=None, altitude_of=None):
     records: 焙煎記録の一覧(roast_curve / fan_curve / fc_time / fc_time_inferred /
              sc_time を持つ辞書)
     altitude_of: 記録→標高帯 を返す関数(標高補正を効かせる場合)
-    戻り値: {"fc": {...}, "sc": {...}, "skipped": {理由: 件数}}
+    戻り値: {"fc": {...}, "sc": {...}, "altitude": {...}, "skipped": {理由: 件数}}
+
+    altitude は、標高の分かる記録から求めた傾き(℃/1000m)。標高帯が2つ以上に
+    またがり、かつ4件以上ないと出さない(1つの帯に固まっていると、傾きなのか
+    基準値のずれなのか区別が付かないため)。
     """
     fc_temps, sc_temps = [], []
+    by_alt = []          # (標高の代表値m, 1ハゼの豆温度) 標高が分かっている記録だけ
     skipped = {"カーブなし": 0, "1ハゼ未記録": 0, "推定値のみ": 0, "時刻が範囲外": 0}
     for rec in records or []:
         curve = rec.get("roast_curve") or []
@@ -302,7 +307,12 @@ def learn_from_logs(records, moisture=E.MOISTURE, cal=None, altitude_of=None):
         if not (0 < fc_t <= t_end):
             skipped["時刻が範囲外"] += 1
             continue
-        fc_temps.append(s[min(int(fc_t), len(s) - 1)]["bean"])
+        fc_bean = s[min(int(fc_t), len(s) - 1)]["bean"]
+        fc_temps.append(fc_bean)
+        if altitude_of is not None:
+            m = E.ALTITUDE_BUCKET_M.get((altitude_of(rec) or "").strip())
+            if m is not None:
+                by_alt.append((m, fc_bean))
         sc_t = rec.get("sc_time")
         if sc_t is not None and fc_t < sc_t <= t_end:
             sc_temps.append(s[min(int(sc_t), len(s) - 1)]["bean"])
@@ -315,7 +325,24 @@ def learn_from_logs(records, moisture=E.MOISTURE, cal=None, altitude_of=None):
                 "sd": round(st.pstdev(vals), 1) if len(vals) > 1 else 0.0,
                 "min": round(min(vals), 1), "max": round(max(vals), 1)}
 
-    return {"fc": stat(fc_temps), "sc": stat(sc_temps), "skipped": skipped}
+    # 標高の傾き(℃/1000m)。標高の分かる記録が2つ以上の帯にまたがって初めて出せる。
+    # 1つの帯に固まっていると、傾きなのか基準値のずれなのか区別が付かない。
+    alt = {"n": len(by_alt), "buckets": len({m for m, _ in by_alt}), "slope": None}
+    if alt["buckets"] >= 2 and len(by_alt) >= 4:
+        n = len(by_alt)
+        mx = sum(m for m, _ in by_alt) / n
+        my = sum(t for _, t in by_alt) / n
+        den = sum((m - mx) ** 2 for m, _ in by_alt)
+        if den > 0:
+            # 最小二乗の傾き(℃/m)を ℃/1000m に直す
+            per_m = sum((m - mx) * (t - my) for m, t in by_alt) / den
+            alt["slope"] = round(max(min(per_m * 1000.0, 10.0), -10.0), 2)
+            # 基準標高(ALTITUDE_FC_REF_M)での値。傾きを使うときの基準値になる。
+            # 中央値をそのまま基準値にすると、記録の標高の偏りが基準値に入ったうえ
+            # さらに傾きで足し引きされ、二重に効いてしまう。
+            alt["base"] = round(my + per_m * (E.ALTITUDE_FC_REF_M - mx), 1)
+    return {"fc": stat(fc_temps), "sc": stat(sc_temps),
+            "altitude": alt, "skipped": skipped}
 
 
 def _mass_at(result: dict, t: float, green_g: float) -> float:

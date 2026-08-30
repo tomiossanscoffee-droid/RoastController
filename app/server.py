@@ -542,12 +542,6 @@ async def set_guide_temps(request: Request):
 # 揮発性ガスでもない分。豆の種類で変わり、実測では1g未満。乾物の分解に混ぜていると、
 # 分解は温度依存なのにチャフはほぼ一定という違いが吸収されてしまい、当てはめていない
 # 焙煎度の指数がずれる。
-# altitudeFcSlope: 産地の標高による1ハゼ豆温度の補正(-10〜10℃/1000m、既定0)。
-# 標高が高い産地の豆は密度が高く細胞壁も丈夫で、爆ぜる温度も高くなる(使う人の経験則)。
-# 豆情報の標高帯から自動で足し引きする。当てはめる根拠になる実測が無いので既定は0
-# (=補正なし)にしてあり、使う人が自分の実測から決める。豆情報に標高が入っていない
-# профиль・後から入力する場合も想定して、未入力のうちは補正しない。
-# 変えると推定豆温度そのものは動かず、「いつ1ハゼが来るか」の予想が動く。
 # theme: 画面の配色。dark(既定・暖色の暗い配色) / light(明るい部屋向け) /
 # contrast(焙煎中に離れた場所から読むための高コントラスト)。
 # 実体はCSS変数で、app/static/index.html の :root と [data-theme=...] にある。
@@ -559,14 +553,11 @@ DEFAULT_APP_SETTINGS = {
     "showPresetTab": True,
     "showIkawaTab": True,
     "beanMoisturePct": 10.0,
-    "altitudeFcSlope": 0.0,
     "chaffG": 0.5,
     "theme": "dark",
 }
 APP_THEMES = ("dark", "light", "contrast")
 BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX = 5.0, 15.0
-# 標高による1ハゼ豆温度の補正(℃/1000m)。既定0=補正なし。
-ALTITUDE_SLOPE_MIN, ALTITUDE_SLOPE_MAX = -10.0, 10.0
 # チャフ(薄皮)の量。豆50gに対して1g未満で、豆の種類によって変わる(使う人の実測)。
 # 焙煎前後の重量差のうち、水分でも揮発性ガスでもない分。
 CHAFF_MIN, CHAFF_MAX = 0.0, 2.0
@@ -641,13 +632,17 @@ _CAL_VALUE_RANGE = {
 
 
 def _altitude_fc_slope() -> float:
-    v = _load_app_settings().get("altitudeFcSlope",
-                                 DEFAULT_APP_SETTINGS["altitudeFcSlope"])
+    """標高による1ハゼ豆温度の補正(℃/1000m)。
+
+    設定項目にはしていない。焙煎ログから学んだ値があればそれを使い、無ければ0
+    (=補正しない)。手で決めるだけの根拠が無いので、実測から決まるまでは効かせない。
+    """
+    v = (_load_calibration().get("learned") or {}).get("altitudeSlope")
     try:
         v = float(v)
     except (TypeError, ValueError):
-        v = DEFAULT_APP_SETTINGS["altitudeFcSlope"]
-    return min(max(v, ALTITUDE_SLOPE_MIN), ALTITUDE_SLOPE_MAX)
+        return 0.0
+    return v if -10.0 <= v <= 10.0 else 0.0
 
 
 def _learned_fc_bean_temp() -> float:
@@ -719,16 +714,17 @@ def _calibration_overrides() -> dict:
 EMPTY_ESTIMATE = {"end_bean_temp": None, "roast_index": None, "roast_index_level": ""}
 
 
-def _profile_estimate(roast, fan, moisture: float, altitude_bucket: str = "") -> dict:
+def _profile_estimate(roast, fan, moisture: float) -> dict:
     """一覧に出す推定値。計算できなければ値がNoneの辞書を返す。
 
-    altitude_bucket は豆情報の標高帯。1ハゼの豆温度に補正が掛かるので、
-    キャッシュのキーにも入れる(豆情報を後から入力したら値が変わるため)。
+    標高の補正は掛けない。プロファイルを選んだ時点では「どの豆を焼くか」が
+    決まっていないため(産地の合わないカーブで焼くこともある)。標高が効くのは、
+    実際に焼いた豆が分かっている焙煎ログの側だけ。
     """
     if not roast or len(roast) < 2:
         return EMPTY_ESTIMATE
     cal = dict(_calibration_overrides())
-    cal["T_FC_BEAN"] = _fc_bean_temp_for(altitude_bucket)
+    cal["T_FC_BEAN"] = _learned_fc_bean_temp()
     key = (tuple(tuple(p) for p in roast),
            tuple(tuple(p) for p in fan) if fan else None,
            round(moisture, 4),
@@ -760,8 +756,7 @@ def _warm_profile_estimate_cache() -> None:
         db = get_db()
         for _, row in db.profile.iterrows():
             profile = ModelFactory.from_series(row)
-            _profile_estimate(profile.roast.points, profile.fan.points, moisture,
-                              _preset_beaninfo_fields(row["name"])["altitude_bucket"])
+            _profile_estimate(profile.roast.points, profile.fan.points, moisture)
     except Exception:  # noqa: BLE001
         # 一覧側で必要になった時に計算し直せるので、失敗しても起動は妨げない
         pass
@@ -783,7 +778,6 @@ def get_calibration_profile():
     return JSONResponse({
         "id": "calibration",
         "name": prof["name"],
-        "altitude_bucket": "",
         "country": "", "bean": "", "roast_level": "", "uuid": "",
         "roast": prof["roast"], "fan": prof["fan"], "cooldown": prof["cooldown"],
         # 実機で送信確認していない構成なので、確認済みの印は付けない。
@@ -807,6 +801,7 @@ def calibration_from_logs():
     res["applied"] = (_load_calibration().get("learned") or {})
     res["current"] = {"fcBeanTemp": _learned_fc_bean_temp(),
                       "scBeanTemp": _learned_sc_bean_temp(),
+                      "altitudeSlope": _altitude_fc_slope(),
                       "modelDefaultFc": energy_module.T_FC_BEAN,
                       "modelDefaultSc": beancal.T_SC_BEAN}
     return JSONResponse(res)
@@ -822,10 +817,17 @@ async def apply_calibration_from_logs(request: Request):
         cal=_calibration_overrides(),
         altitude_of=lambda r: _record_altitude_bucket(r))
     learned = {}
+    alt = res["altitude"]
+    use_alt = bool(body.get("useAltitude", True)) and alt.get("base") is not None
     if body.get("useFc", True) and res["fc"]["n"] > 0:
-        learned["fcBeanTemp"] = res["fc"]["median"]
+        # 標高の傾きが出たときは、基準標高での値を基準値にする(中央値のままだと
+        # 記録の標高の偏りが基準値に混ざり、そこへさらに傾きが足されて二重になる)。
+        learned["fcBeanTemp"] = alt["base"] if use_alt else res["fc"]["median"]
         learned["fcN"] = res["fc"]["n"]
         learned["fcSd"] = res["fc"]["sd"]
+        if use_alt:
+            learned["altitudeSlope"] = alt["slope"]
+            learned["altitudeN"] = alt["n"]
     if body.get("useSc", True) and res["sc"]["n"] > 0:
         learned["scBeanTemp"] = res["sc"]["median"]
         learned["scN"] = res["sc"]["n"]
@@ -958,14 +960,10 @@ async def set_app_settings(request: Request):
     if "chaffG" in body:
         data["chaffG"] = _clamp_setting(
             body["chaffG"], CHAFF_MIN, CHAFF_MAX, DEFAULT_APP_SETTINGS["chaffG"])
-    if "altitudeFcSlope" in body:
-        data["altitudeFcSlope"] = _clamp_setting(
-            body["altitudeFcSlope"], ALTITUDE_SLOPE_MIN, ALTITUDE_SLOPE_MAX,
-            DEFAULT_APP_SETTINGS["altitudeFcSlope"])
     APP_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     # 含水率・1ハゼ豆温度が変わると推定値も変わる。一覧の並び替えで待たされないよう、
     # 新しい前提ぶんを裏で計算し直しておく。
-    if {"beanMoisturePct", "altitudeFcSlope", "chaffG"} & set(body):
+    if {"beanMoisturePct", "chaffG"} & set(body):
         with _PROFILE_ESTIMATE_LOCK:
             _PROFILE_ESTIMATE_CACHE.clear()
         _warm_profile_estimate_cache_async()
@@ -1239,8 +1237,7 @@ def list_custom_profiles(
         roast = p.get("roast") or []
         duration = roast[-1][0] if roast else None
         max_temp = max((pt[1] for pt in roast), default=None)
-        est = _profile_estimate(roast, p.get("fan"), moisture,
-                                beaninfo["altitude"])
+        est = _profile_estimate(roast, p.get("fan"), moisture)
         results.append({
             "id": pid, "name": p["name"],
             "country": beaninfo["country"], "bean": beaninfo["bean"],
@@ -1272,9 +1269,6 @@ def get_custom_profile(pid: str):
     # 通用する保証がないため)
     result = dict(p)
     result["verified"] = False
-    # プリセットと同じ名前で標高を渡す(画面側は1つの項目だけ見ればよくなる)。
-    # 保存プロファイルの豆情報は標高帯の文字列をそのまま持っている。
-    result["altitude_bucket"] = _custom_beaninfo(p)["altitude"]
     return JSONResponse(result)
 
 
@@ -1905,8 +1899,7 @@ def list_profiles(
         roast_pts = profile.roast.points
         duration = roast_pts[-1][0] if roast_pts else None
         max_temp = max((pt[1] for pt in roast_pts), default=None)
-        est = _profile_estimate(roast_pts, profile.fan.points, moisture,
-                                bean_info["altitude_bucket"])
+        est = _profile_estimate(roast_pts, profile.fan.points, moisture)
         results.append({
             "id": pid,
             "name": row["name"],
@@ -1959,8 +1952,6 @@ def get_profile(profile_id: int):
         "country": parsed.get("country", ""),
         "bean": bean_info["bean"],
         "roast_level": get_roast_levels().get(profile.id, ""),
-        # 1ハゼ豆温度の標高補正に使う(画面側で推定に反映する)
-        "altitude_bucket": bean_info["altitude_bucket"],
         "uuid": uuid_ascii,
         "roast": profile.roast.points,
         "fan": profile.fan.points,
@@ -2751,27 +2742,26 @@ def _roast_record_summary(rid: str, r: dict, beans: dict) -> dict:
     }
 
 
-def _record_altitude_bucket(rec: dict) -> str:
-    """その焙煎記録の豆の標高帯。分からなければ空文字。
+def _record_altitude_bucket(rec: dict, beans: Optional[dict] = None) -> str:
+    """その焙煎で「実際に焼いた豆」の標高帯。分からなければ空文字。
 
-    記録は「どのプロファイルで焼いたか」だけを持っているので、標高はそのプロファイル
-    の豆情報から都度引く。あとで豆情報に標高を入れた場合も、次に読んだときには
-    反映される(記録側に焼き込まない)。
+    ■ プロファイル側の標高は使わない
+    産地の標高が合わないプロファイルで焼くことがある(浅煎り用のカーブを別の産地の
+    豆に使う等)。豆温度を左右するのは焙煎機に入っている豆であって、カーブを作った
+    ときの豆ではない。そこで参照するのは購入豆(豆情報)の標高だけにする。
+    プリセットの標高は、モデルを検討したときの評価に使っただけで、計算には入れない。
+
+    ■ あとから入力・修正した場合
+    記録側に焼き込まず、そのつど購入豆から引く。だから豆情報に標高を後から入れても、
+    次に読んだときには効く。
     """
-    src, pid = rec.get("profile_source"), rec.get("profile_id")
-    try:
-        if src == "preset" and pid is not None:
-            db = get_db()
-            row = db.get_profile(int(pid))
-            if row is not None:
-                return _preset_beaninfo_fields(ModelFactory.from_series(row).name)["altitude_bucket"]
-        if src == "custom" and pid is not None:
-            p = _load_custom().get(str(pid))
-            if p:
-                return _custom_beaninfo(p)["altitude"]
-    except Exception:  # noqa: BLE001
+    bpid = rec.get("bean_purchase_id")
+    if not bpid:
         return ""
-    return ""
+    b = (beans if beans is not None else _load_bean_purchases()).get(bpid)
+    if not b:
+        return ""
+    return str(b.get("altitude") or "").strip()
 
 
 @app.get("/api/roast_records")
@@ -2892,6 +2882,9 @@ async def create_roast_record(request: Request):
         # fc_timeが「ハゼた!」ボタンの実測ではなく、1ハゼ設定温度への到達から
         # 推定した値かどうか(2026-07)。焙煎記録の表示側で「推定」の注記に使う。
         "fc_time_inferred": bool(body.get("fc_time_inferred")),
+        # 「2ハゼ確認」を押した時刻。豆温度モデルを実測で直すのに使う
+        # (較正が置いている「2ハゼは豆225℃」という仮定を置き換えられる)。
+        "sc_time": body.get("sc_time"),
         # 焙煎中に容器エラー等が発生していた区間(焙煎開始からの経過秒)。
         # [{"start":.., "end":..}, ...]。グラフでの色分け再現用。
         "error_spans": body.get("error_spans") or [],
@@ -2924,7 +2917,7 @@ async def update_roast_record(rid: str, request: Request):
     for field in (
         "bean_purchase_id", "cup_comment", "rating", "roasted_at",
         "profile_source", "profile_id", "profile_name",
-        "fc_time", "fc_time_inferred", "dev_time",
+        "fc_time", "fc_time_inferred", "dev_time", "sc_time",
     ):
         if field in body:
             existing[field] = body[field]

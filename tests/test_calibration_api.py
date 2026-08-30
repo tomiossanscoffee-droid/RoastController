@@ -136,19 +136,25 @@ def test_知らない定数名は無視する(srv, tmp_path):
     assert fitted_only(srv) == {"U0": 0.004}
 
 
-def test_標高の補正が推定に効く(srv):
-    """標高帯に応じて1ハゼ豆温度が変わり、1ハゼの時刻が動くこと。"""
+def test_標高の補正は焙煎ログから学ぶまで効かない(srv):
+    """設定項目にはしていない。実測が集まるまでは、どの標高でも基準値のまま。"""
     import roastlib.energy as E
-    # 既定は傾き0 = どの標高でも基準値のまま
-    assert srv._fc_bean_temp_for("2000m以上") == E.T_FC_BEAN
-    assert srv._fc_bean_temp_for("1000m未満") == E.T_FC_BEAN
+    assert srv._altitude_fc_slope() == 0.0
+    for b in ("2000m以上", "1000m未満", "", "指定なし"):
+        assert srv._fc_bean_temp_for(b) == E.T_FC_BEAN, b
 
-    asyncio.run(srv.set_app_settings(FakeRequest({"altitudeFcSlope": 4.0})))
-    assert srv._fc_bean_temp_for("1500-2000m") == E.T_FC_BEAN      # 基準の帯は動かない
-    assert srv._fc_bean_temp_for("1000m未満") < E.T_FC_BEAN         # 低地は低い
-    assert srv._fc_bean_temp_for("2000m以上") > E.T_FC_BEAN         # 高地は高い
-    assert srv._fc_bean_temp_for("") == E.T_FC_BEAN                # 未入力は補正しない
-    assert srv._fc_bean_temp_for("指定なし") == E.T_FC_BEAN
+
+def test_学んだ傾きが1ハゼ豆温度に効く(srv, tmp_path):
+    """焙煎ログから学んだ値だけがモデルに入ること。"""
+    import roastlib.energy as E
+    (tmp_path / "CALIBRATION.json").write_text(
+        json.dumps({"learned": {"fcBeanTemp": 199.0, "altitudeSlope": 4.0}}),
+        encoding="utf-8")
+    assert srv._altitude_fc_slope() == 4.0
+    assert srv._fc_bean_temp_for("1500-2000m") == 199.0     # 基準の帯は動かない
+    assert srv._fc_bean_temp_for("1000m未満") < 199.0        # 低地は低い
+    assert srv._fc_bean_temp_for("2000m以上") > 199.0        # 高地は高い
+    assert srv._fc_bean_temp_for("") == 199.0               # 未入力は補正しない
 
     prof = srv.beancal.CALIBRATION_PROFILE
     low = E.estimate(prof["roast"], prof["fan"],
@@ -161,17 +167,43 @@ def test_標高の補正が推定に効く(srv):
     assert high["series"][100]["bean"] == low["series"][100]["bean"]
 
 
-def test_標高が後から入っても推定に反映される(srv):
-    """豆情報に標高を後で入力する使い方があるので、キャッシュが残らないこと。"""
-    asyncio.run(srv.set_app_settings(FakeRequest({"altitudeFcSlope": 6.0})))
+def test_おかしな傾きは採らない(srv, tmp_path):
+    """手で編集された場合に、変な値をモデルへ流し込まない。"""
+    for v in (-99, 99, "abc", None):
+        (tmp_path / "CALIBRATION.json").write_text(
+            json.dumps({"learned": {"altitudeSlope": v}}), encoding="utf-8")
+        assert srv._altitude_fc_slope() == 0.0, v
+
+
+def test_プロファイルの推定に標高は効かない(srv, tmp_path):
+    """どの豆を焼くかは焙煎するまで決まらないので、プロファイル側では補正しない。"""
+    (tmp_path / "CALIBRATION.json").write_text(
+        json.dumps({"learned": {"fcBeanTemp": 199.0, "altitudeSlope": 6.0}}),
+        encoding="utf-8")
+    import inspect
+    # そもそも標高を受け取らない(渡す口が無い)
+    assert "altitude" not in inspect.signature(srv._profile_estimate).parameters
+
     prof = srv.beancal.CALIBRATION_PROFILE
-    before = srv._profile_estimate(prof["roast"], prof["fan"], 0.10, "")
-    after = srv._profile_estimate(prof["roast"], prof["fan"], 0.10, "1000m未満")
-    # 標高を入れたら別の答えになる(キャッシュのキーに入っている)
-    assert after != before or after["end_bean_temp"] == before["end_bean_temp"]
-    # 標高を消せば元に戻る
-    again = srv._profile_estimate(prof["roast"], prof["fan"], 0.10, "")
-    assert again == before
+    est = srv._profile_estimate(prof["roast"], prof["fan"], 0.10)
+    # 学んだ基準値(標高補正なし)での結果と一致すること
+    import roastlib.energy as E
+    want = E.estimate(prof["roast"], prof["fan"], moisture=0.10,
+                      cal=dict(srv._calibration_overrides(), T_FC_BEAN=199.0))
+    assert est["end_bean_temp"] == round(want["end_bean_temp"], 1)
+    assert est["roast_index"] == round(want["roast_index"], 3)
+
+
+def test_焙煎ログの標高は豆情報から取る(srv):
+    """プロファイルの産地標高ではなく、実際に焼いた豆の標高を使う。
+
+    産地標高の合わないプロファイルで焼くことがあるため。
+    """
+    beans = {"b1": {"altitude": "2000m以上"}}
+    assert srv._record_altitude_bucket({"bean_purchase_id": "b1"}, beans) == "2000m以上"
+    # 豆を紐づけていない記録・標高未入力の豆は、補正しない
+    assert srv._record_altitude_bucket({}, beans) == ""
+    assert srv._record_altitude_bucket({"bean_purchase_id": "b1"}, {"b1": {}}) == ""
 
 
 def test_豆情報を保存すると推定のキャッシュを捨てる(srv):
@@ -201,9 +233,3 @@ def test_チャフ量は範囲に収める(srv):
     for sent, want in ((-5, 0.0), (99, 2.0), (0.7, 0.7), ("abc", 0.5)):
         asyncio.run(srv.set_app_settings(FakeRequest({"chaffG": sent})))
         assert srv._chaff_g() == want, f"{sent} → {want}"
-
-
-def test_標高の補正は範囲に収める(srv):
-    for sent, want in ((-99, -10.0), (99, 10.0), (3.5, 3.5), ("abc", 0.0), (0, 0.0)):
-        asyncio.run(srv.set_app_settings(FakeRequest({"altitudeFcSlope": sent})))
-        assert srv._altitude_fc_slope() == want, f"{sent} → {want}"

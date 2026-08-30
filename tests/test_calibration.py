@@ -259,3 +259,73 @@ def test_記録が無ければ空で返る():
     res = C.learn_from_logs([])
     assert res["fc"]["n"] == 0 and res["fc"]["median"] is None
     assert res["sc"]["n"] == 0
+    assert res["altitude"]["n"] == 0 and res["altitude"]["slope"] is None
+
+
+# ---- 標高による差を学ぶ ----
+# 標高は「焙煎した豆」の性質なので、豆情報(購入した豆)の標高だけを見る。
+# プロファイル側の標高は使わない(産地の合わないカーブで焼くことがある)。
+
+def _alt_record(fc_t, bucket):
+    r = _fake_record(fc_t)
+    r["_alt"] = bucket
+    return r
+
+
+def _learn_alt(records):
+    return C.learn_from_logs(records, altitude_of=lambda r: r.get("_alt", ""))
+
+
+def test_標高は豆情報から渡された分だけ数える():
+    res = _learn_alt([_alt_record(400.0, "1000m未満"), _alt_record(410.0, "")])
+    assert res["altitude"]["n"] == 1          # 標高未入力の豆は数に入らない
+    assert res["fc"]["n"] == 2                # 1ハゼの集計そのものには入る
+
+
+def test_同じ標高帯だけなら傾きは出さない():
+    """傾きなのか基準値のずれなのか区別が付かないため。"""
+    res = _learn_alt([_alt_record(t, "1500-2000m") for t in (380.0, 400.0, 420.0, 440.0)])
+    assert res["altitude"]["n"] == 4 and res["altitude"]["buckets"] == 1
+    assert res["altitude"]["slope"] is None
+
+
+def test_件数が足りなければ傾きは出さない():
+    res = _learn_alt([_alt_record(400.0, "1000m未満"), _alt_record(420.0, "2000m以上")])
+    assert res["altitude"]["buckets"] == 2 and res["altitude"]["slope"] is None
+
+
+def test_標高が違う記録がそろうと傾きが出る():
+    """高地の豆ほど高い温度で爆ぜていれば、正の傾きになる。"""
+    res = _learn_alt([
+        _alt_record(390.0, "1000m未満"), _alt_record(395.0, "1000m未満"),
+        _alt_record(430.0, "2000m以上"), _alt_record(435.0, "2000m以上"),
+    ])
+    a = res["altitude"]
+    assert a["buckets"] == 2 and a["n"] == 4
+    assert a["slope"] > 0
+    # 基準標高(1750m)での値は、低地と高地の実測の間に収まる
+    assert res["fc"]["min"] < a["base"] < res["fc"]["max"]
+
+
+def test_逆向きでも学べる():
+    res = _learn_alt([
+        _alt_record(430.0, "1000m未満"), _alt_record(435.0, "1000m未満"),
+        _alt_record(390.0, "2000m以上"), _alt_record(395.0, "2000m以上"),
+    ])
+    assert res["altitude"]["slope"] < 0
+
+
+def test_傾きは行き過ぎないよう頭を押さえる():
+    """記録が偏っていても、モデルが壊れる値までは動かさない。"""
+    res = _learn_alt([
+        _alt_record(300.0, "1000m未満"), _alt_record(300.0, "1000m未満"),
+        _alt_record(600.0, "1000-1500m"), _alt_record(600.0, "1000-1500m"),
+    ])
+    assert -10.0 <= res["altitude"]["slope"] <= 10.0
+
+
+def test_標高を渡さなければ学ばない():
+    """豆情報を繋いでいない使い方でも、今までどおり1ハゼだけ学べること。"""
+    res = C.learn_from_logs([_fake_record(t) for t in (390.0, 400.0, 410.0, 420.0)])
+    assert res["fc"]["n"] == 4
+    assert res["altitude"]["n"] == 0 and res["altitude"]["slope"] is None

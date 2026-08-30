@@ -982,6 +982,16 @@
           <input type="number" id="guideSecondCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
         </span>
       </div>
+      <!-- 連続焙煎モードで、排出完了(容器交換まで終わった状態)から次のプロファイルを
+           送るまでの待ち時間。豆の計量や容器の清掃にかかる時間に合わせて変えられる。 -->
+      <div class="settings-num-row"
+           title="連続焙煎モードで、排出完了から次のプロファイルを送るまでの待ち時間です(5〜600秒)。変更は次の焙煎から反映されます">
+        <label for="continuousDelayInput">連続焙煎の待ち時間</label>
+        <span class="settings-num-field">
+          <input type="number" id="continuousDelayInput" min="5" max="600" step="5" value="10">
+          <span>秒</span>
+        </span>
+      </div>
       <!-- 豆温度モデル(roastlib/energy.py)の前提。上の「温度ガイド線」とは別物で、
            こちらは豆側の温度・状態を決める。混同されやすいので見出しを分けてある
            (「1ハゼ 223℃」と「1ハゼの豆温度 196℃」が並ぶと、どちらが何の温度か
@@ -1012,31 +1022,10 @@
           <span>g</span>
         </span>
       </div>
-      <!-- 標高による1ハゼ豆温度の補正。豆情報の標高帯から自動で足し引きする。
-           当てはめる根拠になる実測が無いので既定は0(=補正なし)。 -->
-      <div class="settings-num-row"
-           title="産地の標高で1ハゼの豆温度を補正します(-10〜10℃/1000m)。豆情報の標高から自動で効きます。標高が未入力の豆は補正しません。0で補正なし">
-        <label for="altitudeSlopeInput">標高による補正</label>
-        <span class="settings-num-field">
-          <input type="number" id="altitudeSlopeInput" min="-10" max="10" step="0.5" value="0">
-          <span>℃/1000m</span>
-        </span>
-      </div>
-      <div class="settings-note" id="altitudeSlopeNote" style="margin:-2px 0 6px;"></div>
       <!-- 2つの設定は同じ現象を別の測り方で表している。モデルが両者を繋いでいるので、
            「この豆温度だと吸入温度は何度になる見込みか」を出して、ガイド線の設定と
            突き合わせられるようにする。強制はしない(片方を変えてももう片方は動かない)。 -->
       <div class="settings-note" id="fcConsistencyNote" style="margin:-2px 0 6px;"></div>
-      <!-- 連続焙煎モードで、排出完了(容器交換まで終わった状態)から次のプロファイルを
-           送るまでの待ち時間。豆の計量や容器の清掃にかかる時間に合わせて変えられる。 -->
-      <div class="settings-num-row"
-           title="連続焙煎モードで、排出完了から次のプロファイルを送るまでの待ち時間です(5〜600秒)。変更は次の焙煎から反映されます">
-        <label for="continuousDelayInput">連続焙煎の待ち時間</label>
-        <span class="settings-num-field">
-          <input type="number" id="continuousDelayInput" min="5" max="600" step="5" value="10">
-          <span>秒</span>
-        </span>
-      </div>
       <!-- 豆温度モデルの較正。専用プロファイルを1回焼いて、耳と秤で測れるものだけを
            入れてもらい、モデルの定数を実機に合わせ直す(roastlib/calibration.py)。
            普段は畳んでおく。使うのは焙煎するたびではなく、豆や環境が変わったときだけ。 -->
@@ -1086,8 +1075,9 @@
         <!-- 焙煎ログから学ぶ。焼くたびに記録が増えるので、押すほど確からしくなる。 -->
         <div class="settings-title" style="margin-top:14px;">焙煎ログから学ぶ</div>
         <div class="settings-note" style="margin-bottom:6px;">
-          「1ハゼ確認」を押した記録から、1ハゼ・2ハゼの豆温度を実測で決めます。
-          焼くほど記録が増えて確かになります。
+          「1ハゼ確認」「2ハゼ確認」を押した記録から、ハゼの豆温度を実測で決めます。
+          豆情報に標高が入っていれば、標高による差も一緒に学びます
+          (標高の違う豆が4件以上そろってから)。焼くほど記録が増えて確かになります。
         </div>
         <div id="calLogsResult" class="settings-note"></div>
         <div style="display:flex; gap:6px; margin-top:6px;">
@@ -1795,7 +1785,7 @@ const ENERGY = {
   //             比熱に効き続け、壊れた細胞のぶんだけ放出される
   // この分け方だと潜熱が一点に集中しないので、「入熱の何割まで」という上限が要らない。
   // 標高による1ハゼ豆温度の補正。既定0=補正なし(roastlib/energy.py 参照)。
-  // 傾きはアプリの設定(altitudeFcSlope)で変わる。
+  // 傾きは焙煎ログの実測から学ぶ(既定は0=補正なし)。
   ALTITUDE_FC_SLOPE: 0.0, ALTITUDE_FC_REF_M: 1750.0,
   ALTITUDE_BUCKET_M: {'1000m未満':750.0, '1000-1500m':1250.0,
                       '1500-2000m':1750.0, '2000m以上':2200.0},
@@ -1957,11 +1947,11 @@ function estimateRoastEnergy(roastPoints, fanPoints){
 // ドラッグ中もrenderChart()から呼ばれうるので、同じログなら結果を使い回す。
 let beanTempSeriesCache = {key: null, result: []};
 // 焙煎ログの実測カーブから豆温度を推定する。
-// altitudeBucket は「その記録の豆」の標高帯。渡さないと、いま選んでいるプロファイルの
-// 標高で計算してしまい、別の豆の記録に他の豆の補正が掛かる。
+// altitudeBucket は「その記録に紐づけた豆」(豆情報)の標高帯。記録ごとに違うので、
+// 渡さないと補正なしで計算される。
 function beanTempSeriesFrom(roastPoints, fanPoints, altitudeBucket){
   if(!roastPoints || roastPoints.length < 2) return [];
-  const tFc = ENERGY_BASE_T_FC_BEAN
+  const tFc = baseFcBeanTemp()
             + energyAltitudeFcOffset(altitudeBucket || '', altitudeFcSlope);
   // 全点をJSON化すると点数が多いときに逆に重いので、等間隔に9点だけ拾って鍵にする。
   // 別の記録が偶然同じ長さ・同じ端点でも、途中が違えば別物と判定できる。
@@ -2729,6 +2719,7 @@ async function renderRoastRecordDetail(id, container, onSaved, onDeleted){
   // 編集欄の初期値にする。空欄に戻すと、1ハゼ設定温度からの自動推定に戻る。
   const fcStart = devTimeStartForRecord(data.roast_curve || [], data);
   const fcTimeValue = fcStart ? fmtMMSS(fcStart.t) : '';
+  const scTimeValue = data.sc_time != null ? fmtMMSS(data.sc_time) : '';
 
   const hasProfileLink = data.profile_source && data.profile_id != null;
   const profileNameHtml = hasProfileLink
@@ -2742,6 +2733,7 @@ async function renderRoastRecordDetail(id, container, onSaved, onDeleted){
       <label class="bean-info-field"><span>焙煎日時</span><input type="datetime-local" data-field="roasted_at" value="${whenValue}"></label>
       <label class="bean-info-field"><span>評価</span><select data-field="rating">${ratingOptions}</select></label>
       <label class="bean-info-field"><span>1ハゼ時間(m:ss)</span><input type="text" data-field="fc_time_mmss" value="${fcTimeValue}" placeholder="例: 6:40" title="空欄にすると、1ハゼ設定温度からの自動推定に戻ります"></label>
+      <label class="bean-info-field"><span>2ハゼ時間(m:ss)</span><input type="text" data-field="sc_time_mmss" value="${scTimeValue}" placeholder="例: 9:10" title="焙煎中に「2ハゼ確認」を押していれば自動で入ります。豆温度モデルの学習に使われます"></label>
     </div>
     ${metricsHtml}
     <label class="bean-info-field bean-info-note">
@@ -2911,9 +2903,10 @@ function renderRecordMiniChart(curve, record = null){
 
 async function saveRoastRecordInline(id, container, onSaved, recordData){
   const body = {};
-  let fcTimeEl = null;
+  let fcTimeEl = null, scTimeEl = null;
   container.querySelectorAll('[data-field]').forEach(el => {
     if(el.dataset.field === 'fc_time_mmss'){ fcTimeEl = el; return; }
+    if(el.dataset.field === 'sc_time_mmss'){ scTimeEl = el; return; }
     let v = el.value;
     if(el.dataset.field === 'rating') v = v ? Number(v) : null;
     body[el.dataset.field] = v;
@@ -2936,6 +2929,9 @@ async function saveRoastRecordInline(id, container, onSaved, recordData){
       body.dev_time = (auto && duration != null) ? Math.max(0, duration - auto.t) : null;
     }
   }
+  // 2ハゼは推定しない(ガイド温度から推し量ると、モデルの入力で自分を較正することに
+  // なるため)。押した記録だけを残し、空欄なら「記録なし」に戻す。
+  if(scTimeEl) body.sc_time = parseMMSS(scTimeEl.value);
   const status = document.getElementById('roastRecordInlineSaveStatus');
   status.textContent = '保存中…';
   const res = await fetch(`/api/roast_records/${id}`, {
@@ -4722,11 +4718,6 @@ async function saveCustomBeanInfo(pid){
   });
   status.textContent = res.ok ? '保存しました' : '保存に失敗しました';
   setTimeout(() => { status.textContent = ''; }, 2000);
-  // 標高を入れた/変えた場合は1ハゼ豆温度の補正が変わる。推定を計算し直す。
-  if(res.ok && setAltitudeBucket(body.altitude)){
-    updateStaticMetrics();
-    renderChart();
-  }
   // 新しい国名・品種等を入力した場合にフィルタの選択肢へ反映されるよう、一覧を再取得する。
   if(currentTab === 'custom'){
     populateCategoryFilter('custom', 'categoryFilter');
@@ -4767,9 +4758,6 @@ async function selectProfileFromRoastRecord(source, id){
 }
 
 function loadProfileIntoEditor(data){
-  // このプロファイルの産地標高を、1ハゼ豆温度の補正に反映する
-  // (プリセットも保存プロファイルも altitude_bucket で返している。無ければ補正なし)
-  setAltitudeBucket(data.altitude_bucket);
   currentProfile = data;
   originalRoast = data.roast.map(p => [...p]);
   originalFan = data.fan.map(p => [...p]);
@@ -5413,22 +5401,40 @@ async function loadCalibrationFromLogs(){
     const skipped = Object.entries(d.skipped || {}).filter(([, v]) => v > 0)
       .map(([k, v]) => `${k} ${v}件`).join(' / ');
     if(skipped) lines.push(`使わなかった記録: ${skipped}`);
+    // 標高による差。1つの標高帯に固まっていると傾きか基準値のずれか区別が付かないので、
+    // 帯が2つ以上そろうまでは出さない。
+    const alt = d.altitude || {};
+    if(alt.slope !== null && alt.slope !== undefined){
+      lines.push(`標高による差: <b>${alt.slope >= 0 ? '+' : ''}${alt.slope}℃/1000m</b>`
+               + `(標高の分かる記録${alt.n}件・${alt.buckets}区分)`);
+    } else if(alt.n > 0){
+      lines.push(`標高による差: まだ出せません(標高の分かる記録${alt.n}件・`
+               + `${alt.buckets}区分。違う標高の豆が4件以上そろうと出ます)`);
+    } else {
+      lines.push('標高による差: 豆情報に標高が入った記録がまだありません。');
+    }
     const ap = d.applied || {};
     if(ap.fcBeanTemp !== undefined || ap.scBeanTemp !== undefined){
       const p = [];
       if(ap.fcBeanTemp !== undefined) p.push(`1ハゼ ${ap.fcBeanTemp}℃(${ap.fcN}件)`);
       if(ap.scBeanTemp !== undefined) p.push(`2ハゼ ${ap.scBeanTemp}℃(${ap.scN}件)`);
+      if(ap.altitudeSlope !== undefined){
+        p.push(`標高 ${ap.altitudeSlope >= 0 ? '+' : ''}${ap.altitudeSlope}℃/1000m`);
+      }
       lines.push(`<b>採用中</b>: ${p.join(' / ')}`);
     } else {
       lines.push('まだ採用していません(モデルの既定値で計算しています)。');
     }
     el.innerHTML = lines.join('<br>');
+    // 学んだ値を画面側の推定にも反映する(サーバー側の推定と食い違わせない)。
+    applyLearnedFcBeanTemp(
+      (d.applied || {}).fcBeanTemp, (d.current || {}).altitudeSlope);
   } catch(e){ el.textContent = '集計できませんでした。'; }
 }
 
 async function refreshAfterCalibrationChange(){
   await loadCalibration();
-  await loadCalibrationFromLogs();
+  await loadCalibrationFromLogs();   // 学んだ1ハゼ豆温度・標高の傾きもここで入る
   refreshEstimateDatasets();
   if(chart) chart.update('none');
   updateStaticMetrics();
@@ -6450,27 +6456,33 @@ function layoutShrinkFactor(){
 // ------------------------------------------------------------
 // 標高による1ハゼ豆温度の補正
 // ------------------------------------------------------------
-// 傾きは設定(altitudeFcSlope)、標高帯は今選んでいるプロファイルの豆情報から来る。
-// 豆情報に標高を後から入力する使い方があるので、プロファイルを選び直したときと
-// 豆情報を保存したときの両方で入れ直す。
-const ENERGY_BASE_T_FC_BEAN = 196.0;   // ENERGY.T_FC_BEAN の元の値
-let altitudeFcSlope = 0.0;             // 設定から
-let currentAltitudeBucket = '';        // 選択中プロファイルの豆情報から
+// 標高は「焙煎する豆」の性質なので、豆情報(購入した豆)の標高だけを見る。
+// プロファイル側の標高は使わない。産地標高の合わないプロファイルで焼くことがあり、
+// 実際に爆ぜる温度を決めるのは焙煎機に入っている豆のほうだからである。
+// したがって標高が効くのは焙煎ログの推定豆温度だけで、プロファイルの推定には効かない
+// (どの豆を焼くかは、焙煎するまで決まらない)。
+//
+// 傾きは手で設定しない。焙煎ログの「1ハゼ確認」の実測から学んだ値があればそれを使い、
+// 無ければ0(=補正しない)。手で決めるだけの根拠が無いので、実測で決まるまで効かせない。
+const ENERGY_BASE_T_FC_BEAN = 196.0;   // モデルの既定値(何も学んでいないとき)
+let learnedFcBeanTemp = null;          // 焙煎ログから学んで採用中の1ハゼ豆温度
+let altitudeFcSlope = 0.0;             // 焙煎ログから学んだ傾き(℃/1000m)
 
-function applyAltitudeToEnergy(){
-  ENERGY.T_FC_BEAN = ENERGY_BASE_T_FC_BEAN
-    + energyAltitudeFcOffset(currentAltitudeBucket, altitudeFcSlope);
+// 基準標高での1ハゼ豆温度。標高の分からない豆はこの値で計算する。
+function baseFcBeanTemp(){
+  return learnedFcBeanTemp === null ? ENERGY_BASE_T_FC_BEAN : learnedFcBeanTemp;
+}
+
+// 焙煎ログから学んだ値をモデルへ反映する(サーバー側の推定と揃える)。
+function applyLearnedFcBeanTemp(fcBeanTemp, slope){
+  const f = Number(fcBeanTemp);
+  learnedFcBeanTemp = Number.isFinite(f) && f >= 170 && f <= 225 ? f : null;
+  const sl = Number(slope);
+  altitudeFcSlope = Number.isFinite(sl) && sl >= -10 && sl <= 10 ? sl : 0.0;
+  ENERGY.T_FC_BEAN = baseFcBeanTemp();
   // 前提が変わったので覚えている推定は捨てる
   energyCache = {key: null, result: null};
   beanTempSeriesCache = {key: null, result: []};
-}
-
-function setAltitudeBucket(bucket){
-  const b = (bucket || '').trim();
-  if(b === currentAltitudeBucket) return false;
-  currentAltitudeBucket = b;
-  applyAltitudeToEnergy();
-  return true;
 }
 
 const CHART_TEXT_MAX_SCALE = 1.8;
@@ -7012,6 +7024,9 @@ function applyFirstCrackTime(t){
 }
 
 function applySecondCrackTime(t){
+  // 1ハゼより前の2ハゼは有り得ない。他端末からの反映が前後した場合に、
+  // 辻褄の合わない組み合わせを画面と焙煎記録に残さない。
+  if(t !== null && actualFcTime !== null && t <= actualFcTime) return;
   actualScTime = t;
   updateCrackButtonLabel();
 }
@@ -7500,7 +7515,7 @@ async function initAppSettings(){
       Number.isFinite(d) ? clampContinuousDelay(d) : CONTINUOUS_DELAY_DEFAULT;
     sourceTabPref.preset = data.showPresetTab !== false;
     sourceTabPref.ikawa = data.showIkawaTab !== false;
-    applyBeanSettings(data.beanMoisturePct, data.altitudeFcSlope, data.chaffG);
+    applyBeanSettings(data.beanMoisturePct, data.chaffG);
     applyTheme(data.theme);
     // 設定の取得はプロファイル選択より後になることがある。既に開いていれば
     // 新しい前提で推定し直す。
@@ -7513,9 +7528,8 @@ async function initAppSettings(){
 // 推定入熱・推定焙煎指数の前提(生豆の量・含水率)を反映する。
 // 豆の投入量は焙煎機の仕様どおり50g固定(ENERGY.BEAN_G)。設定するのは含水率だけ。
 const BEAN_MOISTURE_MIN = 5, BEAN_MOISTURE_MAX = 15, BEAN_MOISTURE_DEFAULT = 10;
-const ALT_SLOPE_MIN = -10, ALT_SLOPE_MAX = 10, ALT_SLOPE_DEFAULT = 0;
 const CHAFF_MIN = 0, CHAFF_MAX = 2, CHAFF_DEFAULT = 0.5;
-function applyBeanSettings(moisturePct, altSlope, chaffG){
+function applyBeanSettings(moisturePct, chaffG){
   const raw = Number(moisturePct);
   const m = Number.isFinite(raw)
     ? Math.min(Math.max(raw, BEAN_MOISTURE_MIN), BEAN_MOISTURE_MAX)
@@ -7523,15 +7537,6 @@ function applyBeanSettings(moisturePct, altSlope, chaffG){
   ENERGY.MOISTURE = m / 100.0;
   const mi = document.getElementById('beanMoistureInput');
   if(mi) mi.value = m;
-  if(altSlope !== undefined){
-    const rawS = Number(altSlope);
-    altitudeFcSlope = Number.isFinite(rawS)
-      ? Math.min(Math.max(rawS, ALT_SLOPE_MIN), ALT_SLOPE_MAX) : ALT_SLOPE_DEFAULT;
-    const si = document.getElementById('altitudeSlopeInput');
-    if(si) si.value = altitudeFcSlope;
-    applyAltitudeToEnergy();
-    updateAltitudeSlopeNote();
-  }
   if(chaffG !== undefined){
     const rawC = Number(chaffG);
     const c = Number.isFinite(rawC)
@@ -7556,7 +7561,7 @@ document.getElementById('chaffInput').addEventListener('change', async (e) => {
   const n = Number(raw);
   const v = (raw === '' || !Number.isFinite(n)) ? CHAFF_DEFAULT
           : Math.round(Math.min(Math.max(n, CHAFF_MIN), CHAFF_MAX) * 10) / 10;
-  applyBeanSettings(ENERGY.MOISTURE * 100, altitudeFcSlope, v);
+  applyBeanSettings(ENERGY.MOISTURE * 100, v);
   energyCache = {key: null, result: null};
   updateStaticMetrics();
   renderChart();
@@ -7595,41 +7600,6 @@ function updateFcConsistencyNote(){
   }
   el.textContent = msg;
 }
-
-// 標高帯ごとに何℃ずれるかを出す。0のときは効いていないことをはっきり書く。
-function updateAltitudeSlopeNote(){
-  const el = document.getElementById('altitudeSlopeNote');
-  if(!el) return;
-  if(!altitudeFcSlope){
-    el.textContent = '0=補正なし。すべての豆で1ハゼ豆温度は'
-                   + `${ENERGY_BASE_T_FC_BEAN}℃です。`;
-    return;
-  }
-  const parts = Object.keys(ENERGY.ALTITUDE_BUCKET_M).map(b => {
-    const d = energyAltitudeFcOffset(b, altitudeFcSlope);
-    return `${b} ${d >= 0 ? '+' : ''}${d.toFixed(1)}`;
-  });
-  el.textContent = `1ハゼ豆温度への補正(℃): ${parts.join(' / ')}。`
-                 + '標高が未入力の豆は補正しません。';
-}
-
-// 標高による補正。推定豆温度のカーブ自体は動かず、何度で爆ぜるかが変わる。
-document.getElementById('altitudeSlopeInput').addEventListener('change', async (e) => {
-  const raw = (e.target.value || '').trim();
-  const n = Number(raw);
-  const v = (raw === '' || !Number.isFinite(n)) ? ALT_SLOPE_DEFAULT
-          : Math.min(Math.max(n, ALT_SLOPE_MIN), ALT_SLOPE_MAX);
-  applyBeanSettings(ENERGY.MOISTURE * 100, v, ENERGY.CHAFF_G);
-  updateStaticMetrics();
-  renderChart();
-  try {
-    await fetch(`${API}/api/app_settings`, {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({altitudeFcSlope: v}),
-    });
-    log(`設定: 標高による1ハゼ豆温度の補正を${v}℃/1000mにしました。`);
-  } catch(err){ /* 保存に失敗した場合は次回起動時に元の設定へ戻る */ }
-});
 
 // 入力途中で保存しないよう、changeで確定してから送る。空欄は既定値に戻す。
 document.getElementById('beanMoistureInput').addEventListener('change', async (e) => {
