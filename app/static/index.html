@@ -405,6 +405,14 @@
   .bp-roast .bp-star{ color:var(--amber); }
   .bp-empty{ font-size:12px; color:var(--text-muted); padding:10px 0; line-height:1.6; }
   .bean-picker-search{ margin-bottom:10px; }
+  /* 発熱の検証で出す、モデルの予想の表。設定欄の幅に収まる小さな表。 */
+  .cal-exo-table{ width:100%; border-collapse:collapse; font-size:11.5px; }
+  .cal-exo-table th, .cal-exo-table td{
+    border-bottom:1px solid var(--border); padding:3px 4px; text-align:left;
+    color:var(--text-muted);
+  }
+  .cal-exo-table th{ color:var(--text); font-weight:600; }
+  .cal-exo-table td b{ color:var(--amber); }
 
   .main-toolbar{ display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:flex-end; margin-bottom:10px; }
   .main-toolbar .toolbar-group{ display:flex; flex-wrap:wrap; gap:6px; }
@@ -1116,8 +1124,24 @@
         <div class="tabs" style="margin-bottom:6px;">
           <div class="tab-btn active" id="calKindDeep" onclick="switchCalKind('deep')">深煎り用</div>
           <div class="tab-btn" id="calKindLight" onclick="switchCalKind('light')">浅煎り用</div>
+          <div class="tab-btn" id="calKindExotherm" onclick="switchCalKind('exotherm')">発熱の検証</div>
         </div>
         <div class="settings-note" id="calKindNote" style="margin-bottom:6px;"></div>
+        <!-- 発熱の検証は、測るのが重量ではなく「音が消えるまでの秒数」なので、
+             較正の当てはめには乗らない。予想を出して見比べてもらうだけにする。 -->
+        <div id="calExothermPanel" style="display:none;">
+          <table class="cal-exo-table">
+            <tr><th>焙煎の発熱</th><th>落としてから2ハゼが消えるまで</th></tr>
+            <tr><td>なし(いまのモデル)</td><td><b>16秒</b></td></tr>
+            <tr><td>100 kJ/kg</td><td>21秒</td></tr>
+            <tr><td>175 kJ/kg</td><td>29秒</td></tr>
+            <tr><td>250 kJ/kg</td><td>43秒</td></tr>
+          </table>
+          <div class="settings-note" style="margin-top:6px;">
+            豆温度が±2℃ずれていても、発熱なしは12〜19秒・175kJ/kgは25〜34秒で、
+            範囲は重なりません。測った秒数は焙煎記録のメモに残してください。
+          </div>
+        </div>
 
         <div class="settings-num-row" title="1ハゼの音が聞こえ始めた時刻(2回目のハゼ音)。mm:ss または 秒で入れられます">
           <label for="calFcStart">1ハゼ開始</label>
@@ -5955,6 +5979,10 @@ const CAL_KIND_NOTES = {
   light: '1ハゼが終わって少し先(豆208℃)で止めるほう。'
        + '豆の水の大半が抜けるのは1ハゼの前後なので、<b>ここで止めた焙煎後の重量が'
        + 'いちばん効く実測</b>です。最後まで焼いて、冷めてから量ってください。',
+  exotherm: '10分50秒から20秒かけて吸入温度を218℃まで落とし、そのまま保ちます。'
+          + '<b>落とし始めてから、2ハゼの音が消えるまでの秒数</b>をストップウォッチで'
+          + '測ってください。焙煎の発熱があれば、その分だけ長く鳴り続けます。'
+          + '重量では測れません(浅煎り側で分かっている質量モデルの誤差に埋もれるため)。',
 };
 
 function readCalForm(){
@@ -5984,22 +6012,41 @@ function writeCalForm(m){
   renderCalAbortRows(m);
 }
 
+// 較正に使う欄(測定値の入力)。発熱の検証では測るものが違うのでまとめて隠す。
+const CAL_MEASURE_IDS = ['calFcStart', 'calFcEnd', 'calScStart', 'calGreenG', 'calRoastedG'];
+
 function switchCalKind(kind){
-  if(kind !== 'deep' && kind !== 'light') return;
-  calEntries[calKind] = readCalForm();      // いま画面にある分を控える
+  if(!CAL_KIND_NOTES[kind]) return;
+  if(calKind !== 'exotherm') calEntries[calKind] = readCalForm();  // 画面の分を控える
   calKind = kind;
-  document.getElementById('calKindDeep').classList.toggle('active', kind === 'deep');
-  document.getElementById('calKindLight').classList.toggle('active', kind === 'light');
+  for(const [id, k] of [['calKindDeep','deep'],['calKindLight','light'],
+                        ['calKindExotherm','exotherm']]){
+    const el = document.getElementById(id);
+    if(el) el.classList.toggle('active', kind === k);
+  }
+  const measuring = kind !== 'exotherm';
+  for(const id of CAL_MEASURE_IDS){
+    const row = document.getElementById(id).closest('.settings-num-row');
+    if(row) row.style.display = measuring ? '' : 'none';
+  }
   document.getElementById('calScRow').style.display = kind === 'deep' ? '' : 'none';
+  for(const id of ['calAbortRows', 'btnCalAbortAdd']){
+    const el = document.getElementById(id);
+    if(el) el.style.display = measuring ? '' : 'none';
+  }
+  document.getElementById('calExothermPanel').style.display = measuring ? 'none' : '';
+  document.getElementById('btnCalApply').style.display = measuring ? '' : 'none';
   document.getElementById('calKindNote').innerHTML = CAL_KIND_NOTES[kind];
-  // 焙煎後の重さの目安は、どちらを焼くかで違う
-  document.getElementById('calRoastedG').placeholder = kind === 'deep' ? '40.9' : '44.4';
-  document.getElementById('calFcEnd').placeholder = kind === 'deep' ? '8:28' : '8:51';
-  writeCalForm(calEntries[kind]);
+  if(measuring){
+    // 焙煎後の重さの目安は、どちらを焼くかで違う
+    document.getElementById('calRoastedG').placeholder = kind === 'deep' ? '40.9' : '44.4';
+    document.getElementById('calFcEnd').placeholder = kind === 'deep' ? '8:28' : '8:51';
+    writeCalForm(calEntries[kind]);
+  }
 }
 
 document.getElementById('btnCalApply').onclick = async () => {
-  calEntries[calKind] = readCalForm();
+  if(calKind !== 'exotherm') calEntries[calKind] = readCalForm();
   const roasts = {};
   for(const [kind, m] of Object.entries(calEntries)){
     if(m && Object.keys(m).length) roasts[kind] = m;

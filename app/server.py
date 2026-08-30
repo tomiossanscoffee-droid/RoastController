@@ -816,13 +816,16 @@ def get_calibration_profile(kind: str = "deep"):
     kind="light" 1ハゼが終わって少し先で止めるほう。豆の水の大半が抜けるのは
                  1ハゼの前後なので、そこで止めた焙煎後の重量がいちばん効く実測に
                  なる(モデルの違いが焙煎後の重量に1.39g出る。深煎り用は0.77g)。
-    どちらも440秒までは同じ形にしてあるので、2つの焙煎後の重量の差が、そのまま
-    「1ハゼの前後で抜けた水」を表す。
+    kind="exotherm" 焙煎の発熱を測るほう。2ハゼで吸入温度を落として保ち、
+                 「落としてから2ハゼの音が消えるまでの秒数」を測る。較正の
+                 当てはめには使わない(roastlib/calibration.py 参照)。
+    深煎り用と浅煎り用は440秒までは同じ形にしてあるので、2つの焙煎後の重量の
+    差が、そのまま「1ハゼの前後で抜けた水」を表す。
     """
-    prof = beancal.CALIBRATION_PROFILES.get(kind) or beancal.CALIBRATION_PROFILE
+    prof = beancal.SENDABLE_PROFILES.get(kind) or beancal.CALIBRATION_PROFILE
     return JSONResponse({
         "id": f"calibration_{kind}" if kind != "deep" else "calibration",
-        "kind": kind if kind in beancal.CALIBRATION_PROFILES else "deep",
+        "kind": kind if kind in beancal.SENDABLE_PROFILES else "deep",
         "name": prof["name"],
         "country": "", "bean": "", "roast_level": "",
         # 焙煎機に送るのに必須。空だとプロファイルを組み立てられず、送信しても
@@ -918,8 +921,8 @@ def get_calibration():
             data["fitted"][kind] = _calibration_expected(prof, moisture, ov)
     if not data["fitted"]:
         data.pop("fitted")
-    data["profiles"] = beancal.CALIBRATION_PROFILES
-    data["kindLabels"] = beancal.CALIBRATION_KIND_LABELS
+    data["profiles"] = beancal.SENDABLE_PROFILES
+    data["kindLabels"] = beancal.SENDABLE_KIND_LABELS
     data["scSecondCrackBeanTemp"] = beancal.T_SC_BEAN
     return JSONResponse(data)
 
