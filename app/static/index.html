@@ -976,6 +976,9 @@
     </div>
 
     <div id="recordsSidebar" style="display:none;">
+      <!-- 新しい豆の登録は、探すより先に来ることが多い(買ってきた豆をまず登録する)。
+           一覧の下に置くと、豆が増えるほどスクロールしないと押せなくなる。 -->
+      <button class="btn" id="btnAddRecord" style="width:100%; margin-bottom:8px;">＋ 豆を追加</button>
       <input class="search-box" id="recordsSearchBox" placeholder="豆を検索…">
       <div class="filter-grid" id="recordsFilterGrid">
         <select class="search-box" id="beanCountryFilter"><option value="">国</option></select>
@@ -991,7 +994,6 @@
         <option value="price_per_kg_desc">並び順: 単価(高い順)</option>
       </select>
       <div class="profile-list" id="recordsList"></div>
-      <button class="btn" id="btnAddRecord" style="width:100%;">＋ 豆を追加</button>
     </div>
     </div><!-- /profileSelectionArea -->
 
