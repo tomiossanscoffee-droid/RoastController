@@ -594,3 +594,109 @@ def test_suffix_0xe5_error_overlay_recognized_as_phase_code(monkeypatch):
     states, sess = asyncio.run(scenario())
     assert S.STATE_PREHEATING in states
     assert sess._last_phase_code == 0x21
+
+
+# ------------------------------------------------------------
+# 送信バイト列(build_write_sequence)
+# ------------------------------------------------------------
+# 校正用プロファイルを送っても焙煎機が動かなかった件の再発防止。
+# 原因は2つあった:
+#   1. 校正用プロファイルのUUIDが空で、そもそも組み立てられなかった
+#   2. 終端バイトをUUIDだけで上書きしていたため、既知3件のプロファイルを
+#      編集して送ると、中身と合わない終端バイトが付いていた
+def _known_profiles():
+    """KNOWN_TERMINATORS の3件を、プリセットDBから取れた分だけ返す。"""
+    from pathlib import Path
+
+    import app.server as server
+
+    if not Path(server.DB_PATH).exists():
+        return []
+    db = server.get_db()
+    out = []
+    for _, row in db.profile.iterrows():
+        p = server.ModelFactory.from_series(row)
+        try:
+            uuid_ascii = bytes.fromhex(p.raw.get("UUID", "") or "").decode("ascii")
+        except Exception:  # noqa: BLE001
+            continue
+        if uuid_ascii in S.KNOWN_TERMINATORS:
+            out.append((uuid_ascii, p))
+    return out
+
+
+def test_終端バイトの計算式が実測と一致する():
+    """KNOWN_TERMINATORS は計算式の裏づけとして残してある。
+
+    ここが落ちたら、計算式(またはトークン)が変わったということなので、
+    上書きをやめた判断も見直す必要がある。
+    """
+    from roastlib.ble.codec import encode_profile_payload
+
+    known = _known_profiles()
+    if not known:
+        pytest.skip("プリセットDBが無いため確認できません")
+    for uuid_ascii, p in known:
+        q = S.profile_from_points(p.name, p.roast.points, p.fan.points,
+                                  tuple(p.cooldown.points[0]), uuid_ascii)
+        payload = bytes(encode_profile_payload(q))
+        pairs = len(q.roast.x) + len(q.fan.x)
+        assert S._guess_terminator(payload[:-1], pairs) == S.KNOWN_TERMINATORS[uuid_ascii], uuid_ascii
+
+
+def test_中身を変えると終端バイトも変わる():
+    """UUIDだけで終端バイトを決めると、編集したカーブに古い値が付いてしまう。
+
+    以前はそれで、機械がプロファイルを破棄し「送信は終わるのに予熱に進まない」
+    状態になっていた。
+    """
+    uuid_ascii = next(iter(S.KNOWN_TERMINATORS))
+    base = S.profile_from_points("t", [(0, 180), (60, 100), (300, 200), (400, 230)],
+                                 [(0, 60), (100, 80), (400, 70)], (500, 60), uuid_ascii)
+    edited = S.profile_from_points("t", [(0, 180), (60, 100), (300, 200), (400, 235)],
+                                   [(0, 60), (100, 80), (400, 70)], (500, 60), uuid_ascii)
+    token = bytes(range(16))
+    a, b = S.build_write_sequence(base, token), S.build_write_sequence(edited, token)
+    assert a != b, "カーブを変えたのに送信内容が同じです"
+
+
+def test_校正用プロファイルは送信できる形で返る():
+    """UUIDが空だと組み立てられず、焙煎機は何もしない(実際に起きた)。"""
+    import json
+
+    import app.server as server
+
+    d = json.loads(server.get_calibration_profile().body)
+    assert len(d["uuid"]) == 16 and d["uuid"].isdigit()
+    q = S.profile_from_points(d["name"], [tuple(p) for p in d["roast"]],
+                              [tuple(p) for p in d["fan"]], tuple(d["cooldown"]), d["uuid"])
+    seq = S.build_write_sequence(q, bytes(range(16)))
+    assert len(seq) >= 4
+    # header2 の先頭バイトは総ペア数から決まる(実機で確認済みの式)
+    assert seq[1][0] == (8 * (len(q.roast.x) + len(q.fan.x)) + 45) & 0xFF
+
+
+def test_校正用のUUIDは毎回同じ():
+    """送るたびに違うUUIDになると、焙煎機側にどう溜まるか分からない。"""
+    import json
+
+    import app.server as server
+
+    a = json.loads(server.get_calibration_profile().body)["uuid"]
+    b = json.loads(server.get_calibration_profile().body)["uuid"]
+    assert a == b == server.beancal.CALIBRATION_UUID
+
+
+def test_校正用のUUIDは生成プロファイルと衝突しない():
+    """「味を推測」等が作るUUIDは str(int(time.time()*1000)).zfill(16)。
+
+    このアプリが動く時刻より前の値にしてあれば、生成分と重ならない。
+    """
+    import time
+
+    from roastlib.calibration import CALIBRATION_UUID
+
+    assert len(CALIBRATION_UUID) == 16 and CALIBRATION_UUID.isdigit()
+    assert int(CALIBRATION_UUID) < int(time.time() * 1000)
+    # 生成側は「作った瞬間の時刻」なので、過去の固定値と一致することはない
+    assert CALIBRATION_UUID != str(int(time.time() * 1000)).zfill(16)

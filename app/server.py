@@ -782,7 +782,10 @@ def get_calibration_profile():
     return JSONResponse({
         "id": "calibration",
         "name": prof["name"],
-        "country": "", "bean": "", "roast_level": "", "uuid": "",
+        "country": "", "bean": "", "roast_level": "",
+        # 焙煎機に送るのに必須。空だとプロファイルを組み立てられず、送信しても
+        # 焙煎機は何もしない(roastlib/calibration.py の CALIBRATION_UUID 参照)。
+        "uuid": beancal.CALIBRATION_UUID,
         "roast": prof["roast"], "fan": prof["fan"], "cooldown": prof["cooldown"],
         # 実機で送信確認していない構成なので、確認済みの印は付けない。
         "verified": False, "guess_confidence": "low",
@@ -2337,6 +2340,17 @@ async def websocket_endpoint(websocket: WebSocket):
                             continue
 
                     p = msg["profile"]
+                    # UUIDが無いプロファイルは組み立てられない。そのまま進むと
+                    # ValueErrorの中身がそのまま画面に出るだけで、何が悪いのか
+                    # 分からない(実際、校正用プロファイルがこの状態だった)。
+                    _u = str(p.get("uuid") or "")
+                    if len(_u) != 16 or not _u.isdigit():
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "このプロファイルには焙煎機に送るためのUUIDがありません。"
+                                       "プリセットか保存済みプロファイルから選び直してください。",
+                        })
+                        continue
                     profile = profile_from_points(
                         name=p.get("name", "custom"),
                         roast_points=[tuple(pt) for pt in p["roast"]],

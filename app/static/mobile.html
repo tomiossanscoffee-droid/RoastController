@@ -215,6 +215,21 @@
   .modal-actions{ display:flex; flex-direction:column; gap:8px; margin-top:16px; }
   .modal-actions .btn{ width:100%; }
   .dup-confirm-item{ color:var(--text-muted); font-size:12px; }
+  /* 見逃したくない要点(エラー等)。log()はconsoleにしか出ないため、機械の前で
+     操作している人には何も見えなかった。PC版と同じ考え方で画面下に数秒出す。 */
+  .notice-stack{
+    position:fixed; left:12px; right:12px; bottom:12px; z-index:2000;
+    display:flex; flex-direction:column; gap:8px; pointer-events:none;
+  }
+  .notice-item{
+    background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--amber);
+    border-radius:6px; padding:10px 14px; font-size:13px; color:var(--text);
+    box-shadow:0 4px 14px rgba(0,0,0,0.45); line-height:1.45;
+    opacity:0; transform:translateY(6px); transition:opacity .18s ease, transform .18s ease;
+  }
+  .notice-item.show{ opacity:1; transform:translateY(0); }
+  .notice-item.error{ border-left-color:#e07a4a; color:#f0b79c; }
+
   .roast-bean-line{
     margin:0 16px 12px; padding:8px 10px; border:1px solid var(--border); border-radius:6px;
     font-size:13px; color:var(--text-muted); line-height:1.4;
@@ -234,6 +249,9 @@
 <!-- いま焙煎する豆。選ぶのはPC版から。ここでは、機械の前で「どの豆を入れるのか」を
      確かめられるようにするためだけに出す(未選択でも焙煎はできる)。 -->
 <div class="roast-bean-line" id="roastBeanLine" style="display:none;">焙煎する豆: <b id="roastBeanName"></b></div>
+
+<!-- 重要な通知(エラー等)。ログはconsoleにしか出ないため、ここに数秒だけ出す。 -->
+<div class="notice-stack" id="noticeStack"></div>
 
 <!-- 1. プロファイルを送信 -->
 <div class="section" style="padding-bottom:0;">
@@ -453,6 +471,27 @@ function endRoastingSession(){ roastingSessionActive = false; updateRoastingUIVi
 // 呼び出し側は多数あるため、関数自体は残しコンソール出力のみにする。
 function log(msg){
   console.log(msg);
+}
+
+// 見逃したくない要点(エラー等)を画面下に数秒だけ出す。
+// kind: 'info'(既定) | 'error'(エラー配色・表示時間を長め)
+function notice(msg, kind = 'info'){
+  const stack = document.getElementById('noticeStack');
+  if(!stack) return;
+  const el = document.createElement('div');
+  el.className = 'notice-item' + (kind === 'error' ? ' error' : '');
+  el.textContent = msg;
+  stack.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
+  }, kind === 'error' ? 6000 : 3000);
+}
+
+function logNotice(msg, kind = 'info'){
+  log(msg);
+  notice(msg, kind);
 }
 
 function fmtMMSS(totalSeconds){
@@ -2065,7 +2104,7 @@ function connectWS(){
     }
     else if(msg.type === 'telemetry'){ onTelemetry(msg); }
     else if(msg.type === 'roaster_state'){ onRoasterState(msg.state); }
-    else if(msg.type === 'error'){ log('エラー: ' + msg.message); }
+    else if(msg.type === 'error'){ logNotice('エラー: ' + msg.message, 'error'); }
   };
 }
 
@@ -2101,6 +2140,12 @@ function sendProfilePayload(payload, logMsg){
 
 document.getElementById('btnSend').onclick = () => {
   if(!currentProfile) return;
+  // UUIDが無いと焙煎機はプロファイルを受け取らない(送信だけ終わって何も起きない)。
+  const u = String(currentProfile.uuid || '');
+  if(u.length !== 16 || !/^[0-9]+$/.test(u)){
+    logNotice('このプロファイルには焙煎機に送るためのUUIDがないため、送信できません。', 'error');
+    return;
+  }
   // profile_source/profile_idも一緒に送る。焙煎ログを「実際に焙煎機へ送った
   // プロファイル」に紐づけるために、他端末(PC)側でも識別できる必要があるため。
   sendProfilePayload({

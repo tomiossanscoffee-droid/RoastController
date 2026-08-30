@@ -8077,6 +8077,13 @@ function sendProfilePayload(payload, logMsg){
 
 document.getElementById('btnSend').onclick = () => {
   if(!currentProfile) return;
+  // UUIDが無いと焙煎機はプロファイルを受け取らない(送信だけ終わって何も起きない)。
+  // 押す前に理由を出す。
+  const u = String(currentProfile.uuid || '');
+  if(u.length !== 16 || !/^[0-9]+$/.test(u)){
+    logNotice('このプロファイルには焙煎機に送るためのUUIDがないため、送信できません。', 'error');
+    return;
+  }
   // profile_source/profile_id/roast_variantも一緒に送る。焙煎ログを「実際に焙煎機へ
   // 送ったプロファイル」に紐づけるために、他端末側でも識別できる必要があるため
   // (スマホで選び直して送信した場合、PC側のcurrentProfileは古いままになる)。

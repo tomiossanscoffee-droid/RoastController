@@ -199,7 +199,15 @@ def _chunk(data: bytes, size: int = CHUNK_SIZE) -> List[bytes]:
     return [data[i:i + size] for i in range(0, len(data), size)]
 
 
-# 実機キャプチャで確認できている「本当の終端バイト」(既知プロファイルはこちらを優先)。
+# 実機キャプチャで確認できている「本当の終端バイト」。
+#
+# 2026-08修正: これを終端バイトの上書きに使うのをやめた。下記3件はいずれも
+# _guess_terminator() の計算結果と完全に一致しており(tests/test_ble_codec.py で
+# 毎回確かめている)、上書きしても結果は変わらない。一方でUUIDだけを鍵にして
+# 上書きしていたため、この3件のプロファイルを「編集してから送る」と、中身が
+# 変わっているのに実測時の終端バイトが当てられ、機械がプロファイルを破棄する
+# (送信は完了するのに予熱に進まない)状態になっていた。
+# 表は計算式が正しいことの裏づけとして残し、送信では使わない。
 #
 # 2026-07修正: 終端バイトはトークンに紐づく値のため、旧トークン期に実測した値を
 # 現行トークンのまま使うと、機械側がプロファイルを不正データとして破棄し、
@@ -259,12 +267,9 @@ def build_write_sequence(profile: RoastProfile, token: bytes) -> List[bytes]:
 
     payload = bytearray(encode_profile_payload(profile))
 
-    uuid_ascii = (profile.raw.get("UUID") or "")
-    if uuid_ascii in KNOWN_TERMINATORS:
-        payload[-1] = KNOWN_TERMINATORS[uuid_ascii]
-    else:
-        # 未知のプロファイル: 実機で確認済みの計算式をフォールバック適用する。
-        payload[-1] = _guess_terminator(bytes(payload[:-1]), total_pairs)
+    # 終端バイトは中身から決まる(KNOWN_TERMINATORSの3件もこの式と一致する)。
+    # UUIDで場合分けすると、編集して中身が変わったときに古い値を当ててしまう。
+    payload[-1] = _guess_terminator(bytes(payload[:-1]), total_pairs)
 
     sequence = [header_1, header_2]
     sequence += _chunk(bytes(payload))
