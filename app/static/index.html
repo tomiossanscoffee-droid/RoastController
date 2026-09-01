@@ -1127,6 +1127,7 @@
           <div class="tab-btn active" id="calKindDeep" onclick="switchCalKind('deep')">深煎り用</div>
           <div class="tab-btn" id="calKindLight" onclick="switchCalKind('light')">浅煎り用</div>
           <div class="tab-btn" id="calKindExotherm" onclick="switchCalKind('exotherm')">発熱の検証</div>
+          <div class="tab-btn" id="calKindSlowramp" onclick="switchCalKind('slowramp')">遅い昇温</div>
         </div>
         <div class="settings-note" id="calKindNote" style="margin-bottom:6px;"></div>
         <!-- 発熱の検証は、測るのが重量ではなく「音が消えるまでの秒数」なので、
@@ -1142,6 +1143,23 @@
           <div class="settings-note" style="margin-top:6px;">
             豆温度が±2℃ずれていても、発熱なしは12〜19秒・175kJ/kgは25〜34秒で、
             範囲は重なりません。測った秒数は焙煎記録のメモに残してください。
+          </div>
+        </div>
+        <!-- 遅い昇温は、1ハゼ終了まで届かない設計なので較正の当てはめには乗らない。
+             測るのは1ハゼ開始と焙煎後の重量の2つだけ。 -->
+        <div id="calSlowrampPanel" style="display:none;">
+          <table class="cal-exo-table">
+            <tr><th>測るもの</th><th>予測</th></tr>
+            <tr><td>1ハゼの開始時刻</td><td><b>13分06秒</b></td></tr>
+            <tr><td>焙煎後の重量</td><td><b>40.0g</b>(減少20.1%)</td></tr>
+          </table>
+          <div class="settings-note" style="margin-top:6px;">
+            既存の3本は1ハゼが7.4〜7.5分に固まっていて、同じ速さの焙煎をこれ以上
+            足しても新しい情報が増えません。<b>1ハゼを13分まで遅らせる</b>ことで、
+            いちばん決まっていない「分解の吸熱」が15倍決まるようになります。<br>
+            1ハゼは終了まで届かない設計です(終了時点でも爆ぜ続けます)。
+            もし途中で音が止んだら、その時刻も残してください。2ハゼには到達しません。
+            測った値は焙煎記録のメモに残してください。
           </div>
         </div>
 
@@ -5981,6 +5999,9 @@ const CAL_KIND_NOTES = {
   light: '1ハゼが終わって少し先(豆208℃)で止めるほう。'
        + '豆の水の大半が抜けるのは1ハゼの前後なので、<b>ここで止めた焙煎後の重量が'
        + 'いちばん効く実測</b>です。最後まで焼いて、冷めてから量ってください。',
+  slowramp: '1ハゼが13分に来るまで昇温を遅くしたものです。'
+          + '測るのは<b>1ハゼの開始時刻</b>と<b>焙煎後の重量</b>の2つだけ。'
+          + '1ハゼ終了と2ハゼは測れません(終了時点でも爆ぜ続ける設計です)。',
   exotherm: '10分50秒から20秒かけて吸入温度を218℃まで落とし、そのまま保ちます。'
           + '<b>落とし始めてから、2ハゼの音が消えるまでの秒数</b>をストップウォッチで'
           + '測ってください。焙煎の発熱があれば、その分だけ長く鳴り続けます。'
@@ -6019,14 +6040,16 @@ const CAL_MEASURE_IDS = ['calFcStart', 'calFcEnd', 'calScStart', 'calGreenG', 'c
 
 function switchCalKind(kind){
   if(!CAL_KIND_NOTES[kind]) return;
-  if(calKind !== 'exotherm') calEntries[calKind] = readCalForm();  // 画面の分を控える
+  // 当てはめに乗る種類のときだけ、画面の入力を控える
+  if(calKind === 'deep' || calKind === 'light') calEntries[calKind] = readCalForm();
   calKind = kind;
   for(const [id, k] of [['calKindDeep','deep'],['calKindLight','light'],
-                        ['calKindExotherm','exotherm']]){
+                        ['calKindExotherm','exotherm'],['calKindSlowramp','slowramp']]){
     const el = document.getElementById(id);
     if(el) el.classList.toggle('active', kind === k);
   }
-  const measuring = kind !== 'exotherm';
+  // 較正の当てはめに乗るのは深煎り用と浅煎り用だけ。他は説明を出すだけにする。
+  const measuring = kind === 'deep' || kind === 'light';
   for(const id of CAL_MEASURE_IDS){
     const row = document.getElementById(id).closest('.settings-num-row');
     if(row) row.style.display = measuring ? '' : 'none';
@@ -6036,7 +6059,8 @@ function switchCalKind(kind){
     const el = document.getElementById(id);
     if(el) el.style.display = measuring ? '' : 'none';
   }
-  document.getElementById('calExothermPanel').style.display = measuring ? 'none' : '';
+  document.getElementById('calExothermPanel').style.display = kind === 'exotherm' ? '' : 'none';
+  document.getElementById('calSlowrampPanel').style.display = kind === 'slowramp' ? '' : 'none';
   document.getElementById('btnCalApply').style.display = measuring ? '' : 'none';
   document.getElementById('calKindNote').innerHTML = CAL_KIND_NOTES[kind];
   if(measuring){
