@@ -1090,13 +1090,10 @@
       </div>
       <button class="btn small" id="btnCalOpen" style="width:auto;">較正を開く</button>
       <div id="calPanel" style="display:none; margin-top:8px;">
-        <div class="settings-note">
-          校正用プロファイルを焼いて、測れた項目だけ入れてください(ひとつでも構いません)。
-        </div>
-        <button class="btn small" id="btnCalLoadProfile" style="width:auto; margin:6px 0;">校正用プロファイルを読み込む</button>
-        <!-- 焼く前に決まっている豆の前提。較正で当てはめる定数と一緒に置く。
-             どちらも「この焙煎機とこの豆に合わせる」ための値で、普段は触らない。 -->
-        <div class="settings-note" style="margin-top:6px;">焼く前に分かっている豆の前提:</div>
+        <!-- 焼く前に決まっている豆の前提。測定値の入力より前に置く。
+             較正の手順は「前提を入れる → 焼く → 測った値を入れる」の順なので、
+             画面もその順に並べる。どちらも普段は触らない値。 -->
+        <div class="settings-note">焼く前に分かっている豆の前提:</div>
         <div class="settings-num-row"
              title="生豆の含水率(5〜15%)。推定入熱・推定焙煎指数に効きます">
           <label for="beanMoistureInput">生豆の含水率</label>
@@ -1118,6 +1115,10 @@
           </span>
         </div>
 
+        <div class="settings-note">
+          校正用プロファイルを焼いて、測れた項目だけ入れてください(ひとつでも構いません)。
+        </div>
+        <button class="btn small" id="btnCalLoadProfile" style="width:auto; margin:6px 0;">校正用プロファイルを読み込む</button>
         <!-- 較正用プロファイルは2つある。440秒までは同じ形で、止めるところだけが
              違う。豆の水の大半が抜けるのは1ハゼの前後なので、そこで止めたほう
              (浅煎り用)の焙煎後の重量がいちばん効く実測になる。両方焼くと、
