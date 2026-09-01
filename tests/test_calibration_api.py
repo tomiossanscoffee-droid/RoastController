@@ -44,8 +44,12 @@ def test_校正用プロファイルを取得できる(srv):
 def test_較正前は既定値で予想だけ返る(srv):
     d = body_of(srv.get_calibration())
     assert d["scale"] == {} and d["overrides"] == {}
-    # 予想は較正用プロファイルごとに返る(深煎り用・浅煎り用)
-    assert set(d["expected"]) == {"deep", "light"}
+    # 予想は較正用プロファイルごとに返る(深煎り用・浅煎り用・展開長め)
+    assert set(d["expected"]) == {"deep", "light", "long"}
+    # 展開長めは2ハゼまで届く(3本目の狙いは1ハゼを遅らせつつ最後まで焼くこと)
+    assert d["expected"]["long"]["scStart"] > d["expected"]["long"]["fcStart"]
+    # 1ハゼは既存2本より遅い
+    assert d["expected"]["long"]["fcStart"] > d["expected"]["deep"]["fcStart"]
     assert d["expected"]["deep"]["fcStart"] > 0
     assert d["expected"]["deep"]["scStart"] > d["expected"]["deep"]["fcStart"]
     # 浅煎り用は2ハゼまで届かない
@@ -89,46 +93,18 @@ def test_プロファイルごとに測定値を受け取れる(srv, tmp_path):
         assert abs(after[kind]["roastedG"] - want) <= 0.6, kind
 
 
-def test_発熱の検証用プロファイルを送れる(srv):
-    """2ハゼで吸入温度を落として保つ形。較正の当てはめには使わない。"""
-    d = body_of(srv.get_calibration_profile("exotherm"))
-    assert d["kind"] == "exotherm"
+def test_展開長めの校正用プロファイルを送れる(srv):
+    """1ハゼを遅らせて展開を長くとる形。較正の当てはめにも使う3本目。"""
+    d = body_of(srv.get_calibration_profile("long"))
+    assert d["kind"] == "long"
     assert len(d["uuid"]) == 16 and d["uuid"].isdigit()
     roast = d["roast"]
-    # 落としてから保つ形になっていること(終端の温度が最高温度より十分低い)
-    assert max(p[1] for p in roast) - roast[-1][1] >= 20
-    assert roast[-1][1] == roast[-2][1], "落とした先で保っていない"
+    # 最後まで上げ続ける形(2ハゼまで届かせる)
+    assert roast[-1][1] == max(p[1] for p in roast)
     # THE ROAST EXPERT の制限内
     assert max(p[1] for p in roast) <= 255
     assert len(roast) <= 20 and len(d["fan"]) <= 10
     assert roast[-1][0] <= 900
-    assert all(50 <= p[1] <= 100 for p in d["fan"])
-    assert d["cooldown"][0] > roast[-1][0]
-    # 較正の当てはめ対象には入れない(測るのが重量ではなく時間のため)
-    assert "exotherm" not in srv.beancal.CALIBRATION_PROFILES
-    assert "exotherm" in srv.beancal.SENDABLE_PROFILES
-
-
-def test_発熱があれば2ハゼが長く続く():
-    """検証用プロファイルが、発熱の有無を分けられること。
-
-    落としてから豆が2ハゼの温度を下回るまでの時間が、発熱があるほど延びる。
-    ここが分かれないなら、そのプロファイルでは何も測れない。
-    """
-    import roastlib.energy as E
-    from roastlib.calibration import EXOTHERM_PROBE_PROFILE as X
-    r = E.estimate(X["roast"], X["fan"])
-    assert r is not None
-    s = r["series"]
-    # 2ハゼの温度に届くこと(届かないと測りようがない)
-    above = [p["t"] for p in s if p["bean"] >= 225.0]
-    assert above, "2ハゼの豆温度に届きません"
-    # 落とし始めたあと、豆温度が確実に下がること
-    drop_at = next(p[0] for p in X["roast"] if p[1] == max(q[1] for q in X["roast"]))
-    at = lambda t: s[min(int(t), len(s) - 1)]["bean"]
-    assert at(drop_at + 90) < at(drop_at) - 10, "落としても豆温度が下がらない"
-    # 音が消えるのは落とし始めてから1分以内(それ以上だと測るのが辛い)
-    assert 0 < max(above) - drop_at < 60
 
 
 def test_浅煎り用は深煎り用と途中まで同じ形(srv):

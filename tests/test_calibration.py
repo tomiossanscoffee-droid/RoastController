@@ -73,16 +73,28 @@ def test_校正用プロファイルは2ハゼまで届く():
 def test_校正用プロファイルは普段焼く範囲に収まる():
     """焼き飛ばした条件で定数を当てはめても、普段の焙煎には役立たない。
 
-    深煎り用は深煎りの帯、浅煎り用は浅煎りの帯に収まっていること
-    (実在の深煎りプリセットの推定指数は1.193〜1.217、浅煎りは1.099〜1.118)。
+    3本とも、実在のプリセットが取る指数の範囲(1.08〜1.26)に収まっていること。
+
+    ■ 浅煎り用が「浅煎り」の帯に入らないことについて(2026-09、未解決)
+    浅煎り用の実測は50g→43.1gで、指数にすると1.160。使う人の基準(1ハゼが
+    終わって少し先)では浅煎りだが、指数では中深煎りの帯に入る。ゆっくり焼くと
+    同じ豆温度でも余分に抜けるためで、指数という1つの数字に速さの情報が
+    入っていないことが原因。帯をずらしても直らないので、ここでは帯の判定を
+    条件にしない。
     """
     deep = E.estimate(P["roast"], P["fan"])
     assert E.roast_index_level(deep["roast_index"]) == "深煎り", deep["roast_index"]
     assert 1.18 < deep["roast_index"] < 1.26
+    for name, prof in (("浅煎り用", C.CALIBRATION_PROFILE_LIGHT),
+                       ("展開長め", C.CALIBRATION_PROFILE_LONG)):
+        r = E.estimate(prof["roast"], prof["fan"])
+        assert 1.08 < r["roast_index"] < 1.26, f"{name} {r['roast_index']:.4f}"
+    # 深煎り用がいちばん重く焼ける(3本の並び順は設計どおりであること)
     light = E.estimate(C.CALIBRATION_PROFILE_LIGHT["roast"],
                        C.CALIBRATION_PROFILE_LIGHT["fan"])
-    assert E.roast_index_level(light["roast_index"]) == "浅煎り", light["roast_index"]
-    assert 1.08 < light["roast_index"] < 1.14
+    long_ = E.estimate(C.CALIBRATION_PROFILE_LONG["roast"],
+                       C.CALIBRATION_PROFILE_LONG["fan"])
+    assert light["roasted_g"] > long_["roasted_g"] > deep["roasted_g"]
 
 
 def test_校正用プロファイルは1ハゼ付近がゆるやか():
@@ -211,42 +223,34 @@ def test_浅煎りの重量は実測より重く出る():
     assert l > d, "浅いほどずれが大きい、という傾向が崩れています"
 
 
-# 発熱の検証用プロファイルを実機で焼いた結果(2026-08-31、ケニア ニエリ・生豆50g)。
-#   2ハゼ開始 10:18(618秒) / 2ハゼの音が消えた 11:28(688秒)
-# 実際の吸入温度カーブ(機械は落とすのに約10秒遅れた)で計算すると:
-#   発熱なし        2ハゼ 621秒(+3) / 音が消える 677秒(-11)
-#   約 70 kJ/kg     2ハゼ 614秒(-4) / 音が消える 685秒( -3)
-#   約120 kJ/kg     2ハゼ 611秒(-7) / 音が消える 691秒( +3)
-#   約300 kJ/kg     2ハゼ 606秒(-12)/ 音が消える 721秒(+33)  ← 明らかに合わない
-# 豆ごとのばらつき(1ハゼ開始で10秒)と、音の裾(しきい値を跨いだ後も鳴り続ける)を
-# 考えると、この焙煎機の発熱は<b>0〜120 kJ/kg</b>で、それ以上は否定される。
-# ドラム焙煎で言われる「2ハゼで火を絞らないと進んでしまう」ほどの発熱は、
-# 50gの熱風焙煎機では観測されなかった。豆が空気と強く結びついていて、
-# 出た熱がすぐ運び去られるためと考えられる。
-# → いまのモデル(分解は常に吸熱)のままで、この焙煎機には十分合う。
-EXOTHERM_PROBE_RESULT = {"scStart": 618.0, "scSoundEnd": 688.0}
+# ■ 削除した試験用プロファイルの実測(2026-09に profile を削除、記録は残す)
+# 発熱の検証(2026-08-31、ケニア ニエリ・生豆50g): 2ハゼ618秒 / 音は688秒まで。
+#   発熱を持たないモデルの予測は 2ハゼ621秒・音677秒で、実測とよく合う。
+#   発熱を入れた形はAICcでも交差検証でも棄却された。
+# 昇温を遅くした検証(2026-09-01、同じ豆): 1ハゼ音は全体で3回のみ
+#   (12:20/12:50/14:13)、焙煎後43.1g。9.3分で焼いた浅煎り用と完全に同じ重量で、
+#   「重量は時間ではなく到達温度で決まる」ことがはっきりした。この実測で
+#   U0と乾燥の速さを当てはめ直してある(roastlib/energy.py の U0 の但し書き)。
+SLOW_RAMP_RESULT = {"fcStart": 740.0, "roastedG": 43.1}
 
 
-def test_発熱は小さい():
-    """発熱を入れなくても、2ハゼの実測に合うこと。
+def test_遅い昇温の実測を再現できる():
+    """削除したプロファイルの実測を、いまの既定値が再現できること。
 
-    検証用プロファイルの実測(上のEXOTHERM_PROBE_RESULT)に対して、発熱を持たない
-    いまのモデルが2ハゼの開始時刻を当てられることを確かめる。ここが外れるように
-    なったら、発熱を入れるかどうかを検討し直すこと。
+    このプロファイルはもう送れないが、実測は既定値の根拠になっている。
+    モデルを変えてここが合わなくなったら、その変更を疑うこと。
     """
-    prof = C.EXOTHERM_PROBE_PROFILE
-    r = E.estimate(prof["roast"], prof["fan"])
-    assert r is not None
-    s = r["series"]
-    sc = next((p["t"] for p in s if p["bean"] >= C.T_SC_BEAN), None)
-    assert sc is not None, "検証用プロファイルが2ハゼに届きません"
-    # 設計カーブでの計算なので、実機の追従遅れ(約10秒)ぶんは緩く見る
-    assert abs(sc - EXOTHERM_PROBE_RESULT["scStart"]) <= 20, f"2ハゼ {sc:.0f}秒"
-    # 落としたあと、音が消えるまでの長さが実測とかけ離れていないこと
-    last = max((p["t"] for p in s if p["bean"] >= C.T_SC_BEAN), default=None)
-    got = last - sc
-    want = EXOTHERM_PROBE_RESULT["scSoundEnd"] - EXOTHERM_PROBE_RESULT["scStart"]
-    assert abs(got - want) <= 30, f"2ハゼが続いた時間 モデル{got:.0f}秒 実測{want:.0f}秒"
+    prof = {"roast": [[0, 185], [60, 95], [300, 150], [480, 180],
+                      [720, 206], [900, 209]],
+            "fan": [[0, 50], [1, 80], [300, 70], [900, 58]]}
+    r = E.estimate(prof["roast"], prof["fan"], moisture=0.11)
+    assert r["crack_start"] is not None
+    assert abs(r["crack_start"] - SLOW_RAMP_RESULT["fcStart"]) <= 40, \
+        f"1ハゼ {r['crack_start']:.0f}秒(実測 {SLOW_RAMP_RESULT['fcStart']:.0f}秒)"
+    # 1ハゼ音が3回しか鳴らなかった = 焙煎終了までに1ハゼは終わっていない
+    assert r["crack_end"] is None, f"1ハゼが{r['crack_end']:.0f}秒で終わってしまう"
+    assert abs(r["roasted_g"] - SLOW_RAMP_RESULT["roastedG"]) <= 1.0, \
+        f"焙煎後 {r['roasted_g']:.2f}g(実測 {SLOW_RAMP_RESULT['roastedG']}g)"
 
 
 def test_途中重量が1点だけだと当てはめが暴れる():

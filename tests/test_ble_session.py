@@ -702,38 +702,39 @@ def test_校正用のUUIDは生成プロファイルと衝突しない():
     assert CALIBRATION_UUID != str(int(time.time() * 1000)).zfill(16)
 
 
-def test_遅い昇温の検証用は送信できる形で返る():
-    """1ハゼを13分まで遅らせたプロファイル。実機の仕様内に収まっていること。
+def test_展開長めの校正用は送信できる形で返る():
+    """1ハゼを8分過ぎまで遅らせた校正用プロファイル。実機の仕様内であること。
 
-    既存3本は1ハゼが7.4〜7.5分に固まっており、同じ速さの焙煎を足しても
-    情報が増えない。この1本だけが既存から離れた条件になる。
+    既存2本は1ハゼがどちらも7分台で重なっており、そこが情報の飽和点だった。
+    この1本を足すと、熱の入りやすさと乾燥の速さの決まり具合が約2倍になる。
     """
     import roastlib.calibration as C
-    p = C.SLOW_RAMP_PROFILE
-    assert p in C.SENDABLE_PROFILES.values()
-    assert C.SENDABLE_PROFILES["slowramp"] is p
+    p = C.CALIBRATION_PROFILE_LONG
+    assert C.SENDABLE_PROFILES["long"] is p
+    assert C.CALIBRATION_PROFILES["long"] is p
     # パナソニック公式の仕様: 温度は20点・255℃まで、風量は10点・50〜100%
     assert len(p["roast"]) <= 20
     assert len(p["fan"]) <= 10
     assert all(0 <= v <= 255 for _, v in p["roast"])
     assert all(50 <= v <= 100 for _, v in p["fan"])
-    # 時刻は昇順で、メーカー公表の最長15分(900秒)以内
     for pts in (p["roast"], p["fan"]):
         assert [t for t, _ in pts] == sorted(t for t, _ in pts)
-    assert p["roast"][-1][0] <= 900
+    assert p["roast"][-1][0] <= 900          # メーカー公表の最長15分
     assert p["cooldown"][0] > p["roast"][-1][0]
 
 
-def test_遅い昇温の検証用は既存より1ハゼが遅い():
-    """このプロファイルの狙いは「既存3本と違う速さで焼くこと」そのもの。
-    ここが既存に近づいてしまうと、足しても新しい情報が得られない。"""
+def test_展開長めは既存2本より1ハゼが遅い():
+    """この1本の狙いは「既存2本と違う時刻で1ハゼを起こすこと」そのもの。
+    ここが既存に近づくと、足しても新しい情報が得られない。"""
     import roastlib.calibration as C
     import roastlib.energy as E
     fc = {}
-    for name, prof in (("slow", C.SLOW_RAMP_PROFILE), ("deep", C.CALIBRATION_PROFILE),
+    for name, prof in (("long", C.CALIBRATION_PROFILE_LONG),
+                       ("deep", C.CALIBRATION_PROFILE),
                        ("light", C.CALIBRATION_PROFILE_LIGHT)):
         r = E.estimate(prof["roast"], prof["fan"], moisture=0.11)
         assert r is not None and r["crack_start"] is not None, name
+        assert r["crack_end"] is not None, f"{name}: 1ハゼが終わらない"
         fc[name] = r["crack_start"]
-    assert fc["slow"] > fc["deep"] + 180, fc
-    assert fc["slow"] > fc["light"] + 180, fc
+    assert fc["long"] > fc["deep"] + 30, fc
+    assert fc["long"] > fc["light"] + 30, fc
