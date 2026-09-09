@@ -171,11 +171,21 @@ ERROR_RECOVERY_RISE = 2.0
 CONNECT_RETRY_ATTEMPTS = 3
 CONNECT_RETRY_DELAY = 1.5      # リトライ間隔(秒)
 
-# 焙煎中に接続が切れた場合の自動再接続の最大試行回数と間隔。
-# 焙煎自体は機械側で自律的に進むため、再接続してNotify購読をやり直せば、
-# テレメトリ・ステータスの受信を再開できる可能性がある(実機での要検証)。
-RECONNECT_MAX_ATTEMPTS = 6
-RECONNECT_DELAY = 3.0
+# 焙煎中に接続が切れた場合の自動再接続。焙煎自体は機械側で自律的に進むため、
+# 再接続してNotify購読をやり直せば、テレメトリ・ステータスの受信を再開できる。
+#
+# 回数で打ち切ってはいけない。2026-09の実機ログでは、1回目が接続の
+# タイムアウト(30秒)で潰れ、残り5回はスキャン6秒+待ち3秒で消化して、
+# 合計78秒で諦めていた。そのとき焙煎はまだ2ハゼ直後で4分以上残っており、
+# 以降の記録が全部落ちた。焙煎が終わるまでは粘る。
+RECONNECT_DELAY = 3.0            # 失敗直後の待ち
+RECONNECT_DELAY_MAX = 10.0       # 何度も失敗したときの待ち(叩き続けない)
+RECONNECT_BUDGET_MAX = 20 * 60.0  # どれだけ長くてもここで打ち切る
+RECONNECT_BUDGET_MIN = 90.0      # プロファイルが分からないときでもこれだけは粘る
+RECONNECT_MARGIN_SECONDS = 120.0  # 焙煎+冷却の予定に足す余裕
+# 1回あたりの接続の待ち。既定(30秒前後)のままだと、1回の失敗で粘る時間の
+# ほとんどを使い切ってしまう。
+RECONNECT_CONNECT_TIMEOUT = 12.0
 
 # 「焙煎完了・冷却中」の間に切断された場合のフォールバック猶予秒数。
 # 2026-07: 実機ログで、冷却開始直後(容器交換が物理的に起こり得ないタイミング)に
@@ -451,6 +461,7 @@ class RoasterSession:
     # プロファイルの冷却予定時間(焙煎終了〜cooldownPointまでの秒数)。
     # send_profile()で算出し、_on_disconnected()の「焙煎完了・冷却中」判定で使う。
     _planned_cooldown_sec: Optional[float] = field(default=None, init=False)
+    _planned_roast_sec: Optional[float] = field(default=None, init=False)   # プロファイル上の焙煎時間
     _acked_uuid_echo: bool = field(default=False, init=False)
     _profile_uuid_ascii: Optional[bytes] = field(default=None, init=False)
     _start_time: Optional[float] = field(default=None, init=False)
@@ -513,7 +524,9 @@ class RoasterSession:
         self._log(f"発見: {getattr(target, 'address', target)} 接続中...")
         client = BleakClient(target, disconnected_callback=self._on_disconnected)
         try:
-            await client.connect()
+            # 上限を付ける。既定(30秒前後)のままだと、1回の失敗で再接続に
+            # 使える時間のほとんどを消費してしまう(実機ログで確認)。
+            await asyncio.wait_for(client.connect(), timeout=RECONNECT_CONNECT_TIMEOUT)
         except Exception as e:  # noqa: BLE001
             # 直接再接続に失敗した場合は、次回はスキャンからやり直せるようにする。
             self._target_device = None
@@ -625,10 +638,17 @@ class RoasterSession:
                 except Exception:  # noqa: BLE001
                     pass
 
-            for attempt in range(1, RECONNECT_MAX_ATTEMPTS + 1):
+            import time as _time
+            budget = self._reconnect_budget()
+            deadline = _time.monotonic() + budget
+            self._log(f"[再接続] 焙煎が終わるまで粘ります(最長 {budget / 60:.0f}分)。")
+            attempt = 0
+            while _time.monotonic() < deadline:
                 if self._user_initiated_disconnect:
                     return
-                self._log(f"[再接続] 試行 {attempt}/{RECONNECT_MAX_ATTEMPTS} ...")
+                attempt += 1
+                left = deadline - _time.monotonic()
+                self._log(f"[再接続] 試行 {attempt}(残り {left / 60:.1f}分) ...")
                 try:
                     if await self._scan_and_connect(timeout=6.0):
                         self._log("[再接続] 成功しました。ステータス・テレメトリの受信を再開します。")
@@ -641,12 +661,32 @@ class RoasterSession:
                         return
                 except Exception as e:  # noqa: BLE001
                     self._log(f"[再接続] 試行 {attempt} でエラー: {e!r}")
-                await asyncio.sleep(RECONNECT_DELAY)
+                # 何度も失敗するときは間隔を空ける(スキャン自体に6秒かかるので、
+                # 短い間隔で叩き続けても回数が増えるだけで当たりやすくならない)。
+                delay = min(RECONNECT_DELAY + (attempt // 4) * RECONNECT_DELAY,
+                            RECONNECT_DELAY_MAX)
+                await asyncio.sleep(delay)
 
-            self._log("[再接続] 上限まで試みましたが再接続できませんでした。")
+            self._log(f"[再接続] {budget / 60:.0f}分試みましたが再接続できませんでした。")
             self._emit_state(STATE_DISCONNECTED)
         finally:
             self._reconnecting = False
+
+    def _reconnect_budget(self) -> float:
+        """焙煎中の再接続を、どれだけの間続けるか(秒)。
+
+        焙煎は機械側で勝手に進むので、粘る意味があるのは「焙煎が終わって
+        冷却も済むまで」。プロファイルが分かっていればその予定から見積もり、
+        分からなければ最低限の時間だけ粘る。
+        """
+        if self._planned_roast_sec:
+            cooldown = (self._planned_cooldown_sec
+                        if self._planned_cooldown_sec and self._planned_cooldown_sec > 0
+                        else DEFAULT_COOLDOWN_GRACE_SECONDS)
+            budget = self._planned_roast_sec + cooldown + RECONNECT_MARGIN_SECONDS
+        else:
+            budget = RECONNECT_BUDGET_MIN
+        return max(RECONNECT_BUDGET_MIN, min(budget, RECONNECT_BUDGET_MAX))
 
     async def disconnect(self) -> None:
         import traceback
@@ -694,6 +734,8 @@ class RoasterSession:
         self._planned_cooldown_sec = None
         if profile.cooldown.x and profile.roast.x:
             self._planned_cooldown_sec = profile.cooldown.x[0] - profile.roast.x[-1]
+        # 切断からの再接続を、いつまで粘るかの見積もりに使う。
+        self._planned_roast_sec = profile.roast.x[-1] if profile.roast.x else None
 
         sequence = build_write_sequence(profile, self._token)
         self._emit_state(STATE_SENDING)

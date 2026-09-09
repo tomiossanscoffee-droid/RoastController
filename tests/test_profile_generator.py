@@ -799,3 +799,213 @@ class TestProfileHealth:
         rushed = [[0, 185], [110, 150], [250, 220], [280, 235], [330, 245]]
         r = evaluate_profile_health(rushed, self.GT, bands, roast_level=None)
         assert r["ok"] is False and "total" in {w["key"] for w in r["warnings"]}
+
+
+# ------------------------------------------------------------
+# フェーズ境界を豆温度モデルで決めるモード
+# ------------------------------------------------------------
+from roastlib.profile_generator import (  # noqa: E402
+    BEAN_COLOR_CHANGE, PHASE_MODE_AIR, PHASE_MODE_BEAN,
+    bean_phase_points, phase_mode, preset_b_medians, ror_diff_targets,
+)
+
+GT_BEAN = dict(GT, mode=PHASE_MODE_BEAN, beanColorChange=BEAN_COLOR_CHANGE)
+
+
+def test_既定は従来どおり吸入温度で判定する():
+    """設定が無い・知らない値のときは、これまでの動きを変えない。"""
+    assert phase_mode(None) == PHASE_MODE_AIR
+    assert phase_mode({}) == PHASE_MODE_AIR
+    assert phase_mode({"mode": "なにか"}) == PHASE_MODE_AIR
+    assert phase_mode(GT) == PHASE_MODE_AIR
+    assert phase_mode(GT_BEAN) == PHASE_MODE_BEAN
+
+
+def test_豆温度モードの境界はモデルが決める():
+    """1ハゼ・2ハゼは温度のしきい値ではなく、モデル自身が出す時刻を使う。"""
+    import roastlib.energy as E
+    p = generate_profile_abc("深煎り", a_sec=180, b_sec=180, c_sec=120, d_sec=60,
+                             guide_temps=GT_BEAN)
+    got = bean_phase_points(p["roast"], p["fan"], GT_BEAN)
+    r = E.estimate([[x[0], x[1]] for x in p["roast"]],
+                   [[x[0], x[1]] for x in p["fan"]])
+    assert got["t_fc"] == r["crack_start"]
+    assert got["t_sc"] == r["second_crack"]
+    # カラーチェンジだけは、しきい値(豆温度)で決める
+    assert abs(got["cc"] - BEAN_COLOR_CHANGE) < 1e-9
+
+
+def test_豆温度モードでも狙った時間どおりに焼ける():
+    """生成→解析の往復。狙ったA/Bと、モデルが読み取るA/Bが合うこと。
+
+    合わないと「A=180秒で作ったのに解析はA=150秒と言う」ことになる。
+    ずれの許容は、1ハゼ時刻の実測精度(8秒)より小さく取る。
+    """
+    for level in ("浅煎り", "中煎り", "深煎り"):
+        p = generate_profile_abc(level, a_sec=180, b_sec=180, c_sec=120,
+                                 guide_temps=GT_BEAN)
+        got = analyze_abc_phases(p["roast"], GT_BEAN, p["fan"])
+        assert got is not None, level
+        assert abs(got["a_sec"] - p["params"]["a_sec"]) <= 5, (level, got)
+        assert abs(got["b_sec"] - p["params"]["b_sec"]) <= 5, (level, got)
+
+
+def test_豆温度モードはRoRの基準もずらす():
+    """豆温度のRoRは吸入温度のRoRと別物なので、目標値をそのまま使えない。
+
+    プリセット174本の実測で中央値が -9.5(吸入)対 -12.4(豆温度)と離れており、
+    ずらさないと全プロファイルが「減少寄り」に偏って評価される。
+    """
+    air, bean = ror_diff_targets(GT), ror_diff_targets(GT_BEAN)
+    assert air == ABC_ROR_DIFF_TARGET
+    # 「標準形」(レベル-1)の目標値は、豆温度のほうが下にある
+    assert bean[-1] < air[-1]
+    # 味の推測が使う基準値もモードで変える
+    assert preset_b_medians(GT) != preset_b_medians(GT_BEAN)
+
+
+def test_風量を渡すと豆温度モードの境界が変わる():
+    """風量は熱の入りやすさに効く。渡さないと固定値で計算される。"""
+    p = generate_profile_abc("中煎り", a_sec=180, b_sec=180, c_sec=120,
+                             guide_temps=GT_BEAN)
+    slow = [[t, 50] for t, _ in p["fan"]]
+    fast = [[t, 90] for t, _ in p["fan"]]
+    a = analyze_abc_phases(p["roast"], GT_BEAN, slow)
+    b = analyze_abc_phases(p["roast"], GT_BEAN, fast)
+    assert a and b and a["a_sec"] != b["a_sec"]
+
+
+def test_吸入モードの結果は変えていない():
+    """既定のままの人の見え方が変わらないこと。"""
+    p = generate_profile_abc("中煎り", a_sec=180, b_sec=180, c_sec=120, guide_temps=GT)
+    got = analyze_abc_phases(p["roast"], GT)
+    assert got["a_sec"] == p["params"]["a_sec"]
+    assert got["b_sec"] == p["params"]["b_sec"]
+    # 風量を渡しても吸入モードでは何も変わらない
+    assert analyze_abc_phases(p["roast"], GT, p["fan"]) == got
+
+
+# ------------------------------------------------------------
+# 味の推測(レーダーチャート)は常に豆温度で見る
+# ------------------------------------------------------------
+def _taste(pts, gt, fan=None):
+    return infer_taste_profile(pts, guide_temps=gt, fan_points=fan)
+
+
+def test_味の推測はフェーズ境界の設定に左右されない():
+    """レーダーの5値は、吸入モードでも豆温度モードでも同じであること。
+
+    フェーズ境界の決め方は表示・生成の都合だが、味は豆に起きたことなので
+    設定で変わってはいけない。
+    """
+    p = generate_profile_abc("中煎り", a_sec=180, b_sec=180, c_sec=120, guide_temps=GT)
+    air = _taste(p["roast"], GT, p["fan"])
+    bean = _taste(p["roast"], GT_BEAN, p["fan"])
+    for k in ("acidity", "sweetness", "bitterness", "body", "aftertaste"):
+        assert air[k] == bean[k], k
+    # 一方で、返り値の abc は設定どおり(ABCモードの入力欄が読むため)
+    assert air["abc"]["a_sec"] != bean["abc"]["a_sec"] or air["abc"] == bean["abc"]
+
+
+def test_投入温度が低くても序盤に熱が入っていれば酸は控えめと読む():
+    """吸入の投入温度だけを見ると読み違える形がある。
+
+    投入70℃でも60秒で190℃まで上げるプロファイルでは、豆は序盤に多くの熱を
+    受けている。従来は投入温度が低いことだけを見て「明るい(酸が強い)」と
+    判定していた。酸の軸だけは豆側で見るので、こちらは読み違えない。
+    コクは吸入側のまま(パナソニックの実データではそちらが良かった)。
+    """
+    fast = [[0, 70], [1, 150], [60, 190], [120, 205], [240, 230], [310, 240]]
+    slow = [[0, 70], [60, 95], [120, 140], [240, 210], [310, 240]]
+    assert _taste(fast, GT)["acidity"] <= _taste(slow, GT)["acidity"]
+
+
+def test_焙煎が深いほど苦味が強く酸が弱い():
+    """豆温度ベースにしても、焙煎理論と矛盾しないこと。"""
+    prev_acid, prev_bitter = 6, 0
+    for level in ("浅煎り", "中煎り", "中深煎り", "深煎り"):
+        p = generate_profile(level, guide_temps=GT)
+        t = _taste(p["roast"], GT, p.get("fan"))
+        assert t["acidity"] <= prev_acid, level
+        assert t["bitterness"] >= prev_bitter, level
+        prev_acid, prev_bitter = t["acidity"], t["bitterness"]
+
+
+def test_豆温度が出せないカーブでも結果は返る():
+    """壊れたカーブで例外にせず、従来の計算に落として値を返すこと。"""
+    t = _taste([[0, 180], [1, 181]], GT)
+    for k in ("acidity", "sweetness", "bitterness", "body", "aftertaste"):
+        assert 1 <= t[k] <= 5, k
+
+
+def test_酸とコクは別の量から求める():
+    """以前は同じ brightness を逆符号で共有していた(独立に判定できない、と
+    コード自身が書いていた)。パナソニックのレーダー実データ173本と
+    突き合わせると、この2つは別の量に反応する:
+      酸  : 豆側(1ハゼまでの上昇の前半割合)が良い  0.523 → 0.541
+      コク: 吸入側(投入温度・ターニングポイント)が良い 0.344 → 0.280(豆にすると悪化)
+    到達しうる上限(焙煎度だけで説明できる相関)は酸0.557・コク0.403なので、
+    どちらもその9割前後まで来ている。
+    """
+    import roastlib.profile_generator as G
+    # 序盤の入熱だけが違う2本(終了は同じ)。酸は動き、コクは別の量で決まる。
+    front = [[0, 185], [60, 95], [120, 150], [300, 200], [480, 226]]
+    back = [[0, 185], [60, 95], [120, 110], [300, 175], [480, 226]]
+    a, b = _taste(front, GT), _taste(back, GT)
+    assert a["acidity"] != b["acidity"], "序盤の入熱が酸に効いていない"
+    # 投入とターニングポイントが同じなら、コクの序盤成分は同じ
+    assert G._BEAN_EARLY_BASE > 0 and G._BEAN_EARLY_SCALE > 0
+
+
+def test_豆温度モードのRoR目標は刻みも広げる():
+    """中心をずらすだけでは足りない。
+
+    豆温度のRoR差は吸入より散らばりが大きく(四分位幅3.8 対 1.6)、刻みを
+    据え置くと同じプロファイル群が5段階に散る。中心だけずらした版では
+    プリセット174本のうち「減少(-1)」に入るのが59%しかなく(吸入は82%)、
+    残り32%が「減少(強)」に落ちて、酸の判定(drの係数が最大)を狂わせていた。
+    """
+    import roastlib.profile_generator as G
+    air = G.ror_diff_targets(GT)
+    bean = G.ror_diff_targets(GT_BEAN)
+    # 中心は下へ、刻みは広く
+    assert bean[-1] < air[-1]
+    air_step = air[0] - air[-1]
+    bean_step = bean[0] - bean[-1]
+    assert bean_step > air_step * 1.3, (air_step, bean_step)
+    # 目標値がプリセットの実測範囲(-22.1〜+25.7)に収まっていること。
+    # 外れていると、生成器が到達できない形を目標にしてしまう。
+    assert -22.1 <= bean[-2] and bean[2] <= 25.7, bean
+    # 5段階の並びは保つ
+    assert bean[-2] < bean[-1] < bean[0] < bean[1] < bean[2]
+
+
+def test_豆温度モードならガイド線が無くても生成できる():
+    """豆温度モードでは、吸入のガイド線は寄せていく出発点にすぎない。
+
+    境界そのものは豆温度モデルが決めるので、ガイド線が空でもプリセットの
+    中央値から始めれば同じ位置に収束する。吸入モードでは従来どおり必須。
+    """
+    empty = {"colorChange": None, "firstCrack": None, "secondCrack": None,
+             "mode": PHASE_MODE_BEAN, "beanColorChange": BEAN_COLOR_CHANGE}
+    for level in ("浅煎り", "中煎り", "深煎り"):
+        a = generate_profile_abc(level, a_sec=180, b_sec=180, c_sec=120, guide_temps=empty)
+        b = generate_profile_abc(level, a_sec=180, b_sec=180, c_sec=120, guide_temps=GT_BEAN)
+        ra = analyze_abc_phases(a["roast"], empty, a["fan"])
+        rb = analyze_abc_phases(b["roast"], GT_BEAN, b["fan"])
+        assert abs(ra["a_sec"] - rb["a_sec"]) <= 5, level
+        assert abs(ra["b_sec"] - rb["b_sec"]) <= 8, level
+    # 吸入モードでは、これまでどおりガイド線が要る
+    with pytest.raises(ValueError):
+        generate_profile_abc("中煎り", guide_temps={"colorChange": None, "firstCrack": None})
+
+
+def test_豆温度モードの設定が壊れていても落ちない():
+    """設定ファイルを手で書き換えられても、既定に戻して動くこと。"""
+    import roastlib.profile_generator as G
+    for bad in ("abc", None, -50, 250, [1], {"a": 1}):
+        assert G.bean_color_change({"beanColorChange": bad}) == G.BEAN_COLOR_CHANGE, bad
+        r = analyze_abc_phases([[0, 185], [60, 95], [240, 180], [500, 210], [760, 240]],
+                               dict(GT, mode=PHASE_MODE_BEAN, beanColorChange=bad))
+        assert r is not None and r["a_sec"] > 0, bad
+    assert G.bean_color_change({"beanColorChange": "140"}) == 140.0

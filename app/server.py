@@ -17,19 +17,23 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
 import json
 import math
 import os
 import re
 import signal
 import threading
+import urllib.parse
+import datetime
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import base64
@@ -67,6 +71,9 @@ from roastlib.ble.session import (  # noqa: E402
 from roastlib import energy as energy_module  # noqa: E402
 from roastlib.energy import estimate as estimate_energy  # noqa: E402
 from roastlib import calibration as beancal  # noqa: E402
+from roastlib import learning as beanlearn  # noqa: E402
+from roastlib import structure as beanstruct  # noqa: E402
+from roastlib import profile_generator as pgen  # noqa: E402
 from roastlib.profile_generator import (  # noqa: E402
     generate_profile, infer_taste_profile, ROAST_LEVELS as GENERATOR_ROAST_LEVELS,
     generate_profile_abc, ABC_ROAST_LEVELS, ABC_BASE, ABC_UNITS, ABC_LIMITS,
@@ -86,6 +93,9 @@ FAVORITES_PATH = Path(os.environ.get("ROAST_FAVORITES_PATH", str(REPO_ROOT / "fa
 GUIDE_TEMPS_PATH = Path(os.environ.get("ROAST_GUIDE_TEMPS_PATH", str(REPO_ROOT / "guide_temps.json")))
 APP_SETTINGS_PATH = Path(os.environ.get("ROAST_APP_SETTINGS_PATH", str(REPO_ROOT / "app_settings.json")))
 CALIBRATION_PATH = Path(os.environ.get("ROAST_CALIBRATION_PATH", str(REPO_ROOT / "calibration.json")))
+# モデル構造の見直しの結果(どの定数を当てはめるか + その値 + 履歴)。
+# 較正(calibration.json)とは別に持つ。あちらは測定値と、そこから当てはめた値。
+MODEL_STRUCTURE_PATH = Path(os.environ.get("ROAST_MODEL_STRUCTURE_PATH", str(REPO_ROOT / "model_structure.json")))
 IKAWA_PATH = Path(os.environ.get("ROAST_IKAWA_PATH", str(REPO_ROOT / "ikawa_profiles.json")))
 TASTE_CHARTS_PATH = Path(os.environ.get(
     "ROAST_TASTE_CHARTS_PATH", str(REPO_ROOT / "THE_ROAST_Extract" / "taste_charts.json")
@@ -98,6 +108,10 @@ BEAN_SHEETS_PATH = Path(os.environ.get(
 ))
 BEAN_PURCHASES_PATH = Path(os.environ.get("ROAST_BEAN_PURCHASES_PATH", str(REPO_ROOT / "bean_purchases.json")))
 ROAST_RECORDS_PATH = Path(os.environ.get("ROAST_RECORDS_PATH", str(REPO_ROOT / "roast_records.json")))
+# 学習結果の控え。焙煎ログから計算した派生値なので、消しても作り直せる。
+LEARNED_CACHE_PATH = Path(os.environ.get("ROAST_LEARNED_CACHE_PATH", str(REPO_ROOT / "learned_cache.json")))
+# プロファイルごとの推定値(最終豆温度・焙煎指数)の控え。これも派生値。
+ESTIMATE_CACHE_PATH = Path(os.environ.get("ROAST_ESTIMATE_CACHE_PATH", str(REPO_ROOT / "estimate_cache.json")))
 VAPID_PRIVATE_KEY_PATH = Path(os.environ.get("ROAST_VAPID_KEY_PATH", str(REPO_ROOT / "vapid_private_key.pem")))
 PUSH_SUBSCRIPTIONS_PATH = Path(os.environ.get("ROAST_PUSH_SUBSCRIPTIONS_PATH", str(REPO_ROOT / "push_subscriptions.json")))
 LAST_SENT_PROFILE_PATH = Path(os.environ.get("ROAST_LAST_SENT_PROFILE_PATH", str(REPO_ROOT / "last_sent_profile.json")))
@@ -114,7 +128,9 @@ async def _lifespan(_app: FastAPI):
     # モデルを直した後は、保存してある較正を測定値から当てはめ直す
     # (中でキャッシュも温め直すので、こちらが先)。
     _refit_calibration_if_stale_async()
+    _warm_learned_async()
     _warm_profile_estimate_cache_async()
+    _warm_abc_caches_async()
     yield
 
 
@@ -153,6 +169,10 @@ _roast_counted: bool = False
 
 _continuous_roast: bool = False
 _continuous_task: Optional[asyncio.Task] = None
+# いま再送のBLE転送を実行中か。転送の途中で中断すると、焙煎機に半端な
+# プロファイルが残る恐れがあるため、この間だけは取り消しをかけない
+# (送るかどうかは、転送を始める直前に _continuous_roast で判断済み)。
+_continuous_sending: bool = False
 # 排出完了から次のプロファイル送信までの待ち時間(秒)。設定(continuousRoastDelay)で
 # 変更できる。下限を0にしないのは、排出完了の直後は機械がまだ次を受け付けられず、
 # 送信しても取りこぼされることがあるため。上限は「席を外して戻るまで」を想定した10分。
@@ -391,7 +411,16 @@ def remove_favorite(source: str, pid: str):
 #   使う人・焙煎機に紐づく個人設定のため、プロファイルとは別にサーバー側に保存し、
 #   アプリを再起動しても(ブラウザのlocalStorageに依存せず)引き継がれるようにする。
 # ------------------------------------------------------------
-DEFAULT_GUIDE_TEMPS = {"colorChange": 184, "firstCrack": 223, "secondCrack": 242}
+# 温度ガイド線の初期値(2026-09)。開発機(Panasonic The Roast)で、焙煎機の画面を
+# 見ながら決めた吸入温度。新規インストール時と、欄を空にして入れ直すときはこの値。
+# 公開版にも同じ値が入る。自分の焙煎機で見て決め直せば、そちらが保存される。
+#
+# 以前は全部 None(未設定)で始まり、入力するまでABCモード・味を推測が使えなかった。
+# 初期値があれば、届いたその日から一通り触れる。
+DEFAULT_GUIDE_TEMPS = {"colorChange": 170, "firstCrack": 223, "secondCrack": 242}
+# フェーズ境界を何で判定するか。既定は従来どおり吸入温度("air")。
+# "bean" にすると豆温度モデルが決める(roastlib/profile_generator.py の説明参照)。
+DEFAULT_PHASE_MODE = pgen.PHASE_MODE_AIR
 # 焙煎機で見て決める値。この範囲を外れるものは入力ミスとみなして未設定にする。
 GUIDE_TEMP_MIN, GUIDE_TEMP_MAX = 50, MAX_TEMPERATURE
 
@@ -446,15 +475,35 @@ def _clean_guide_temp(value):
 
 
 def _load_guide_temps() -> dict:
-    if not GUIDE_TEMPS_PATH.exists():
-        return dict(DEFAULT_GUIDE_TEMPS)
-    try:
-        data = json.loads(GUIDE_TEMPS_PATH.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return dict(DEFAULT_GUIDE_TEMPS)
+    """温度ガイド線と、フェーズ境界の決め方。
+
+    どの経路で返しても同じ形にする。ファイルが無いときだけ mode が欠ける、
+    といった差があると、受け取る側が場合分けを強いられる。
+    """
+    data = None
+    if GUIDE_TEMPS_PATH.exists():
+        try:
+            data = json.loads(GUIDE_TEMPS_PATH.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            data = None
     if not isinstance(data, dict):
-        return dict(DEFAULT_GUIDE_TEMPS)
-    return {k: _clean_guide_temp(data.get(k)) for k in DEFAULT_GUIDE_TEMPS}
+        data = {}
+    # 空欄(未設定)にされた項目は初期値に戻す。何も無い状態にすると
+    # ABCモード・味を推測が使えなくなり、直し方も分かりにくいため。
+    out = {}
+    for k, v in DEFAULT_GUIDE_TEMPS.items():
+        got = _clean_guide_temp(data.get(k))
+        out[k] = v if got is None else got
+    out["mode"] = (pgen.PHASE_MODE_BEAN if data.get("mode") == pgen.PHASE_MODE_BEAN
+                   else DEFAULT_PHASE_MODE)
+    out["beanColorChange"] = _clean_bean_cc(data.get("beanColorChange"))
+    return out
+
+
+def _clean_bean_cc(v) -> float:
+    """豆温度モードでのカラーチェンジ(℃)。範囲の判断はモデル側に任せる
+    (2か所に同じ範囲を書くと、片方だけ直したときに食い違う)。"""
+    return pgen.bean_color_change({"beanColorChange": v})
 
 
 # ------------------------------------------------------------
@@ -465,6 +514,10 @@ def _load_guide_temps() -> dict:
 _preset_level_curves_cache: Optional[list] = None
 _phase_bases_cache: dict = {}
 _health_bands_cache: dict = {}
+# 同じ鍵の計算が二重に走らないようにする。豆温度モードでは174本にモデルを
+# 走らせて3.5秒かかるため、起動時の暖機と最初の要求がぶつかると両方が同じ
+# 計算を始め、待ち時間が倍以上になっていた(実測14.7秒)。
+_abc_cache_lock = threading.Lock()
 
 
 def _preset_level_curves() -> list:
@@ -489,24 +542,37 @@ def _preset_level_curves() -> list:
 def _phase_bases_for(guide_temps: dict) -> dict:
     """ガイド温度に応じた、焙煎度ごとのフェーズ時間基準値を返す(キャッシュ)。
     プリセットDBが読めない等で失敗した場合はNone(=生成器はハードコード既定値を使う)。"""
-    key = (guide_temps.get("colorChange"), guide_temps.get("firstCrack"), guide_temps.get("secondCrack"))
-    if key not in _phase_bases_cache:
-        try:
-            _phase_bases_cache[key] = compute_preset_phase_bases(_preset_level_curves(), guide_temps)
-        except Exception:  # noqa: BLE001
-            _phase_bases_cache[key] = None
+    key = (guide_temps.get("colorChange"), guide_temps.get("firstCrack"),
+           guide_temps.get("secondCrack"), pgen.phase_mode(guide_temps),
+           guide_temps.get("beanColorChange"))
+    if key in _phase_bases_cache:
+        return _phase_bases_cache[key]
+    with _abc_cache_lock:
+        # 待っている間に他のスレッドが作り終えていることがある
+        if key not in _phase_bases_cache:
+            try:
+                _phase_bases_cache[key] = compute_preset_phase_bases(
+                    _preset_level_curves(), guide_temps)
+            except Exception:  # noqa: BLE001
+                _phase_bases_cache[key] = None
     return _phase_bases_cache[key]
 
 
 def _health_bands_for(guide_temps: dict) -> Optional[dict]:
     """ガイド温度に応じた、焙煎度ごとの各指標の正常帯を返す(キャッシュ)。
     プリセットDBが読めない/ガイド温度未設定で分割できない場合は None。"""
-    key = (guide_temps.get("colorChange"), guide_temps.get("firstCrack"), guide_temps.get("secondCrack"))
-    if key not in _health_bands_cache:
-        try:
-            _health_bands_cache[key] = compute_preset_health_bands(_preset_level_curves(), guide_temps)
-        except Exception:  # noqa: BLE001
-            _health_bands_cache[key] = None
+    key = (guide_temps.get("colorChange"), guide_temps.get("firstCrack"),
+           guide_temps.get("secondCrack"), pgen.phase_mode(guide_temps),
+           guide_temps.get("beanColorChange"))
+    if key in _health_bands_cache:
+        return _health_bands_cache[key]
+    with _abc_cache_lock:
+        if key not in _health_bands_cache:
+            try:
+                _health_bands_cache[key] = compute_preset_health_bands(
+                    _preset_level_curves(), guide_temps)
+            except Exception:  # noqa: BLE001
+                _health_bands_cache[key] = None
     return _health_bands_cache[key]
 
 
@@ -520,8 +586,17 @@ async def set_guide_temps(request: Request):
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"error": "本文はオブジェクトで送ってください"}, status_code=400)
-    data = {k: _clean_guide_temp(body.get(k)) for k in DEFAULT_GUIDE_TEMPS}
+    data = {}
+    for k, v in DEFAULT_GUIDE_TEMPS.items():
+        got = _clean_guide_temp(body.get(k))
+        data[k] = v if got is None else got
+    data["mode"] = (pgen.PHASE_MODE_BEAN if body.get("mode") == pgen.PHASE_MODE_BEAN
+                    else DEFAULT_PHASE_MODE)
+    data["beanColorChange"] = _clean_bean_cc(body.get("beanColorChange"))
     GUIDE_TEMPS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 判定の基準やガイド線が変わると、プリセット由来の基準値は作り直しになる。
+    # 次に「味を推測」を開くまでに間に合わせておく。
+    _warm_abc_caches_async()
     return JSONResponse({"ok": True})
 
 
@@ -570,12 +645,38 @@ BEAN_MOISTURE_MIN, BEAN_MOISTURE_MAX = 5.0, 15.0
 CHAFF_MIN, CHAFF_MAX = 0.0, 2.0
 
 
-def _load_app_settings() -> dict:
-    if not APP_SETTINGS_PATH.exists():
-        return dict(DEFAULT_APP_SETTINGS)
+# 設定ファイルの読み込みキャッシュ。プロファイル一覧は1件ごとに設定と較正を
+# 見るので、174件では同じファイルを何百回も開くことになる。実測すると
+# /api/profiles の1割強がこのファイル読みだった。更新時刻と大きさが変われば
+# 読み直すので、他のプロセスや手作業で書き換えても取り残されない。
+_FILE_CACHE: dict = {}
+
+
+def _read_json_cached(path: Path):
+    """JSONを読む。前回から変わっていなければ、前回の中身を返す。
+
+    戻り値は呼び出し側で書き換えないこと(同じ辞書を使い回している)。
+    """
     try:
-        data = json.loads(APP_SETTINGS_PATH.read_text(encoding="utf-8"))
+        st = path.stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        _FILE_CACHE.pop(path, None)
+        return None
+    hit = _FILE_CACHE.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
+        data = None
+    _FILE_CACHE[path] = (key, data)
+    return data
+
+
+def _load_app_settings() -> dict:
+    data = _read_json_cached(APP_SETTINGS_PATH)
+    if not isinstance(data, dict):
         return dict(DEFAULT_APP_SETTINGS)
     return {**DEFAULT_APP_SETTINGS, **data}
 
@@ -595,6 +696,8 @@ def _load_app_settings() -> dict:
 # 起動直後の一回だけは全件ぶんの計算が要るため、バックグラウンドで先に温めておく。
 _PROFILE_ESTIMATE_CACHE: dict = {}
 _PROFILE_ESTIMATE_LOCK = threading.Lock()
+# 前提が変わるたびに進む番号(_clear_profile_estimate_cache で進める)
+_ESTIMATE_GEN = 0
 
 
 def _bean_moisture_frac() -> float:
@@ -612,13 +715,39 @@ def _bean_moisture_frac() -> float:
 # 専用プロファイルを1回焼いて測った値から、モデルの定数を実機に合わせ直す。
 # 測定値と、そこから求めた上書き値の両方を保存する。上書き値だけだと、後から
 # 「何をどう測ったからこの値なのか」が追えなくなるため。
+def _default_calibration() -> dict:
+    """アプリの初期値になる較正(roastlib/calibration.py の DEFAULT_CALIBRATION)。
+
+    毎回コピーを返す。呼び出し先が辞書を書き換えても、次に読むときに
+    初期値が汚れていないようにする。
+    """
+    return copy.deepcopy(beancal.DEFAULT_CALIBRATION)
+
+
+def _save_calibration(data: dict) -> None:
+    """較正を保存する。
+
+    較正値は、豆温度モデルの推定にも学習にも効く。書き換えたら、覚えている
+    ものを全部捨てないと古い値のまま計算が続く。呼び出し側に任せると
+    取りこぼすので、ここでまとめて面倒を見る(実際、較正を書き換えても
+    学習値だけ捨て忘れていた)。
+    """
+    CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+    _FILE_CACHE.pop(CALIBRATION_PATH, None)
+    _clear_learned_cache()
+    _clear_profile_estimate_cache()
+
+
 def _load_calibration() -> dict:
-    if not CALIBRATION_PATH.exists():
-        return {"measurements": {}, "overrides": {}, "scale": {}, "notes": [], "used": []}
-    try:
-        data = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return {"measurements": {}, "overrides": {}, "scale": {}, "notes": [], "used": []}
+    """保存された較正。まだ無い(または壊れている)ときは初期値を返す。
+
+    ⚠️ 戻り値を書き換えないこと。読み込みをキャッシュしているので、同じ辞書が
+    次の呼び出しにも返る(保存するときは新しい辞書を作って書き出している)。
+    """
+    data = _read_json_cached(CALIBRATION_PATH)
+    if not isinstance(data, dict):
+        return _default_calibration()
     data.setdefault("measurements", {})
     data.setdefault("overrides", {})
     data.setdefault("scale", {})
@@ -638,51 +767,6 @@ _CAL_VALUE_RANGE = {
 }
 
 
-def _altitude_fc_slope() -> float:
-    """標高による1ハゼ豆温度の補正(℃/1000m)。
-
-    設定項目にはしていない。焙煎ログから学んだ値があればそれを使い、無ければ0
-    (=補正しない)。手で決めるだけの根拠が無いので、実測から決まるまでは効かせない。
-    """
-    v = (_load_calibration().get("learned") or {}).get("altitudeSlope")
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return 0.0
-    return v if -10.0 <= v <= 10.0 else 0.0
-
-
-def _learned_fc_bean_temp() -> float:
-    """焙煎ログから学んだ1ハゼ豆温度。まだ採用していなければモデルの基準値。"""
-    v = (_load_calibration().get("learned") or {}).get("fcBeanTemp")
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return energy_module.T_FC_BEAN
-    # 極端な値は採らない(記録の取り違え・打ち間違いへの備え)
-    return v if 170.0 <= v <= 225.0 else energy_module.T_FC_BEAN
-
-
-def _learned_sc_bean_temp() -> float:
-    """焙煎ログから学んだ2ハゼ豆温度。無ければ較正が置いている仮定値。"""
-    v = (_load_calibration().get("learned") or {}).get("scBeanTemp")
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return beancal.T_SC_BEAN
-    return v if 200.0 <= v <= 260.0 else beancal.T_SC_BEAN
-
-
-def _fc_bean_temp_for(altitude_bucket: str) -> float:
-    """その標高帯での1ハゼ豆温度。
-
-    基準は「焙煎ログから学んだ値」があればそれ、無ければモデルの既定値。
-    そこに標高の補正を足す。標高が分からなければ基準値のまま。
-    """
-    return _learned_fc_bean_temp() + energy_module.altitude_fc_offset(
-        altitude_bucket, _altitude_fc_slope())
-
-
 def _chaff_g() -> float:
     v = _load_app_settings().get("chaffG", DEFAULT_APP_SETTINGS["chaffG"])
     try:
@@ -692,7 +776,7 @@ def _chaff_g() -> float:
     return min(max(v, CHAFF_MIN), CHAFF_MAX)
 
 
-def _calibration_overrides() -> dict:
+def _calibration_overrides_raw() -> dict:
     """estimate() に渡す上書き値。較正の結果と、1ハゼ豆温度の設定。
 
     知らない定数名と、既定値からかけ離れた値は捨てる。
@@ -724,7 +808,24 @@ def _calibration_overrides() -> dict:
     return out
 
 
-EMPTY_ESTIMATE = {"end_bean_temp": None, "roast_index": None, "roast_index_level": ""}
+EMPTY_ESTIMATE = {"end_bean_temp": None, "roast_index": None, "roast_index_level": "",
+                  "energy_kcal": None, "crack_start": None}
+
+
+def _list_metrics(roast, est: dict) -> dict:
+    """一覧の並べ替えに使う数値。概要欄に出している6つと同じものを返す。
+
+    Development Time は「1ハゼ(推定)から焙煎終了まで」。1ハゼに届かない
+    プロファイルでは None になる(並べ替えでは末尾へ回す)。
+    """
+    duration = roast[-1][0] if roast else None
+    crack = est.get("crack_start")
+    return {
+        "preheat_temp": roast[0][1] if roast else None,
+        "energy_kcal": est.get("energy_kcal"),
+        "dev_time": (round(duration - crack, 1)
+                     if duration is not None and crack is not None else None),
+    }
 
 
 def _profile_estimate(roast, fan, moisture: float) -> dict:
@@ -736,12 +837,14 @@ def _profile_estimate(roast, fan, moisture: float) -> dict:
     """
     if not roast or len(roast) < 2:
         return EMPTY_ESTIMATE
+    # 学習した1ハゼ豆温度は _calibration_overrides() が重ねる。ここで
+    # _learned_fc_bean_temp() を別に足すと、2つの経路が別々の値を決めて食い違う。
     cal = dict(_calibration_overrides())
-    cal["T_FC_BEAN"] = _learned_fc_bean_temp()
-    key = (tuple(tuple(p) for p in roast),
-           tuple(tuple(p) for p in fan) if fan else None,
-           round(moisture, 4),
-           tuple(sorted(cal.items())))
+    # 鍵は短い文字列にする。控えをファイルに残すので、タプルのままだと
+    # JSONにできない。カーブがそのまま鍵なので、潰さないと長くなりすぎる。
+    key = hashlib.sha1(json.dumps([
+        roast, fan, round(moisture, 4), sorted(cal.items()),
+    ], default=str, separators=(",", ":")).encode("utf-8")).hexdigest()
     with _PROFILE_ESTIMATE_LOCK:
         cached = _PROFILE_ESTIMATE_CACHE.get(key)
     if cached is not None:
@@ -754,15 +857,99 @@ def _profile_estimate(roast, fan, moisture: float) -> dict:
         "end_bean_temp": round(est["end_bean_temp"], 1),
         "roast_index": round(est["roast_index"], 3),
         "roast_index_level": est["roast_index_level"],
+        # 一覧を「入熱」「Development Time」で並べ替えるために持たせる。
+        # どちらも同じ1回の計算から出るので、別に計算し直す必要は無い。
+        "energy_kcal": round(est["total_kcal"], 2),
+        "crack_start": (round(est["crack_start"], 1)
+                        if est.get("crack_start") is not None else None),
     }
     with _PROFILE_ESTIMATE_LOCK:
         _PROFILE_ESTIMATE_CACHE[key] = value
     return value
 
 
+# プリセットのカーブ。DBは読み取り専用で、起動中に変わることはない。
+# 一覧を出すたびに174件ぶんパースし直すと、それだけで /api/profiles の4割を
+# 占めていた(実測)。一度組んだら使い回す。
+_PRESET_CURVE_CACHE: dict = {}
+
+
+def _preset_curve(pid: int, row):
+    """プリセットの (温度カーブ, 風量カーブ, 焙煎時間, 最高温度)。"""
+    hit = _PRESET_CURVE_CACHE.get(pid)
+    if hit is not None:
+        return hit
+    profile = ModelFactory.from_series(row)
+    pts = profile.roast.points
+    got = (pts, profile.fan.points,
+           pts[-1][0] if pts else None,
+           max((p[1] for p in pts), default=None))
+    _PRESET_CURVE_CACHE[pid] = got
+    return got
+
+
+def _estimate_cache_fingerprint() -> str:
+    """推定値が変わる条件。較正値・含水率・チャフ量・モデルの版で決まる。
+
+    カーブそのものは鍵に入れない(鍵はプロファイルごとに別で持つ)。ここは
+    「前に計算したときと前提が同じか」だけを見る。
+    """
+    src = json.dumps({
+        "cal": _calibration_overrides(),
+        "moisture": _bean_moisture_frac(),
+        "model": energy_module.MODEL_VERSION,
+        # 覚えている値の形。項目を増やしたら上げる(古い控えには新しい項目が
+        # 入っておらず、そのまま使うと並べ替えの数値だけ空になる)。
+        "shape": 2,
+    }, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(src.encode("utf-8")).hexdigest()
+
+
+def _load_estimate_cache() -> None:
+    """前回の推定値をメモリへ戻す。前提が変わっていれば捨てる。
+
+    プリセット174本の計算に4.0秒かかる(実測)。起動のたびに計算し直すと、
+    最初のプロファイル一覧がそのぶん待たされる。
+    """
+    saved = _read_json_cached(ESTIMATE_CACHE_PATH)
+    if not isinstance(saved, dict) or saved.get("fingerprint") != _estimate_cache_fingerprint():
+        return
+    items = saved.get("items")
+    if not isinstance(items, dict):
+        return
+    with _PROFILE_ESTIMATE_LOCK:
+        for k, v in items.items():
+            if isinstance(v, dict):
+                _PROFILE_ESTIMATE_CACHE[k] = v
+
+
+def _estimate_gen() -> int:
+    with _PROFILE_ESTIMATE_LOCK:
+        return _ESTIMATE_GEN
+
+
+def _save_estimate_cache(expect_gen: int | None = None) -> None:
+    """いまの推定値をファイルへ残す。鍵はカーブそのものなので長い。
+    そのままだと読み書きが重くなるので、鍵は短く潰してから並べる。"""
+    with _PROFILE_ESTIMATE_LOCK:
+        if expect_gen is not None and expect_gen != _ESTIMATE_GEN:
+            return          # 計算中に前提が変わった。古い値は残さない
+        items = {str(k): v for k, v in _PROFILE_ESTIMATE_CACHE.items()}
+    try:
+        ESTIMATE_CACHE_PATH.write_text(json.dumps(
+            {"fingerprint": _estimate_cache_fingerprint(), "items": items,
+             "computed_at": time.strftime("%Y-%m-%d %H:%M:%S")},
+            ensure_ascii=False), encoding="utf-8")
+        _FILE_CACHE.pop(ESTIMATE_CACHE_PATH, None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _warm_profile_estimate_cache() -> None:
     """プリセット全件ぶんを裏で先に計算しておく(初回の一覧が待たされないように)。"""
     try:
+        gen = _estimate_gen()
+        _load_estimate_cache()
         if not Path(DB_PATH).exists():
             return
         moisture = _bean_moisture_frac()
@@ -770,13 +957,47 @@ def _warm_profile_estimate_cache() -> None:
         for _, row in db.profile.iterrows():
             profile = ModelFactory.from_series(row)
             _profile_estimate(profile.roast.points, profile.fan.points, moisture)
+        # 次に立ち上げたときに計算し直さずに済むよう、結果を残す
+        _save_estimate_cache(expect_gen=gen)
     except Exception:  # noqa: BLE001
         # 一覧側で必要になった時に計算し直せるので、失敗しても起動は妨げない
         pass
 
 
+# 先読みを裏で走らせるかどうか。テストでは切る。裏のスレッドが
+# 覚えている値を書き換えるので、入れておくと結果が実行ごとに変わる。
+_BACKGROUND_WARMUP = os.environ.get("ROAST_NO_BACKGROUND_WARMUP") != "1"
+
+
+def _start_background(target) -> None:
+    """先読みを裏で始める。切ってあるときは何もしない。"""
+    if not _BACKGROUND_WARMUP:
+        return
+    threading.Thread(target=target, daemon=True).start()
+
+
 def _warm_profile_estimate_cache_async() -> None:
-    threading.Thread(target=_warm_profile_estimate_cache, daemon=True).start()
+    _start_background(_warm_profile_estimate_cache)
+
+
+def _warm_abc_caches() -> None:
+    """ABCモード・味を推測が使う、プリセット由来の基準値を先に作っておく。
+
+    豆温度モードでは、フェーズ基準と正常帯を出すのに174本へモデルを走らせる
+    ため合わせて7秒かかる(吸入モードは0.1秒)。開いてから計算していたので、
+    「味を推測」に切り替えてから中身が出るまで待たされていた。
+    """
+    try:
+        gt = _load_guide_temps()
+        _phase_bases_for(gt)
+        _health_bands_for(gt)
+    except Exception:  # noqa: BLE001
+        # 開いた時に計算し直せるので、失敗しても起動は妨げない
+        pass
+
+
+def _warm_abc_caches_async() -> None:
+    _start_background(_warm_abc_caches)
 
 
 def _refit_calibration_if_stale() -> None:
@@ -793,19 +1014,501 @@ def _refit_calibration_if_stale() -> None:
             return
         result = beancal.fit(meas, moisture=_bean_moisture_frac())
         keep = {k: data[k] for k in ("learned",) if k in data}
-        CALIBRATION_PATH.write_text(json.dumps(
-            {"measurements": meas, "modelVersion": energy_module.MODEL_VERSION,
-             **result, **keep},
-            ensure_ascii=False, indent=2), encoding="utf-8")
-        _clear_profile_estimate_cache()
+        _save_calibration({"measurements": meas,
+                           "modelVersion": energy_module.MODEL_VERSION,
+                           **result, **keep})
         _warm_profile_estimate_cache()
+        _learned_now()          # 当てはめ直した値で学習も作り直しておく
     except Exception:  # noqa: BLE001
         # 当てはめ直せなくても、既定値で動く(古い上書き値は使わない)
         pass
 
 
 def _refit_calibration_if_stale_async() -> None:
-    threading.Thread(target=_refit_calibration_if_stale, daemon=True).start()
+    _start_background(_refit_calibration_if_stale)
+
+
+# 学習の結果は毎回計算すると重いので短時間だけ持つ。焙煎記録が変われば消す。
+_LEARNED_CACHE: dict = {}
+# 前提(ログ・較正・設定)が変わるたびに進む番号。裏で走っている計算が、
+# 変わる前の前提で出した答えを後から書き戻さないようにするために要る。
+_LEARNED_GEN = 0
+_LEARNED_GEN_LOCK = threading.Lock()
+
+
+def _learned_gen() -> int:
+    with _LEARNED_GEN_LOCK:
+        return _LEARNED_GEN
+
+
+def _clear_learned_cache() -> None:
+    """覚えている学習値を捨て、前提が変わった印に世代を進める。
+
+    ただ clear() するだけでは足りない。学習は2.6秒かかるので、裏で
+    計算している最中に較正やログが変わると、終わった側が古い答えを
+    _LEARNED_CACHE に書き戻し、以降ずっとそれが返る(メモリに当たった
+    時点で指紋を見ないため)。世代を見て、そういう書き戻しを止める。
+    """
+    global _LEARNED_GEN
+    with _LEARNED_GEN_LOCK:
+        _LEARNED_GEN += 1
+    _LEARNED_CACHE.clear()
+
+
+def _learned_fingerprint() -> str:
+    """学習結果が変わる条件をひとまとめにした指紋。
+
+    焙煎ログ・較正値・含水率・チャフ量が同じなら、学習結果も同じになる。
+    """
+    src = json.dumps({
+        "records": _load_roast_records(),
+        "cal": _calibration_overrides_raw(),
+        "moisture": _bean_moisture_frac(),
+        "chaff": _chaff_g(),
+        "model": energy_module.MODEL_VERSION,
+    }, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(src.encode("utf-8")).hexdigest()
+
+
+def _learned_now() -> dict:
+    """いまの学習結果(全体 + 軸ごと)。
+
+    焙煎ログ23件で2.6秒かかる(実測)。そのままだと、起動のたびと、焙煎ログを
+    保存するたびに待たされる(最初のプロファイル一覧が6.4秒かかっていた)。
+    覚え方は2段構え:
+      ・処理中は _LEARNED_CACHE(メモリ)
+      ・アプリを終了しても残るよう、結果をファイルにも書く
+    ファイルの中身は、計算のもとが変わっていなければ使う(指紋で判定)。
+    ログを1件足しただけでも指紋は変わるので、古い値を使い続けることはない。
+    """
+    hit = _LEARNED_CACHE.get("value")
+    if hit is not None:
+        return hit
+    # 計算の途中で前提が変わったら、その答えは捨てて計算し直す。
+    # 何度も変わり続けることはないので、数回で打ち切る。
+    for _ in range(3):
+        gen = _learned_gen()
+        fp = _learned_fingerprint()
+        saved = _read_json_cached(LEARNED_CACHE_PATH)
+        if isinstance(saved, dict) and saved.get("fingerprint") == fp:
+            res = saved.get("value")
+            if isinstance(res, dict):
+                if gen == _learned_gen():
+                    _LEARNED_CACHE["value"] = res
+                return res
+        recs = list(_load_roast_records().values())
+        res = beanlearn.learn(recs, moisture=_bean_moisture_frac(),
+                              cal=_calibration_overrides_raw(),
+                              axis_of=_bean_axis_of, chaff_g=_chaff_g())
+        if gen != _learned_gen():
+            continue          # 計算中に較正やログが変わった。やり直す
+        _LEARNED_CACHE["value"] = res
+        try:
+            LEARNED_CACHE_PATH.write_text(
+                json.dumps({"fingerprint": fp, "value": res,
+                            "computed_at": time.strftime("%Y-%m-%d %H:%M:%S")},
+                           ensure_ascii=False, indent=2), encoding="utf-8")
+            _FILE_CACHE.pop(LEARNED_CACHE_PATH, None)
+        except Exception:  # noqa: BLE001
+            pass          # 書けなくても、その場の計算結果は使える
+        return res
+    return res
+
+
+def _warm_learned_async() -> None:
+    """学習結果を裏で先に作っておく(2.6秒かかるので、開いてからでは遅い)。"""
+    def run():
+        try:
+            _learned_now()
+        except Exception:  # noqa: BLE001
+            pass
+    _start_background(run)
+
+
+def _bean_corrections(rec: Optional[dict]) -> dict:
+    """その豆に効かせる補正。軸(標高・生産国・品種・精製方法)ごとの値を混ぜる。
+
+    軸ごとの値は、件数で薄めた「全体からのずれ」。複数の軸のずれを足し合わせる
+    のではなく、平均する。同じ豆の性質を4通りの見方で測っているだけで、
+    足すと二重・三重に効いてしまうため。
+    """
+    lr = _learned_now()
+    g = lr.get("global") or {}
+    out = {"fcBeanTemp": g.get("fcBeanTemp"), "scDryFrac": g.get("scDryFrac"),
+           "indexRatio": g.get("indexRatio")}
+    if not rec:
+        return out
+    axes = lr.get("axes") or {}
+    for key in ("fcBeanTemp", "scDryFrac", "indexRatio"):
+        base = g.get(key)
+        if base is None:
+            continue
+        diffs = []
+        for ax, groups in axes.items():
+            names = (beanlearn.split_axis(_bean_axis_of(ax, rec))
+                     if ax in beanlearn.MULTI_AXES
+                     else [(_bean_axis_of(ax, rec) or "未分類").strip() or "未分類"])
+            for nm in names:
+                e = groups.get(nm)
+                if e and e.get(key) is not None:
+                    diffs.append(e[key] - base)
+        if diffs:
+            out[key] = base + sum(diffs) / len(diffs)
+    return out
+
+
+def _calibration_overrides(rec: Optional[dict] = None) -> dict:
+    """モデルに渡す定数。保存してある較正値に、学習した補正を重ねる。
+
+    rec を渡すと、その焙煎の豆(標高・生産国・品種・精製方法)に合わせた補正が
+    掛かる。渡さなければ全体の補正だけ。プロファイル一覧の推定では「どの豆を
+    焼くか」が決まっていないので渡さない。
+    """
+    cal = dict(_calibration_overrides_raw())
+    try:
+        c = _bean_corrections(rec)
+    except Exception:  # noqa: BLE001
+        return cal
+    if c.get("fcBeanTemp") is not None:
+        cal["T_FC_BEAN"] = c["fcBeanTemp"]
+    return cal
+
+
+def _bean_axis_of(ax: str, rec: dict) -> str:
+    """記録から、学習の軸(標高/生産国/品種)の値を引く。
+
+    どれも購入豆(豆情報)から引く。記録側には焼き込まない。後から豆情報を
+    直したら、次に読んだときに効くようにするため。
+    """
+    if ax == "altitude":
+        return _record_altitude_bucket(rec)
+    bpid = rec.get("bean_purchase_id")
+    if not bpid:
+        return ""
+    bean = (_load_bean_purchases() or {}).get(bpid) or {}
+    return str(bean.get(ax) or "")
+
+
+@app.get("/api/bean_temp_learning")
+def get_bean_temp_learning():
+    """豆温度モデルの学習の中身。初期データ(較正5本)+ 条件を満たすログ。"""
+    recs = list(_load_roast_records().values())
+    res = beanlearn.learn(recs, moisture=_bean_moisture_frac(),
+                          cal=_calibration_overrides(),
+                          axis_of=_bean_axis_of, chaff_g=_chaff_g())
+    res["defaults"] = {"fcBeanTemp": energy_module.T_FC_BEAN,
+                       "scDryFrac": energy_module.SC_DRY_FRAC,
+                       "indexRatio": 1.0}
+    res["shrink"] = beanlearn.SHRINK
+    # 学習に使えなかった記録の内訳(何を足せば使えるようになるか)
+    need = {"カーブなし": 0, "1ハゼ未記録": 0,
+            "1ハゼがボタン未押下の自動入力": 0, "焙煎前後の重量が未記録": 0}
+    for r in recs:
+        if beanlearn.is_learnable(r):
+            continue
+        if len(r.get("roast_curve") or []) < 2:
+            need["カーブなし"] += 1
+        elif not r.get("fc_time"):
+            need["1ハゼ未記録"] += 1
+        elif r.get("fc_time_inferred"):
+            need["1ハゼがボタン未押下の自動入力"] += 1
+        else:
+            need["焙煎前後の重量が未記録"] += 1
+    res["need"] = {k: v for k, v in need.items() if v}
+    return JSONResponse(res)
+
+
+# ------------------------------------------------------------
+# モデル構造の見直し(手で押して走らせる)
+# ------------------------------------------------------------
+# 定数を増やしてよいかは観測の数で決まる。観測が増えるほど、増やすのに必要な
+# 「残差の減り」は緩む(19点で17.9% → 60点で3.9%)。この節目でボタンを出す。
+# 見直しを勧める節目。100点までは決まった数で、その先は前回から1.5倍ごと。
+#
+# 定数を1個増やすのに必要な「残差の減り」は観測数とともに緩む(19点で17.9%、
+# 60点で3.9%、200点で1.0%)。裏を返すと、観測が多くなるほど「+25点」のような
+# 固定の増分では答えが変わらない。意味のある変化には比例的な増加が要る。
+#
+# 構造そのものは、いずれ落ち着いて変わらなくなる。それでも見直しを続ける価値は
+# 残る。焙煎機が経年で変わることがあるし、これまでに無い形のプロファイルを
+# 焼けば、既存のデータでは見えなかった不一致が出る(遅い昇温がそうだった)。
+STRUCTURE_THRESHOLDS = (25, 40, 60, 100)
+STRUCTURE_GROWTH = 1.5      # 100点を超えたら、前回の1.5倍ごとに勧める
+
+
+def _next_structure_threshold(last_n: int) -> Optional[int]:
+    """次に見直しを勧める観測数。100点を超えたら前回の1.5倍ごと。"""
+    for t in STRUCTURE_THRESHOLDS:
+        if t > last_n:
+            return t
+    return int(last_n * STRUCTURE_GROWTH) if last_n > 0 else None
+
+# 構造の見直しに使う焙煎の上限。時間が本数に比例して伸びるため
+# (実測 5本で9分、100本なら3時間)。標高・生産国・品種・精製方法のそれぞれから
+# 最低1本は必ず入るように選ぶ(roastlib/structure.py の select_subset)。
+# 補正の学習(learning.py)はこの上限と無関係で、常に全ログを使う。
+# あちらは1本あたり32msで、1000本でも32秒しかかからない。
+STRUCTURE_ROAST_CAP = 30
+
+# 実行中の状態(1つだけ。二重起動を防ぐ)
+_structure_run: dict = {"state": "idle"}
+_structure_lock = threading.Lock()
+
+
+def _load_model_structure() -> dict:
+    try:
+        return json.loads(MODEL_STRUCTURE_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _structure_roasts() -> list:
+    """構造の見直しに使う焙煎の一覧。基準5本 + 条件を満たすログ。
+
+    各焙煎に、層化して間引くための軸(標高・生産国・品種・精製方法)を添える。
+    """
+    out = []
+    for r in beanlearn.REFERENCE_ROASTS:
+        r = dict(r)
+        r["axes"] = {"altitude": r.get("altitude", "1500-2000m"),
+                     "country": r.get("country", "ケニア"),
+                     "variety": r.get("variety", ""), "process": r.get("process", "")}
+        out.append(r)
+    mo = _bean_moisture_frac()
+    for rec in _load_roast_records().values():
+        r = beanlearn.record_to_roast(rec, mo)
+        if r:
+            r["axes"] = {ax: _bean_axis_of(ax, rec) for ax in beanlearn.AXES}
+            out.append(r)
+    return out
+
+
+def _roast_axis_of(ax: str, roast: dict) -> str:
+    return (roast.get("axes") or {}).get(ax, "")
+
+
+def _structure_due_state() -> dict:
+    """いま構造の見直しを勧める段階か。観測数と節目を返す。"""
+    roasts = _structure_roasts()
+    n = beanstruct.n_obs(roasts)
+    saved = _load_model_structure()
+    applied = saved.get("applied") or {}
+    last_n = applied.get("n") or beanstruct.n_obs(
+        [dict(r) for r in beanlearn.REFERENCE_ROASTS])
+    nxt = _next_structure_threshold(last_n)
+    return {"n": n, "roasts": roasts, "lastN": last_n, "nextThreshold": nxt,
+            "due": bool(nxt and n >= nxt), "saved": saved}
+
+
+def _notify_structure_due() -> None:
+    """観測が節目を越えたら、一度だけ知らせる。
+
+    焼くたびに知らせては煩いので、節目ごとに1回だけ。どの節目まで知らせたかを
+    保存しておく。見直しを実行すれば applied["n"] が上がり、次の節目に進む。
+    """
+    try:
+        st = _structure_due_state()
+        if not st["due"]:
+            return
+        saved = st["saved"]
+        if saved.get("notifiedThreshold") == st["nextThreshold"]:
+            return          # この節目はもう知らせた
+        saved["notifiedThreshold"] = st["nextThreshold"]
+        MODEL_STRUCTURE_PATH.write_text(
+            json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+        title = "豆温度モデルを見直せます"
+        body = (f"焙煎ログが増えて観測が{st['n']}点になりました"
+                f"(節目 {st['nextThreshold']}点)。設定の「豆温度モデルの学習」から"
+                f"見直しを実行できます。")
+        loop = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        if loop is not None:
+            loop.create_task(_send_push_to_all(title, body))
+        else:
+            asyncio.run(_send_push_to_all(title, body))
+    except Exception:  # noqa: BLE001
+        # 通知の失敗が焙煎記録の保存に影響しないようにする
+        pass
+
+
+@app.get("/api/model_structure")
+def get_model_structure():
+    """いまの構造と、見直しを走らせてよいかの目安。"""
+    st = _structure_due_state()
+    roasts = st["roasts"]
+    saved = st["saved"]
+    applied = saved.get("applied") or {}
+    return JSONResponse({
+        "n": st["n"], "roasts": len(roasts),
+        "logs": len(roasts) - len(beanlearn.REFERENCE_ROASTS),
+        "reference": len(beanlearn.REFERENCE_ROASTS),
+        "lastN": st["lastN"], "nextThreshold": st["nextThreshold"],
+        "due": st["due"],
+        "notifiedThreshold": saved.get("notifiedThreshold"),
+        "applied": applied,
+        "history": saved.get("history") or [],
+        "run": dict(_structure_run),
+        # 定数を1個増やすのに必要な残差の減り(いまの観測数で)
+        "costOfOneMore": _structure_cost(st["n"],
+                                         len(applied.get("free") or beanstruct.ALWAYS)),
+    })
+
+
+def _structure_cost(n: int, k: int) -> Optional[float]:
+    """定数をk→k+1に増やすのに必要な「残差の減り」(%)。"""
+    if n - k - 2 <= 0:
+        return None
+    d = ((2 * (k + 1) + 2 * (k + 1) * (k + 2) / (n - k - 2))
+         - (2 * k + 2 * k * (k + 1) / (n - k - 1)))
+    return round((1 - math.exp(-d / n)) * 100, 1)
+
+
+def _run_structure_selection() -> None:
+    """構造を選び直す。時間がかかるので裏で走らせ、状態を _structure_run に置く。"""
+    try:
+        roasts = _structure_roasts()
+        n = beanstruct.n_obs(roasts)
+        if len(roasts) < 3:
+            raise ValueError("焙煎が3本に満たないので見直せません")
+
+        t0 = time.time()
+
+        # 進捗は「いまどの段階か」と経過時間だけにする。残り時間は出さない。
+        # 段階ごとに重さが桁違い(候補1つの当てはめ2分、交差検証3分半)なので、
+        # 序盤の1候補から外挿すると「残り2時間」と出て実際は5分、のように
+        # 大きく外れる。当てにならない数字を出すより、段階が分かるほうがよい。
+        def stage(msg, i=None, total=None):
+            _structure_run.update({"state": "running", "message": msg,
+                                   "step": i, "total": total,
+                                   "elapsed": round(time.time() - t0)})
+
+        def progress(i, total, msg):
+            stage(f"構造を探しています({msg})", i, total)
+
+        # 本数が多いと時間が伸びるので、層化して間引く。
+        # 標高・生産国・品種・精製方法のそれぞれから最低1本は必ず入る。
+        used, dropped = beanstruct.select_subset(
+            roasts, STRUCTURE_ROAST_CAP, axis_of=_roast_axis_of)
+        # 他と大きく外れている焙煎(記録ミスの可能性)を見つける。捨てはせず報告する。
+        stage(f"外れている焙煎を調べています({len(used)}本)")
+        bad, _per = beanstruct.robust_outliers(used)
+        outliers = [used[i].get("name", "?") for i in bad]
+        if bad and len(used) - len(bad) >= 3:
+            used = [r for i, r in enumerate(used) if i not in bad]
+        n = beanstruct.n_obs(used)
+        res = beanstruct.select(used, progress=progress)
+        def cv_progress(i, n):
+            stage("交差検証で確かめています", i, n)
+
+        stage("交差検証で確かめています")
+        # いまの構造と、選ばれた構造の両方を交差検証にかけて比べる
+        cur_free = list((_load_model_structure().get("applied") or {}).get("free")
+                        or beanstruct.ALWAYS)
+        cv_new = beanstruct.cross_validate(res["free"], used, progress=cv_progress)
+        cv_cur = beanstruct.cross_validate(cur_free, used, progress=cv_progress)
+        better = (cv_new is not None and cv_cur is not None and cv_new < cv_cur)
+        out = {"free": res["free"], "x": res["x"], "rss": res["rss"],
+               "aicc": res["aicc"], "n": n, "steps": res["steps"],
+               "usedRoasts": len(used), "totalRoasts": len(roasts),
+               "thinned": len(dropped), "outliers": outliers,
+               "cvNew": cv_new, "cvCurrent": cv_cur, "currentFree": cur_free,
+               "adopted": better,
+               "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+               "seconds": round(time.time() - t0)}
+        saved = _load_model_structure()
+        hist = saved.get("history") or []
+        hist.append({k: out[k] for k in (
+            "free", "rss", "aicc", "n", "cvNew", "cvCurrent", "adopted", "at",
+            "usedRoasts", "totalRoasts", "thinned", "outliers", "seconds")})
+        saved["history"] = hist[-20:]
+        if better:
+            # 採用するときだけ書き換える。失敗しても今の構造は壊れない。
+            saved["applied"] = {"free": res["free"], "x": res["x"], "n": n,
+                                "at": out["at"]}
+        saved["last"] = out
+        MODEL_STRUCTURE_PATH.write_text(
+            json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+        _clear_profile_estimate_cache()
+        _warm_profile_estimate_cache_async()
+        _structure_run.update({"state": "done", "result": out})
+        _notify_structure_done(out)
+    except Exception as e:  # noqa: BLE001
+        # 失敗しても今の構造はそのまま。理由を残して、押し直せるようにする。
+        _structure_run.update({"state": "error", "error": f"{type(e).__name__}: {e}"})
+        _notify_structure_done(None, error=f"{type(e).__name__}: {e}")
+
+
+def _notify_structure_done(out: Optional[dict], error: str = "") -> None:
+    """校正が終わったら知らせる。30分かかることもあるので、画面を見ていなくてよい。"""
+    try:
+        if error:
+            title = "豆温度モデルの見直しに失敗しました"
+            body = f"{error} いまの構造はそのままです。もう一度お試しください。"
+        elif out and out.get("adopted"):
+            body = (f"定数が{len(out['free'])}個になりました"
+                    f"({' / '.join(out['free'])})。観測{out['n']}点で採用。")
+            title = "豆温度モデルが育ちました"
+        else:
+            body = ("いまの構造のままが最良でした。"
+                    "焙煎ログが増えれば、また変わることがあります。")
+            title = "豆温度モデルの見直しが終わりました"
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            loop.create_task(_send_push_to_all(title, body))
+        else:
+            asyncio.run(_send_push_to_all(title, body))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.post("/api/model_structure/evaluate")
+def evaluate_model_structure():
+    """構造の見直しを始める。時間がかかるので裏で走らせ、進捗は GET で見る。"""
+    with _structure_lock:
+        if _structure_run.get("state") == "running":
+            return JSONResponse({"error": "すでに実行中です"}, status_code=409)
+        _structure_run.clear()
+        _structure_run.update({"state": "running", "step": 0, "total": 0,
+                               "message": "準備しています",
+                               "startedAt": time.strftime("%H:%M:%S")})
+    threading.Thread(target=_run_structure_selection, daemon=True).start()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/model_structure/revert")
+def revert_model_structure():
+    """構造を既定(常に当てはめる3つ)に戻す。見直しが裏目に出たときの出口。"""
+    saved = _load_model_structure()
+    saved.pop("applied", None)
+    saved["revertedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    MODEL_STRUCTURE_PATH.write_text(
+        json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+    _clear_profile_estimate_cache()
+    _warm_profile_estimate_cache_async()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/bean_temp_learning/reset")
+def reset_bean_temp_learning():
+    """豆温度の学習データを初期化する。
+
+    記録そのものは消さない。消すのは「学習に使う」という指定だけで、
+    初期データ(較正5本)だけの状態に戻る。学習が変な方向に振れたときの出口。
+    """
+    data = _load_calibration()
+    data.pop("learned", None)
+    data["learningReset"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _save_calibration(data)
+    _warm_profile_estimate_cache_async()
+    _warm_learned_async()
+    return JSONResponse({"ok": True, "resetAt": data["learningReset"],
+                         "seed": len(beanlearn.SEED_ROASTS)})
 
 
 @app.get("/api/calibration_profile")
@@ -839,71 +1542,12 @@ def get_calibration_profile(kind: str = "deep"):
     })
 
 
-@app.get("/api/calibration/from_logs")
-def calibration_from_logs():
-    """焙煎ログから1ハゼ・2ハゼの豆温度を集めて返す。
-
-    「1ハゼ確認」を押した記録だけを使う。ガイド温度からの推定値はモデルの入力から
-    作った値なので、使うと自分で自分を較正することになる。
-    """
-    recs = list(_load_roast_records().values())
-    res = beancal.learn_from_logs(
-        recs, moisture=_bean_moisture_frac(),
-        cal=_calibration_overrides(),
-        altitude_of=lambda r: _record_altitude_bucket(r))
-    res["applied"] = (_load_calibration().get("learned") or {})
-    res["current"] = {"fcBeanTemp": _learned_fc_bean_temp(),
-                      "scBeanTemp": _learned_sc_bean_temp(),
-                      "altitudeSlope": _altitude_fc_slope(),
-                      "modelDefaultFc": energy_module.T_FC_BEAN,
-                      "modelDefaultSc": beancal.T_SC_BEAN}
-    return JSONResponse(res)
-
-
-@app.put("/api/calibration/from_logs")
-async def apply_calibration_from_logs(request: Request):
-    """焙煎ログから学んだ値を採用する(bodyが空なら現時点の集計をそのまま採る)。"""
-    body = await request.json() if await request.body() else {}
-    recs = list(_load_roast_records().values())
-    res = beancal.learn_from_logs(
-        recs, moisture=_bean_moisture_frac(),
-        cal=_calibration_overrides(),
-        altitude_of=lambda r: _record_altitude_bucket(r))
-    learned = {}
-    alt = res["altitude"]
-    use_alt = bool(body.get("useAltitude", True)) and alt.get("base") is not None
-    if body.get("useFc", True) and res["fc"]["n"] > 0:
-        # 標高の傾きが出たときは、基準標高での値を基準値にする(中央値のままだと
-        # 記録の標高の偏りが基準値に混ざり、そこへさらに傾きが足されて二重になる)。
-        learned["fcBeanTemp"] = alt["base"] if use_alt else res["fc"]["median"]
-        learned["fcN"] = res["fc"]["n"]
-        learned["fcSd"] = res["fc"]["sd"]
-        if use_alt:
-            learned["altitudeSlope"] = alt["slope"]
-            learned["altitudeN"] = alt["n"]
-    if body.get("useSc", True) and res["sc"]["n"] > 0:
-        learned["scBeanTemp"] = res["sc"]["median"]
-        learned["scN"] = res["sc"]["n"]
-        learned["scSd"] = res["sc"]["sd"]
-    if not learned:
-        return JSONResponse({"error": "使える焙煎ログがまだありません"}, status_code=400)
-    data = _load_calibration()
-    data["learned"] = learned
-    CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    _clear_profile_estimate_cache()
-    _warm_profile_estimate_cache_async()
-    return JSONResponse({"ok": True, "learned": learned})
-
-
-@app.delete("/api/calibration/from_logs")
-def clear_calibration_from_logs():
-    data = _load_calibration()
-    if data.pop("learned", None) is not None:
-        CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    _clear_profile_estimate_cache()
-    _warm_profile_estimate_cache_async()
-    return JSONResponse({"ok": True})
-
+# 焙煎ログからの学習は roastlib/learning.py に一本化した(2026-09)。
+# 以前はここに /api/calibration/from_logs があり、1ハゼ・2ハゼの豆温度と
+# 標高の傾きを別に学んでいたが、同じ T_FC_BEAN を2つの経路が別々に決めて
+# 食い違う状態だった。新しい仕組みは標高も軸の1つとして扱い、生産国・品種・
+# 精製方法・質量まで学ぶので、旧のほうは完全に含まれる。
+# 入口は /api/bean_temp_learning。
 
 @app.get("/api/calibration")
 def get_calibration():
@@ -924,7 +1568,6 @@ def get_calibration():
         data.pop("fitted")
     data["profiles"] = beancal.SENDABLE_PROFILES
     data["kindLabels"] = beancal.SENDABLE_KIND_LABELS
-    data["scSecondCrackBeanTemp"] = beancal.T_SC_BEAN
     return JSONResponse(data)
 
 
@@ -933,15 +1576,13 @@ def _calibration_expected(prof: dict, moisture: float, cal: dict) -> dict:
     r = estimate_energy(prof["roast"], prof["fan"], moisture=moisture, cal=cal)
     if not r:
         return {}
-    s = r["series"]
 
-    def at(temp):
-        return next((p["t"] for p in s if p["bean"] >= temp), None)
-
+    # 2ハゼは乾物の分解量で決まる(roastlib/energy.py の SC_DRY_FRAC)。
+    # 豆温度で判定していた頃は、昇温の緩やかなプロファイルで62秒外れていた。
     return {
         "fcStart": r["crack_start"],
         "fcEnd": r["crack_end"],
-        "scStart": at(_learned_sc_bean_temp()),
+        "scStart": r.get("second_crack"),
         "roastedG": round(r["roasted_g"], 1),
         "roastIndex": round(r["roast_index"], 3),
     }
@@ -1004,17 +1645,283 @@ async def set_calibration(request: Request):
         return JSONResponse({"error": "測定値がひとつも入っていません"}, status_code=400)
     result = beancal.fit(measurements, moisture=_bean_moisture_frac())
     data = {"measurements": measurements, "modelVersion": energy_module.MODEL_VERSION, **result}
-    CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    # 定数が変わると推定値が全部変わるので、一覧のキャッシュを温め直す。
-    with _PROFILE_ESTIMATE_LOCK:
-        _PROFILE_ESTIMATE_CACHE.clear()
+    # 定数が変わると推定値も学習値も全部変わる。覚えているものは _save_calibration
+    # がまとめて捨てるので、ここでは温め直しだけを頼む。
+    _save_calibration(data)
     _warm_profile_estimate_cache_async()
+    _warm_learned_async()
     return JSONResponse({"ok": True, **data})
+
+
+# ============================================================
+# 書き出し・取り込み(バックアップと、別の機械への持ち運び)
+# ------------------------------------------------------------
+# 「一式」と「プロファイルだけ」の2通り。前者は機械を買い替えたときや
+# 別の端末へ移すとき、後者はプロファイルを人に渡すときに使う。
+#
+# 豆温度モデルの「学習後パラメータ」は、焙煎ログから毎回計算している派生値
+# なので、そのものは持たせない(持たせると、取り込んだ先でログと食い違う)。
+# 代わりに、計算のもとになる焙煎ログ・較正の実測値・採用中のモデル構造を
+# 入れてある。取り込めば同じ値が出る。
+# ============================================================
+EXPORT_FORMAT = "roast-studio-export"
+EXPORT_VERSION = 1
+
+# 「一式」に入れるもの。id をキーにした集まりは取り込みで混ぜ合わせ、
+# 単体の設定は丸ごと差し替える(較正を半分だけ取り込んでも意味が無いため)。
+_EXPORT_COLLECTIONS = ("custom_profiles", "roast_records", "bean_purchases",
+                       "favorites", "unsaved_roast_counts")
+_EXPORT_SINGLETONS = ("calibration", "model_structure", "guide_temps", "app_settings")
+
+
+def _learned_snapshot() -> Optional[dict]:
+    """いまの学習結果と、その計算のもとの指紋。
+
+    指紋を添えるのは、取り込んだ先でログや較正が食い違っていたときに
+    「古い学習結果をそのまま使ってしまう」ことを防ぐため。
+    """
+    try:
+        return {"fingerprint": _learned_fingerprint(), "value": _learned_now()}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _export_payload(scope: str, ids: Optional[list] = None) -> dict:
+    """書き出す中身を組み立てる。
+
+    scope="profiles" のときは ids で絞れる(1件だけ人に渡す、といった使い方)。
+    ids を渡さなければ保存済みのプロファイルを全部入れる。
+    """
+    if scope == "profiles":
+        saved = _load_custom()
+        if ids is not None:
+            saved = {pid: saved[pid] for pid in ids if pid in saved}
+        data = {"custom_profiles": saved}
+    else:
+        data = {
+            "custom_profiles": _load_custom(),
+            "roast_records": _load_roast_records(),
+            "bean_purchases": _load_bean_purchases(),
+            "favorites": sorted(_load_favorites()),
+            "unsaved_roast_counts": _load_unsaved_roast_counts(),
+            "calibration": _load_calibration(),
+            "model_structure": _load_model_structure(),
+            "guide_temps": _load_guide_temps(),
+            "app_settings": _load_app_settings(),
+            # 学習後のパラメータ。焙煎ログから計算できる派生値だが、23件で
+            # 2.6秒かかるので一緒に持たせる。取り込んだ先で計算し直さずに済む。
+            # 指紋を添えてあり、ログや較正が食い違っていれば使われない。
+            "learned": _learned_snapshot(),
+        }
+    return {
+        "format": EXPORT_FORMAT,
+        "version": EXPORT_VERSION,
+        "scope": "profiles" if scope == "profiles" else "all",
+        "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "model_version": energy_module.MODEL_VERSION,
+        "note": ("豆温度モデルの学習後の値も入れてあります(learned)。焙煎ログから"
+                 "計算できる派生値ですが、計算に数秒かかるため持たせています。"
+                 "ログや較正と食い違う場合は使わず、取り込んだ先で計算し直します。"),
+        "data": data,
+    }
+
+
+@app.get("/api/export")
+def export_data(scope: str = "all", ids: str = ""):
+    """設定とデータをまとめたJSONを返す。scope=profiles で保存プロファイルだけ。
+
+    ids にidをカンマ区切りで渡すと、そのプロファイルだけ書き出す。
+    """
+    wanted = [pid for pid in (ids.split(",") if ids else []) if pid.strip()]
+    if wanted and scope != "profiles":
+        return JSONResponse({"error": "ids はプロファイルの書き出しにだけ使えます"},
+                            status_code=400)
+    payload = _export_payload(scope, ids=wanted or None)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    if payload["scope"] == "profiles":
+        saved = payload["data"]["custom_profiles"]
+        if wanted and not saved:
+            return JSONResponse({"error": "選んだプロファイルが見つかりません"},
+                                status_code=404)
+        # 1件だけなら、ファイル名にその名前を使う。人に渡したときに中身が分かる。
+        if len(saved) == 1:
+            only = next(iter(saved.values()))
+            name = f"roast-studio-{_safe_file_stem(only.get('name'))}-{stamp}.json"
+        else:
+            name = f"roast-studio-profiles-{stamp}.json"
+    else:
+        name = f"roast-studio-all-{stamp}.json"
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return Response(
+        content=body, media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": _attachment_header(name)},
+    )
+
+
+def _attachment_header(name: str) -> str:
+    """ダウンロードのファイル名を伝えるヘッダ。
+
+    HTTPヘッダはlatin-1しか通らない。プロファイル名は日本語なので、
+    そのまま入れると応答を組み立てる時点で落ちる(実際に落ちた)。
+    昔ながらの filename= にはASCIIだけの名前を、実際に使ってほしい名前は
+    filename*= に符号化して入れる(RFC 5987。ブラウザもWKWebViewも
+    filename* があればそちらを使う)。
+    """
+    ascii_name = "".join(ch if ch.isascii() and (ch.isalnum() or ch in "._-") else "_"
+                         for ch in name) or "export.json"
+    quoted = urllib.parse.quote(name, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8\'\'{quoted}"
+
+
+def _safe_file_stem(name) -> str:
+    """プロファイル名をファイル名に使える形にする。
+
+    日本語はそのまま残す(名前で見分けるためのもの)。パス区切りや、
+    OSが嫌う記号だけを落とし、長すぎるときは切る。
+    """
+    text = str(name or "").strip()
+    for ch in '/\\:*?"<>|\0':
+        text = text.replace(ch, "")
+    text = text.replace(" ", "_").strip("._")
+    return text[:40] or "profile"
+
+
+def _local_day_utc_prefixes(now: "datetime.datetime | None" = None) -> set:
+    """いまのローカル日付にあたる、UTC日付の文字列(YYYY-MM-DD)の集合。
+
+    roasted_at はUTCで保存しているため、「今日焼いたか」をUTCの日付1つで
+    比べると、時差のぶんだけ境目がずれる(日本の朝はUTCではまだ前日)。
+    ローカルの1日の始まりと終わりをUTCに直し、またがる2日ぶんを返す。
+    """
+    now = (now or datetime.datetime.now()).astimezone()
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + datetime.timedelta(days=1) - datetime.timedelta(microseconds=1)
+    return {start.astimezone(datetime.timezone.utc).strftime("%Y-%m-%d"),
+            end.astimezone(datetime.timezone.utc).strftime("%Y-%m-%d")}
+
+
+def _backup_before_import() -> str:
+    """取り込みの前に、いまのデータの控えを1つのファイルに残す。
+
+    取り込みは元に戻せない操作なので、間違えたときに戻せるようにしておく。
+    """
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    # 控えは、いま使っているデータと同じ場所に置く(環境変数で保存先を
+    # 変えている場合も、そちらへ付いていく)。
+    path = ROAST_RECORDS_PATH.parent / f"backup-before-import-{stamp}.json"
+    path.write_text(json.dumps(_export_payload("all"), ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+    return path.name
+
+
+@app.post("/api/import")
+async def import_data(request: Request):
+    """書き出したJSONを取り込む。
+
+    id をキーにした集まり(プロファイル・焙煎ログ・豆)は混ぜ合わせる。同じidが
+    あったときどうするかは on_conflict で決める。
+      ・"overwrite"(既定) … 取り込む側で上書きする
+      ・"skip"            … 今あるものを残し、重ならないものだけ取り込む
+    設定・較正・モデル構造は丸ごと差し替える(一部だけ取り込んでも意味を
+    成さないため)。取り込む前に、いまのデータの控えを1つのファイルに書き出す。
+    """
+    body = await request.json()
+    if not isinstance(body, dict) or body.get("format") != EXPORT_FORMAT:
+        return JSONResponse(
+            {"error": "このアプリで書き出したファイルではありません。"}, status_code=400)
+    if int(body.get("version") or 0) > EXPORT_VERSION:
+        return JSONResponse(
+            {"error": "新しい版で書き出したファイルです。アプリを更新してください。"},
+            status_code=400)
+    data = body.get("data")
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "中身が読めませんでした。"}, status_code=400)
+
+    on_conflict = body.get("on_conflict") or "overwrite"
+    if on_conflict not in ("overwrite", "skip"):
+        return JSONResponse({"error": "on_conflict は overwrite か skip です。"},
+                            status_code=400)
+
+    backup = _backup_before_import()
+    added: dict = {}
+
+    def merge_dict(key: str, load, save):
+        incoming = data.get(key)
+        if not isinstance(incoming, dict):
+            return
+        cur = load()
+        before = len(cur)
+        clashed = [k for k in incoming if k in cur]
+        if on_conflict == "skip":
+            incoming = {k: v for k, v in incoming.items() if k not in cur}
+        cur.update(incoming)
+        save(cur)
+        added[key] = {"取り込み": len(incoming), "合計": len(cur),
+                      "増えた": len(cur) - before,
+                      "上書き": len(clashed) if on_conflict == "overwrite" else 0,
+                      "残した": len(clashed) if on_conflict == "skip" else 0}
+
+    merge_dict("custom_profiles", _load_custom, _save_custom)
+    merge_dict("roast_records", _load_roast_records, _save_roast_records)
+    merge_dict("bean_purchases", _load_bean_purchases, _save_bean_purchases)
+    merge_dict("unsaved_roast_counts", _load_unsaved_roast_counts, _save_unsaved_roast_counts)
+
+    favs = data.get("favorites")
+    if isinstance(favs, list):
+        cur = _load_favorites()
+        before = len(cur)
+        cur.update(str(f) for f in favs)
+        _save_favorites(cur)
+        added["favorites"] = {"取り込み": len(favs), "合計": len(cur), "増えた": len(cur) - before}
+
+    learned = data.get("learned")
+    replaced = []
+    for key, path in (("calibration", CALIBRATION_PATH),
+                      ("model_structure", MODEL_STRUCTURE_PATH),
+                      ("guide_temps", GUIDE_TEMPS_PATH),
+                      ("app_settings", APP_SETTINGS_PATH)):
+        val = data.get(key)
+        if isinstance(val, dict):
+            path.write_text(json.dumps(val, ensure_ascii=False, indent=2), encoding="utf-8")
+            replaced.append(key)
+
+    # 読み込みの覚えと、ログから計算している学習値を作り直す
+    _FILE_CACHE.clear()
+    _clear_learned_cache()
+    # 学習後のパラメータは、計算のもと(ログ・較正・設定)が取り込んだ内容と
+    # 一致するときだけ引き継ぐ。混ぜ合わせで中身が変わっていれば、指紋が
+    # 合わないので使わず、次に必要になった時に計算し直す。
+    learned_used = False
+    if isinstance(learned, dict) and isinstance(learned.get("value"), dict):
+        if learned.get("fingerprint") == _learned_fingerprint():
+            try:
+                LEARNED_CACHE_PATH.write_text(json.dumps(
+                    {"fingerprint": learned["fingerprint"], "value": learned["value"],
+                     "computed_at": time.strftime("%Y-%m-%d %H:%M:%S")},
+                    ensure_ascii=False, indent=2), encoding="utf-8")
+                _FILE_CACHE.pop(LEARNED_CACHE_PATH, None)
+                learned_used = True
+            except Exception:  # noqa: BLE001
+                pass
+    _phase_bases_cache.clear()
+    _health_bands_cache.clear()
+    _clear_profile_estimate_cache()
+    _warm_profile_estimate_cache_async()
+    _warm_abc_caches_async()
+    _warm_learned_async()
+    return JSONResponse({"ok": True, "scope": body.get("scope") or "all",
+                         "on_conflict": on_conflict,
+                         "backup": backup, "merged": added, "replaced": replaced,
+                         "learned": "引き継いだ" if learned_used else "計算し直す"})
 
 
 @app.delete("/api/calibration")
 def clear_calibration():
-    """較正を捨てて、プリセットから当てはめた既定値に戻す。"""
+    """自分で測った較正を捨てて、アプリの初期値に戻す。
+
+    ファイルを消すだけでよい。_load_calibration() が
+    DEFAULT_CALIBRATION を返すので、空ではなく初期値から再開する。
+    """
     if CALIBRATION_PATH.exists():
         CALIBRATION_PATH.unlink()
     with _PROFILE_ESTIMATE_LOCK:
@@ -1342,6 +2249,7 @@ def list_custom_profiles(
             "end_bean_temp": est["end_bean_temp"],
             "roast_index": est["roast_index"],
             "roast_index_level": est["roast_index_level"],
+            **_list_metrics(roast, est),
             "favorite": f"custom:{pid}" in favs,
             "roast_count": roast_counts.get(str(pid), 0),
         })
@@ -1378,9 +2286,21 @@ def get_custom_profile_beaninfo(pid: str):
 
 
 def _clear_profile_estimate_cache() -> None:
-    """豆情報(標高)が変わると推定も変わるので、覚えている分を捨てる。"""
+    """豆情報(標高)が変わると推定も変わるので、覚えている分を捨てる。
+
+    ファイルの控えも消す。残しておくと、裏で走っている先読みが後から
+    「新しい指紋 + 古い前提で出した値」という辻褄の合わない控えを
+    書いてしまう(世代で止めるが、消しておけば取りこぼしても害がない)。
+    """
+    global _ESTIMATE_GEN
     with _PROFILE_ESTIMATE_LOCK:
+        _ESTIMATE_GEN += 1
         _PROFILE_ESTIMATE_CACHE.clear()
+    try:
+        ESTIMATE_CACHE_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+    _FILE_CACHE.pop(ESTIMATE_CACHE_PATH, None)
 
 
 @app.put("/api/custom_profiles/{pid}/beaninfo")
@@ -1496,7 +2416,10 @@ def abc_defaults_endpoint():
     UI側は先に温度ガイド線設定を促す。
     """
     gt = _load_guide_temps()
-    ready = gt.get("colorChange") is not None and gt.get("firstCrack") is not None
+    # 豆温度モードでは、境界をモデルが決めるので吸入のガイド線は要らない。
+    # 従来の判定のままだと、ガイド線を空にした人がABCモードを使えなくなる。
+    ready = (pgen.phase_mode(gt) == pgen.PHASE_MODE_BEAN
+             or (gt.get("colorChange") is not None and gt.get("firstCrack") is not None))
     # プリセットをユーザーのガイド温度で分割して求めた、焙煎度ごとの
     # A/B/C/D基準値(方針1)。フォームの初期値・量子化の中心に使う。
     phase_bases = _phase_bases_for(gt) if ready else None
@@ -1612,7 +2535,8 @@ async def profile_health_endpoint(request: Request):
     if not roast or len(roast) < 2:
         return JSONResponse({"error": "roast(2点以上の制御点)は必須です"}, status_code=400)
     gt = _load_guide_temps()
-    if gt.get("colorChange") is None or gt.get("firstCrack") is None:
+    if (pgen.phase_mode(gt) != pgen.PHASE_MODE_BEAN
+            and (gt.get("colorChange") is None or gt.get("firstCrack") is None)):
         # ガイド温度(カラーチェンジ・1ハゼ)が無いとフェーズ分割できない。
         return JSONResponse({"ok": True, "unavailable": True, "level": "",
                              "warnings": [], "diagnoses": []})
@@ -1620,8 +2544,10 @@ async def profile_health_endpoint(request: Request):
     if not bands:
         return JSONResponse({"ok": True, "unavailable": True, "level": "",
                              "warnings": [], "diagnoses": []})
+    fan, _ = _clean_curve(body.get("fan"))
     result = evaluate_profile_health(
-        [tuple(p) for p in roast], gt, bands, roast_level=body.get("roast_level") or None
+        [tuple(p) for p in roast], gt, bands, fan_points=fan or None,
+        roast_level=body.get("roast_level") or None
     )
     return JSONResponse(result)
 
@@ -1636,10 +2562,14 @@ async def infer_taste_profile_endpoint(request: Request):
         return JSONResponse({"error": "roast(2点以上の制御点)は必須です"}, status_code=400)
     try:
         gt = _load_guide_temps()
-        result = infer_taste_profile(roast, guide_temps=gt)
+        # 風量は熱の入りやすさに効くので、豆温度モードでは境界が変わる。
+        fan, _ = _clean_curve(body.get("fan"))
+        result = infer_taste_profile(roast, guide_temps=gt, fan_points=fan or None)
         # 3軸モード(酸の質・甘さの系統・ボディ)での逆推測も併せて返す。
         # UI側はこちらを優先して使う(旧5値は互換のため残している)。
-        result["axes"] = infer_taste_axes(roast, guide_temps=gt, phase_bases=_phase_bases_for(gt))
+        result["axes"] = infer_taste_axes(roast, guide_temps=gt,
+                                          phase_bases=_phase_bases_for(gt),
+                                          fan_points=fan or None)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(result)
@@ -1735,6 +2665,7 @@ def list_ikawa_profiles(q: str = "", category: str = ""):
             "end_bean_temp": est["end_bean_temp"],
             "roast_index": est["roast_index"],
             "roast_index_level": est["roast_index_level"],
+            **_list_metrics(p["roast"], est),
             "favorite": f"ikawa:{p['id']}" in favs,
             "roast_count": roast_counts.get(str(p["id"]), 0),
         })
@@ -1991,11 +2922,8 @@ def list_profiles(
         haystack = f"{row['name']} {parsed.get('country','')} {roaster_name}".lower()
         if keywords and not all(kw.lower() in haystack for kw in keywords):
             continue
-        profile = ModelFactory.from_series(row)
-        roast_pts = profile.roast.points
-        duration = roast_pts[-1][0] if roast_pts else None
-        max_temp = max((pt[1] for pt in roast_pts), default=None)
-        est = _profile_estimate(roast_pts, profile.fan.points, moisture)
+        roast_pts, fan_pts, duration, max_temp = _preset_curve(pid, row)
+        est = _profile_estimate(roast_pts, fan_pts, moisture)
         results.append({
             "id": pid,
             "name": row["name"],
@@ -2011,6 +2939,7 @@ def list_profiles(
             "end_bean_temp": est["end_bean_temp"],
             "roast_index": est["roast_index"],
             "roast_index_level": est["roast_index_level"],
+            **_list_metrics(roast_pts, est),
             "favorite": f"preset:{pid}" in favs,
             "roast_count": roast_counts.get(str(pid), 0),
             # 生豆紹介シート(公式PDFを画像化したもの)を取り込み済みかどうか。
@@ -2216,18 +3145,28 @@ async def _count_roast_if_unhandled() -> None:
 
 
 def _cancel_continuous_restart(reason: str = "") -> None:
-    """次の焙煎の予約(待機中の再送)を取り消す。連続焙煎モード自体は変えない。"""
+    """次の焙煎の予約(待機中の再送)を取り消す。連続焙煎モード自体は変えない。
+
+    すでにBLEの転送が始まっている場合は取り消さない。転送を途中で切ると
+    焙煎機に半端なプロファイルが残る。この場合、送るか否かの判断は転送を
+    始める直前に済んでいる。
+    """
     global _continuous_task
-    if _continuous_task is not None and not _continuous_task.done():
+    if (_continuous_task is not None and not _continuous_task.done()
+            and not _continuous_sending):
         _continuous_task.cancel()
-    _continuous_task = None
+        _continuous_task = None
+    elif _continuous_task is not None and _continuous_task.done():
+        _continuous_task = None
     if reason:
         asyncio.create_task(_broadcast({"type": "continuous_roast_cancelled", "reason": reason}))
 
 
 def _stop_continuous_roast(reason: str) -> None:
     """連続焙煎モードを解除する(切断・エラー・アプリからの停止)。"""
-    global _continuous_roast, _roast_counted
+    # _roast_counted には触らない。連続焙煎の入切と、いま走っている焙煎のログは
+    # 別物なので、モードを変えてもその回の記録は最後まで取る。
+    global _continuous_roast
     was_on = _continuous_roast
     _continuous_roast = False
     _cancel_continuous_restart()
@@ -2243,7 +3182,7 @@ async def _continuous_restart_after_delay() -> None:
     待っている間に連続焙煎モードが解除された・切断された場合は何もしない。
     再送に成功すると機械は予熱から始まるので、あとは通常の焙煎と同じ流れになる。
     """
-    global _continuous_task
+    global _continuous_task, _continuous_sending
     try:
         # 待ち時間は、待ち始める時点の設定を使う(待っている最中に設定を変えても
         # 今回の待ち時間は変わらない。画面に出す秒数と食い違わないようにするため)。
@@ -2271,9 +3210,18 @@ async def _continuous_restart_after_delay() -> None:
             cooldown_point=tuple(p["cooldown"]),
             uuid_ascii=p["uuid"],
         )
+        # 送り始める直前にもう一度確かめる。待っている間や、この直前に
+        # チェックを外された場合は、ここで止める(外したのに次が始まる、が
+        # 一番困る)。
+        if not _continuous_roast:
+            return
         await _broadcast({"type": "status",
                           "message": f"連続焙煎: 同じプロファイル({p.get('display_name') or p.get('name')})を再送します..."})
-        await _session.send_profile(profile)
+        _continuous_sending = True
+        try:
+            await _session.send_profile(profile)
+        finally:
+            _continuous_sending = False
         await _broadcast({"type": "sent", "ok": _session.is_connected, "profile": p})
     except asyncio.CancelledError:
         pass
@@ -2546,7 +3494,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         # 浅め/深めに調整した状態での焙煎は、元プロファイルとは別の焙煎として扱う
                         # (同じプロファイルでも調整の有無・方向が違えば、同一日でも重複とはみなさない)。
                         variant = msg.get("roast_variant") or "none"
-                        today = time.strftime("%Y-%m-%d", time.gmtime())  # roasted_atはUTC(toISOString())保存のため
+                        # 「同じ日」は利用者の暮らしの1日(端末のローカル日付)で数える。
+                        # roasted_atはUTCで保存しているので、比較する側もUTCに直す
+                        # (以前はUTCの日付をそのまま使っており、日本では朝9時より前に
+                        #  焼いた分が前日の焙煎と同じ日として扱われていた)。
+                        today = _local_day_utc_prefixes()
                         beans = _load_bean_purchases()
                         existing = [
                             _roast_record_summary(rid, r, beans)
@@ -2554,7 +3506,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             if r.get("profile_source") == profile_source
                             and str(r.get("profile_id")) == str(profile_id)
                             and (r.get("roast_variant") or "none") == variant
-                            and (r.get("roasted_at") or "")[:10] == today
+                            and (r.get("roasted_at") or "")[:10] in today
                         ]
                         if existing and _load_app_settings().get("skipDuplicateRoastLog"):
                             # 設定で「2回目以降は保存しない」が有効 → 確認せずに保存を見送る。
@@ -2877,7 +3829,15 @@ def _load_roast_records() -> dict:
 
 
 def _save_roast_records(data: dict) -> None:
+    """焙煎ログを保存する。
+
+    学習結果は焙煎ログから計算しているので、書き換えたら覚えている値は
+    必ず捨てる。呼び出し側で消し忘れると、古い学習値のまま推定が続く
+    (実際、テストで logs:0 のまま返る状態を作ってしまった)。ここで面倒を
+    見れば、保存の経路が増えても取りこぼさない。
+    """
     ROAST_RECORDS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _clear_learned_cache()
 
 
 def _roast_record_summary(rid: str, r: dict, beans: dict) -> dict:
@@ -2904,8 +3864,12 @@ def _roast_record_summary(rid: str, r: dict, beans: dict) -> dict:
         "fc_time": r.get("fc_time"),
         "fc_time_inferred": r.get("fc_time_inferred"),
         "sc_time": r.get("sc_time"),
+        "green_g": r.get("green_g"),
+        "roasted_g": r.get("roasted_g"),
         "altitude_bucket": _record_altitude_bucket(r),
         "has_curve": bool(r.get("roast_curve")),
+        # 豆温度モデルの学習に使える記録かどうか(判定は roastlib/learning.py)
+        "learnable": beanlearn.is_learnable(r),
     }
 
 
@@ -2935,7 +3899,13 @@ def _record_altitude_bucket(rec: dict, beans: Optional[dict] = None) -> str:
 def list_roast_records(
     q: str = "", bean_purchase_id: str = "", bean_group_key: str = "",
     profile_source: str = "", profile_id: str = "", unlinked: bool = False,
+    learnable: str = "",
 ):
+    """焙煎記録の一覧。焼いた順(新しい順)に返す。
+
+    learnable="no"  豆温度モデルの学習にまだ使えない記録だけ(実測値の入力待ち)
+    learnable="yes" すでに使えている記録だけ
+    """
     data = _load_roast_records()
     beans = _load_bean_purchases()
     keywords = q.strip().split()
@@ -2953,6 +3923,10 @@ def list_roast_records(
             continue
         if profile_id and str(r.get("profile_id")) != profile_id:
             continue
+        if learnable in ("yes", "no"):
+            ok = beanlearn.is_learnable(r)
+            if (learnable == "yes") != ok:
+                continue
         summary = _roast_record_summary(rid, r, beans)
         haystack = " ".join([
             summary["bean_label"], summary["profile_name"] or "", summary["cup_comment"] or "",
@@ -3066,6 +4040,11 @@ def get_roast_record(rid: str):
     result["altitude_bucket"] = _record_altitude_bucket(r)
     result["bean_crop_year"] = bean.get("crop_year") if bean else None
     result["bean_purchase_date"] = bean.get("purchase_date") if bean else None
+    # プロファイルは消されていることがある(ログは残す作りのため)。画面側は
+    # これを見て、名前をリンクにするかどうかを決める。リンクのまま押させると
+    # 開けないプロファイルを取りに行ってしまう。
+    result["profile_available"] = _profile_still_exists(
+        r.get("profile_source") or "", r.get("profile_id"))
     return JSONResponse(result)
 
 
@@ -3114,7 +4093,11 @@ async def create_roast_record(request: Request):
             status_code=400)
     data = _load_roast_records()
     rid = f"roast_{int(time.time() * 1000)}"
-    roasted_at = body.get("roasted_at") or time.strftime("%Y-%m-%d %H:%M:%S")
+    # roasted_at はUTCのISO文字列で保存する決まり。省略されたときも同じ形にする
+    # (以前はローカル時刻を素で入れており、他の記録と時刻の基準が食い違っていた)。
+    roasted_at = body.get("roasted_at") or (
+        datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z"))
     bean_purchase_id = body.get("bean_purchase_id") or _infer_bean_purchase_id(
         data, body.get("profile_source", ""), body.get("profile_id"), roasted_at
     )
@@ -3133,9 +4116,13 @@ async def create_roast_record(request: Request):
         # fc_timeが「ハゼた!」ボタンの実測ではなく、1ハゼ設定温度への到達から
         # 推定した値かどうか(2026-07)。焙煎記録の表示側で「推定」の注記に使う。
         "fc_time_inferred": bool(body.get("fc_time_inferred")),
-        # 「2ハゼ確認」を押した時刻。豆温度モデルを実測で直すのに使う
-        # (較正が置いている「2ハゼは豆225℃」という仮定を置き換えられる)。
+        # 「2ハゼ確認」を押した時刻。豆温度モデルを実測で直すのに使う。
         "sc_time": body.get("sc_time"),
+        # 焙煎前後の重量(g)。焙煎後に量って入れてもらう。カーブ・1ハゼ・2ハゼと
+        # 揃うと、その1本が豆温度モデルの学習データになる(roastlib/learning.py)。
+        # 揃わない記録は学習に使わない。
+        "green_g": body.get("green_g"),
+        "roasted_g": body.get("roasted_g"),
         # 焙煎中に容器エラー等が発生していた区間(焙煎開始からの経過秒)。
         # [{"start":.., "end":..}, ...]。グラフでの色分け再現用。
         "error_spans": body.get("error_spans") or [],
@@ -3151,6 +4138,8 @@ async def create_roast_record(request: Request):
     }
     data[rid] = entry
     _save_roast_records(data)
+    _clear_learned_cache()      # 記録が増えたら学習し直す
+    _notify_structure_due()     # 節目を越えたら知らせる
     return JSONResponse({"id": rid, **entry})
 
 
@@ -3169,11 +4158,15 @@ async def update_roast_record(rid: str, request: Request):
         "bean_purchase_id", "cup_comment", "rating", "roasted_at",
         "profile_source", "profile_id", "profile_name",
         "fc_time", "fc_time_inferred", "dev_time", "sc_time",
+        # 焙煎後に量って後から入れられるようにする(学習データになる)
+        "green_g", "roasted_g",
     ):
         if field in body:
             existing[field] = body[field]
     data[rid] = existing
     _save_roast_records(data)
+    _clear_learned_cache()      # 重量やハゼ時刻を直したら学習し直す
+    _notify_structure_due()     # 重量を入れて節目を越えることがある
     return JSONResponse({"id": rid, **existing})
 
 

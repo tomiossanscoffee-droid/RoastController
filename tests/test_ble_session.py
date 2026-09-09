@@ -738,3 +738,59 @@ def test_展開長めは既存2本より1ハゼが遅い():
         fc[name] = r["crack_start"]
     assert fc["long"] > fc["deep"] + 30, fc
     assert fc["long"] > fc["light"] + 30, fc
+
+
+# ------------------------------------------------------------
+# 再接続を、いつまで粘るか
+# ------------------------------------------------------------
+# 2026-09の実機ログ: 焙煎中に切れ、6回(78秒)で諦めていた。そのとき焙煎は
+# 2ハゼ直後で4分以上残っており、以降の記録が全部落ちた。回数ではなく、
+# 焙煎が終わるまでの時間で粘るようにしてある。
+def test_再接続の粘る時間はプロファイルから決まる():
+    sess = RoasterSession()
+    sess._planned_roast_sec = 590.0      # 焙煎9分50秒
+    sess._planned_cooldown_sec = 120.0   # 冷却2分
+    budget = sess._reconnect_budget()
+    assert budget == 590.0 + 120.0 + S.RECONNECT_MARGIN_SECONDS
+    assert budget > 10 * 60, "焙煎が終わる前に諦めてしまう"
+
+
+def test_プロファイルが分からなくても最低限は粘る():
+    """送信前に切れた等でプロファイルが無いときでも、すぐ諦めない。"""
+    assert RoasterSession()._reconnect_budget() == S.RECONNECT_BUDGET_MIN
+
+
+def test_粘る時間には上限がある():
+    """長時間のプロファイルでも、際限なくBLEを叩き続けない。"""
+    sess = RoasterSession()
+    sess._planned_roast_sec = 10 * 60 * 60.0
+    assert sess._reconnect_budget() == S.RECONNECT_BUDGET_MAX
+
+
+def test_再接続は6回で諦めない(monkeypatch):
+    """回数で打ち切っていたのが不具合の原因。時間で区切ること。"""
+    _install_fake_bleak(monkeypatch)
+    monkeypatch.setattr(S, "CONNECT_RETRY_DELAY", 0)
+    monkeypatch.setattr(S, "RECONNECT_DELAY", 0)
+    monkeypatch.setattr(S, "RECONNECT_DELAY_MAX", 0)
+
+    async def scenario():
+        sess = RoasterSession()
+        assert await sess.connect(timeout=0.01)
+        sess._phase_estimator.phase = "roasting"
+        attempts = []
+
+        async def always_fail(timeout):
+            attempts.append(1)
+            # 十分な回数を数えたら、そこで打ち切って試験を終える
+            if len(attempts) >= 20:
+                sess._user_initiated_disconnect = True
+            return False
+
+        sess._scan_and_connect = always_fail
+        monkeypatch.setattr(sess, "_reconnect_budget", lambda: 30.0)
+        await sess._auto_reconnect()
+        return attempts
+
+    attempts = asyncio.run(scenario())
+    assert len(attempts) >= 20, f"6回前後で止まっている({len(attempts)}回)"

@@ -62,6 +62,8 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+from . import energy as E
+
 ROAST_LEVELS = ["浅煎り", "中煎り", "中深煎り", "深煎り"]
 
 # THE ROAST EXPERT仕様(温度255℃上限・最大20ポイント・焙煎時間最大900秒)を
@@ -541,7 +543,8 @@ def _accel_signal(pts: list, dip_t: float, end_t: float) -> float:
     return max(0.0, (end_ror / mid_ror) - 1)
 
 
-def infer_taste_profile(roast_points: list, guide_temps: Optional[dict] = None) -> dict:
+def infer_taste_profile(roast_points: list, guide_temps: Optional[dict] = None,
+                        fan_points: Optional[list] = None) -> dict:
     """焙煎カーブ(制御点)から、想定される焙煎度と味の傾向(5段階)を推測する。
 
     roast_points: [[t, 温度], ...] のリスト(t昇順でなくてもよい)。
@@ -579,10 +582,27 @@ def infer_taste_profile(roast_points: list, guide_temps: Optional[dict] = None) 
     # ポイントの深さ/時間は、_BASE_TEMPLATES上、焙煎度によらずほぼ一定
     # (184℃・97℃・59秒前後、実プリセット174件の中央値に基づく)なので、
     # その固定値との差分を使う(焙煎度の判定結果には依存しない)。
+    # 味は常に豆温度で見る(フェーズ境界の設定とは無関係)。豆温度が出せない
+    # 壊れたカーブでは、従来どおり吸入温度で計算して結果は返す。
+    _est = E.estimate(pts, fan_points)
+    bean_series = _est["series"] if _est else None
+
+    # 序盤の入熱の軸。酸とコクは、これまで同じ値を逆符号で共有していたが
+    # (コード自身が「独立には判定できない」と書いていた)、パナソニックの
+    # 実データ173本と突き合わせると、この2つは別の量に反応する:
+    #   酸  : 豆側(1ハゼまでの上昇の前半割合)が良い  0.523 → 0.541
+    #   コク: 吸入側(投入温度・ターニングポイント)が良い 0.344 → 0.280(豆にすると悪化)
+    # 到達しうる上限(焙煎度だけで説明できる相関)は酸0.557・コク0.403なので、
+    # どちらもその9割前後まで来ている。分けたほうが合計は良い(1.554→1.572)。
     charge_delta = charge - _BASE_TEMPLATES["浅煎り"]["charge"]
     dip_delta = dip_temp - _BASE_TEMPLATES["浅煎り"]["dip"]
     dip_t_delta = dip_t - _BASE_TEMPLATES["浅煎り"]["dip_t"]
     brightness = -(charge_delta / 4 + dip_delta / 3 + dip_t_delta / 6) / 3
+    early_ratio = _bean_early_ratio(bean_series, _est, dip_t) if bean_series else None
+    # 酸に使う序盤の軸。1ハゼに届かないカーブでは割合が決められないので、
+    # その時だけ従来の形から求めた値で代用する。
+    brightness_acid = (-(early_ratio - _BEAN_EARLY_BASE) / _BEAN_EARLY_SCALE
+                       if early_ratio is not None else brightness)
 
     # 終了温度・終了時間から、苦味を分離する。generate_profile()では、
     # 「浅煎り→深煎り」も「苦味を上げる」も、どちらも終了温度・終了時間を
@@ -593,13 +613,21 @@ def infer_taste_profile(roast_points: list, guide_temps: Optional[dict] = None) 
     # 「苦味1単位あたりの方向(+5℃・+8秒、generate_profile()のdb_係数)」
     # という2つのベクトルの合成とみなし、連立方程式として解く
     # (2元1次方程式なのでクラメルの公式で厳密に解ける)。
-    _LEVEL_ANCHOR_TEMP = _BASE_TEMPLATES["浅煎り"]["end_temp"]
     _LEVEL_ANCHOR_T = _BASE_TEMPLATES["浅煎り"]["end_t"]
-    _LEVEL_TEMP = _BASE_TEMPLATES["深煎り"]["end_temp"] - _LEVEL_ANCHOR_TEMP
     _LEVEL_T = _BASE_TEMPLATES["深煎り"]["end_t"] - _LEVEL_ANCHOR_T
-    _BIT_TEMP, _BIT_T = 5.0, 8.0         # 苦味(1単位)あたりの終了温度・終了時間の効き方
+    _AIR_LEVEL_TEMP = (_BASE_TEMPLATES["深煎り"]["end_temp"]
+                       - _BASE_TEMPLATES["浅煎り"]["end_temp"])
+    _BIT_T = 8.0                         # 苦味(1単位)あたりの終了時間の効き方
+    # 焙煎度の軸は吸入の終了温度のまま。終了豆温度に替えると、パナソニックの
+    # 実データとの一致は苦味で 0.686 → 0.641 と落ちた(酸は+0.008で相殺しない)。
+    # 吸入の終了温度は焙煎機の設定値だが、そのぶん焙煎士が狙った深さを直接
+    # 表しており、豆が何度まで行ったかより焙煎度の呼び名に近いためと思われる。
+    _LEVEL_ANCHOR_TEMP = _BASE_TEMPLATES["浅煎り"]["end_temp"]
+    _LEVEL_TEMP = _AIR_LEVEL_TEMP
+    _BIT_TEMP = 5.0
+    level_temp = end_temp
     det = _LEVEL_TEMP * _BIT_T - _BIT_TEMP * _LEVEL_T
-    dtemp = end_temp - _LEVEL_ANCHOR_TEMP
+    dtemp = level_temp - _LEVEL_ANCHOR_TEMP
     dtime = end_t - _LEVEL_ANCHOR_T
     t_level = (dtemp * _BIT_T - _BIT_TEMP * dtime) / det
     t_bitter = (_LEVEL_TEMP * dtime - _LEVEL_T * dtemp) / det
@@ -615,6 +643,8 @@ def infer_taste_profile(roast_points: list, guide_temps: Optional[dict] = None) 
     # 加速するという
     # dev_ratio由来の固有の形状変化(_accel_signal)を主な手がかりにする
     # (どちらも苦味の連立方程式とは別の、カーブ形状の別の側面を見ている)。
+    # 終盤のRoRの形は吸入のまま。豆温度に替えても実データとの一致はほぼ動かず
+    # (±0.011)、変える理由が無かった。
     decel = _decel_signal(pts, dip_t, end_t)  # 苦味(dev_ratio=0.35)の補強シグナル
     accel = _accel_signal(pts, dip_t, end_t)  # アフターノート(またはdev_ratio=0.65)の兆候
     # 酸味が強い場合もほぼ同じ終盤加速の形になるため、brightnessが酸味寄りに
@@ -631,7 +661,7 @@ def infer_taste_profile(roast_points: list, guide_temps: Optional[dict] = None) 
     level_pos = _clamp(t_level, -0.3, 1.3)  # 0=浅煎り相当 〜 1=深煎り相当(多少の外挿を許容)
     level_bias = level_pos - 0.5
 
-    acidity_f = 3 - level_bias * 3.0 + brightness * 1.2
+    acidity_f = 3 - level_bias * 3.0 + brightness_acid * 1.2
     sweetness_f = 3 + level_bias * 1.0 - brightness * 1.2
     bitterness_f = 3 + level_bias * 3.0 + t_bitter * 0.6 + decel * 0.6
     body_f = 3 + level_bias * 1.5 - brightness * 0.8
@@ -640,13 +670,23 @@ def infer_taste_profile(roast_points: list, guide_temps: Optional[dict] = None) 
     # 温度ガイド線があれば、ABCフェーズ分析(Bフェーズの長さ・B内RoRの傾向)を
     # 追加の手がかりにする(Jake Hu氏の理論: BのRoRが低い=前半に熱を入れるほど
     # 酸はやわらかく、高いほど酸が強く出る。Bが長いほどフルーティで柔らかい酸)。
-    abc = analyze_abc_phases(pts, guide_temps) if guide_temps else None
-    if abc:
-        # プリセット標準(実測173件の中央値: RoR変化-8.4℃/分・B156秒)との差分を、
-        # 既存の推測を壊さない控えめな重みで加える。
-        ror_delta = abc["b_ror_diff"] - _PRESET_B_ROR_DIFF_MEDIAN
+    abc = analyze_abc_phases(pts, guide_temps, fan_points) if guide_temps else None
+    # 味の補正に使う分だけは、設定に関わらず豆温度で分割したものを使う。
+    # 返り値の "abc" は設定どおりのままにする(ABCモードの入力欄がこれを読む)。
+    if guide_temps and phase_mode(guide_temps) == PHASE_MODE_BEAN:
+        gt_taste, abc_taste = guide_temps, abc
+    elif guide_temps:
+        gt_taste = dict(guide_temps, mode=PHASE_MODE_BEAN)
+        abc_taste = analyze_abc_phases(pts, gt_taste, fan_points)
+    else:
+        gt_taste, abc_taste = None, None
+    if abc_taste:
+        # プリセット標準(豆温度で分割した174本の中央値: RoR変化-12.4℃/分・
+        # B173秒)との差分を、既存の推測を壊さない控えめな重みで加える。
+        ror_med, b_med = preset_b_medians(gt_taste)
+        ror_delta = abc_taste["b_ror_diff"] - ror_med
         acidity_f += _clamp(ror_delta * 0.05, -0.8, 0.8)
-        b_units = (abc["b_sec"] - _PRESET_B_SEC_MEDIAN) / 15.0
+        b_units = (abc_taste["b_sec"] - b_med) / 15.0
         acidity_f -= _clamp(b_units * 0.1, -0.6, 0.6)
         sweetness_f += _clamp(b_units * 0.08, -0.5, 0.5)
 
@@ -721,6 +761,69 @@ ABC_LEVELS_WITH_D = ("中深煎り", "深煎り")
 # 分割の閾値と基準値が食い違う v0.11.56 と同じ不具合が再発する)。
 ABC_SECOND_CRACK_TEMP = 240
 
+# ------------------------------------------------------------
+# フェーズ境界を何で判定するか(guide_temps["mode"])
+# ------------------------------------------------------------
+# "air"  : 焙煎機の吸入温度がガイド線を上向きに横切った時刻(従来)
+# "bean" : 豆温度モデル(roastlib/energy.py)が示す時刻
+#
+# 吸入温度は「豆に何が起きているか」を表していない。同じガイド線を横切る
+# 瞬間の豆温度を純正プリセット174本で測ると、カラーチェンジ(吸入170℃)で
+# 51.4〜158.2℃(幅106.7℃)、1ハゼ(吸入223℃)で153.3〜210.6℃(幅57.4℃)
+# ばらつく。昇温が速いプロファイルほど豆が置いていかれるためで、吸入温度の
+# しきい値は焙煎の進行度の代理になっていない。
+#
+# ただし従来の判定で作った基準値・味の推測結果がすでにあるので、既定は
+# "air" のままにし、設定で選べるようにしてある。
+PHASE_MODE_AIR = "air"
+PHASE_MODE_BEAN = "bean"
+
+# 豆温度モードでのカラーチェンジ(℃)。
+# 1ハゼ・2ハゼはモデル自身が時刻を出す(crack_start / second_crack)ので
+# しきい値が要らないが、カラーチェンジに当たる事象はモデルに無い。
+# そこで、利用者が実機を見て決めたガイド線(吸入170℃)を横切る瞬間の豆温度を
+# 実測から求めた。焙煎ログ23件では中央131.9℃(122.8〜135.7℃)、純正
+# プリセット174本では中央132.0℃と一致したので132℃を既定にする。
+# 同じ測り方で1ハゼは197.1℃となり、モデルのT_FC_BEAN(196℃)ともよく合う。
+BEAN_COLOR_CHANGE = 132.0
+
+# ------------------------------------------------------------
+# 味の推測を、豆温度を土台にした量で行うための基準値(2026-09)
+# ------------------------------------------------------------
+# レーダーチャートの5値は、もともと吸入温度のカーブの形(投入温度・ターニング
+# ポイント・終了温度・終盤のRoR)から求めていた。吸入温度は焙煎機の設定であって
+# 豆に起きたことではないので、豆温度に置き換える。フェーズ境界の設定
+# (guide_temps["mode"])とは無関係に、味は常に豆温度で見る。
+#
+# ■ 焙煎度の軸は吸入の終了温度のまま
+# 終了豆温度に替えると、パナソニックのレーダー実データ173本との一致は
+# 苦味で 0.686 → 0.641 と落ちた。吸入の終了温度は焙煎機の設定値だが、
+# そのぶん焙煎士が狙った深さを直接表しており、豆が何度まで行ったかより
+# 焙煎度の呼び名に近いためと思われる。
+#
+# ■ 序盤の入熱の軸(明るさ⇔リッチさ)
+# 豆には投入温度もターニングポイントも無い(常温から上がるだけ)ので、
+# 「ターニングポイント〜1ハゼの上昇のうち、前半でどれだけ上がったか」で見る。
+# 前寄り(値が大きい)ほど序盤に熱が入っている=リッチ、後ろ寄りほど明るい。
+#
+# 絶対値(例: 120秒時点の豆温度)ではなく割合にしてあるのは、生成器の標準カーブ
+# (スライダー全て3)が、プリセット174本より序盤が一貫して遅いためである
+# (120秒の豆温度で-5.4℃、カラーチェンジ到達で+24.4秒)。絶対値で測ると、
+# 「標準で生成したら標準と読み取れる」ことと「プリセットが中央に来ること」を
+# 両立できない。割合にすると標準カーブ0.543・プリセット中央0.575で、ずれは
+# 四分位幅の0.6倍に収まる。
+#
+# ⚠️ 従来の brightness とは向きが一致しないことがある。従来式の
+# 「ターニングポイントの戻りが遅い=リッチ」という項は、実際には
+# 「序盤に入った熱が少ない」ことを意味しており、投入温度・ディップの深さの
+# 2項と逆を向いていた。豆温度で見れば序盤の入熱は一つの量に決まる。
+# 係数0.09は、この軸がプリセット全体に及ぼす効き方を従来と揃える値。
+# 従来の brightness は四分位幅0.53で酸を0.64動かしていた。割合の四分位幅は
+# 0.050なので、0.050 x 1.2 / 0.64 = 0.094。これだと標準カーブのずれ(0.032)は
+# 酸を0.43しか動かさず、「標準で生成したら標準と読み取れる」ことも保たれる。
+_BEAN_EARLY_BASE = 0.575          # プリセット174本の中央値
+_BEAN_EARLY_SCALE = 0.09
+
 # 基準値: 動画内のKenya例(A3分/B3分/C80秒)。RoRは実機プリセットの標準形
 # (実測173件でB内RoR変化の中央値-8.4℃/分=「減少」)をデフォルトにする。
 # A/Bは焙煎度によらずほぼ一定(プリセット実測: 中煎り以降のa_sec中央値は
@@ -743,10 +846,50 @@ ABC_ROR_LABELS = {-2: "減少(強)", -1: "減少", 0: "フラット", 1: "増加
 # 「後半RoR - 前半RoR」(℃/分)の目標値。減少(-8)が実機プリセットの標準形。
 ABC_ROR_DIFF_TARGET = {-2: -14.0, -1: -8.0, 0: 0.0, 1: 8.0, 2: 14.0}
 
+
+def ror_diff_targets(guide_temps: Optional[dict] = None) -> dict:
+    """「後半RoR - 前半RoR」の目標値。豆温度モードでは中心と刻みを合わせ直す。"""
+    if phase_mode(guide_temps) != PHASE_MODE_BEAN:
+        return ABC_ROR_DIFF_TARGET
+    base = ABC_ROR_DIFF_TARGET[ABC_BASE["b_ror"]]      # 「標準形」の目標値
+    return {k: ABC_ROR_DIFF_CENTRE_BEAN + (v - base) * ABC_ROR_DIFF_STEP_BEAN
+            for k, v in ABC_ROR_DIFF_TARGET.items()}
+
+
+def preset_b_medians(guide_temps: Optional[dict] = None) -> tuple:
+    """プリセット実測の (B内RoR差の中央値, Bフェーズ秒の中央値)。"""
+    if phase_mode(guide_temps) != PHASE_MODE_BEAN:
+        return _PRESET_B_ROR_DIFF_MEDIAN, _PRESET_B_SEC_MEDIAN
+    return _PRESET_B_ROR_DIFF_MEDIAN_BEAN, _PRESET_B_SEC_MEDIAN_BEAN
+
 # プリセット実測(2026-07、ガイド温度175/220℃で全173件を集計)の中央値。
 # infer_taste_profile()のABC特徴量の基準として使う。
 _PRESET_B_ROR_DIFF_MEDIAN = -8.4
 _PRESET_B_SEC_MEDIAN = 156
+
+# 豆温度モードでの同じ基準。豆温度のRoRは吸入温度のRoRとは別物なので、
+# 吸入温度で決めた基準をそのまま使うと全プロファイルが偏って評価される。
+# 純正プリセット174本を豆温度モードで分割した実測(2026-09):
+#   B内RoR差 中央 -12.4℃/分(吸入モードでは -9.5)・Bフェーズ 中央173秒(同193秒)
+# 豆は空気より遅れて昇温するぶん、B区間の後半で追いつく形になり、
+# 「後半-前半」のRoR差は吸入温度で測るより大きな負の値になる。
+_PRESET_B_ROR_DIFF_MEDIAN_BEAN = -12.4
+_PRESET_B_SEC_MEDIAN_BEAN = 173
+
+# 目標値は、中心をずらすだけでなく刻みも広げる。豆温度のRoR差は吸入より
+# 散らばりが大きく(四分位幅3.8 対 1.6)、刻みを据え置くと同じプロファイル群が
+# 5段階に散ってしまう。実際、中心だけずらした版ではプリセット174本のうち
+# 「減少(-1)」に入るのが59%しかなく(吸入モードは82%)、残り32%が「減少(強)」に
+# 落ちていた。酸の式は dr の係数が最大(+0.4)なので、この散らばりがそのまま
+# 雑音になり、パナソニックのレーダー実データとの一致が 1.344 → 1.071 まで
+# 落ちる原因になっていた。
+#
+# 中心-12.1・刻み1.60倍にすると、5段階の出方が吸入モードとほぼ一致する
+# (-2:10% -1:83% 0:6% +1:0% +2:1% 対 吸入 9%/82%/8%/0%/1%)。目標値は
+# -21.7 / -12.1 / +0.7 / +13.5 / +23.1 で、実測の範囲(-22.1〜+25.7)に収まって
+# いる(収まっていないと、生成器が届かない形を目標にしてしまう)。
+ABC_ROR_DIFF_CENTRE_BEAN = -12.1
+ABC_ROR_DIFF_STEP_BEAN = 1.60
 
 # 実機プリセットの投入・ターニングポイントの実測値(2026-08、ボトムを形成する151件で再検証)。
 #
@@ -762,6 +905,11 @@ _PRESET_B_SEC_MEDIAN = 156
 # 味との関係も、数値評価(5軸)・テキストコメントの両方で無相関だった。
 _ABC_CHARGE_BASE = 185
 _ABC_DIP_T, _ABC_DIP_TEMP = 60, 95
+# 豆温度モードで、ガイド線が未設定のときに使う出発点(吸入℃)。
+# プリセット174本の実測で、カラーチェンジ・1ハゼのガイド線として自然な値。
+# 豆温度モードではここから fit_bean_anchors() が寄せるので、多少ずれていても
+# 最終的な境界の位置は変わらない。
+_ABC_SEED_CC, _ABC_SEED_FC = 175, 220
 
 # 標高補正は撤去した(2026-08)。標高帯ごとの投入温度の中央値の開きは2℃しかなく
 # (1500-2000m:185 / 1000-1500m:183 / 2000m以上:183.5 / 1000m未満:185)、しかも
@@ -886,10 +1034,11 @@ HEALTH_METRIC_LABELS = {
 }
 
 
-def profile_health_metrics(points, guide_temps: Optional[dict]) -> Optional[dict]:
+def profile_health_metrics(points, guide_temps: Optional[dict],
+                           fan_points: Optional[list] = None) -> Optional[dict]:
     """1本のカーブから、ヘルスチェック用の指標を計算する。
     ガイド温度でA/B/C/Dに分割できない場合は None。"""
-    abc = analyze_abc_phases([tuple(p) for p in points], guide_temps)
+    abc = analyze_abc_phases([tuple(p) for p in points], guide_temps, fan_points)
     if abc is None:
         return None
     total = abc["a_sec"] + abc["b_sec"] + abc["c_sec"]
@@ -1017,11 +1166,12 @@ def _select_health_band(m, bands, roast_level, style):
 
 
 def evaluate_profile_health(points, guide_temps: Optional[dict], bands: dict,
+                            fan_points: Optional[list] = None,
                             roast_level: Optional[str] = None) -> dict:
     """編集中のカーブを、(焙煎度 × Aフェーズ形状)の正常帯と照らして評価する。
     予熱から下降しない nodip 型は、その焙煎度の nodip 帯があるときだけ判定し、
     無ければ判定対象外(=正常)として扱う(dip型の帯で誤警告しないため)。"""
-    m = profile_health_metrics(points, guide_temps)
+    m = profile_health_metrics(points, guide_temps, fan_points)
     style = a_phase_style(points)
     if m is None:
         # 2026-07: カーブがカラーチェンジ・1ハゼの温度ガイド線に到達せず、A/B/C分割
@@ -1112,7 +1262,126 @@ def _quantize(value: float, base: int, unit: int, lo: int, hi: int) -> int:
     return int(_clamp(q, lo, hi))
 
 
-def analyze_abc_phases(roast_points: list, guide_temps: Optional[dict]) -> Optional[dict]:
+def phase_mode(guide_temps: Optional[dict]) -> str:
+    """フェーズ境界を何で判定するか。未設定なら従来どおり吸入温度。"""
+    m = (guide_temps or {}).get("mode")
+    return PHASE_MODE_BEAN if m == PHASE_MODE_BEAN else PHASE_MODE_AIR
+
+
+def _bean_at(series: list, t: Optional[float]) -> Optional[float]:
+    """豆温度の系列から、時刻tの豆温度を線形補間で返す。"""
+    if t is None or not series:
+        return None
+    if t <= series[0]["t"]:
+        return series[0]["bean"]
+    for a, b in zip(series, series[1:]):
+        if a["t"] <= t <= b["t"]:
+            span = b["t"] - a["t"]
+            w = 0.0 if span <= 0 else (t - a["t"]) / span
+            return a["bean"] + (b["bean"] - a["bean"]) * w
+    return series[-1]["bean"]
+
+
+def _bean_rising_crossing(series: list, target: float) -> Optional[float]:
+    """豆温度がtargetを上向きに横切る時刻。豆温度は投入直後の一度だけ下がる
+    形にならない(常温から上がっていく)ので、ディップを探す必要はない。"""
+    for a, b in zip(series, series[1:]):
+        if a["bean"] <= target <= b["bean"] and b["bean"] > a["bean"]:
+            span = b["bean"] - a["bean"]
+            return a["t"] + (b["t"] - a["t"]) * (target - a["bean"]) / span
+    return None
+
+
+def bean_color_change(guide_temps: Optional[dict]) -> float:
+    """豆温度モードでのカラーチェンジ(℃)。壊れた設定は既定に戻す。
+
+    サーバー側でも同じ範囲に丸めているが、ここだけを直接呼ぶ経路(テスト・
+    スクリプト・手で書き換えた設定ファイル)があるので、モジュール側でも守る。
+    """
+    try:
+        v = float((guide_temps or {}).get("beanColorChange"))
+    except (TypeError, ValueError):
+        return BEAN_COLOR_CHANGE
+    return v if 80.0 <= v <= 180.0 else BEAN_COLOR_CHANGE
+
+
+def bean_phase_points(roast_points: list, fan_points: Optional[list],
+                      guide_temps: Optional[dict]) -> Optional[dict]:
+    """豆温度モデルから、カラーチェンジ・1ハゼ・2ハゼの時刻と豆温度を返す。
+
+    1ハゼ・2ハゼはモデル自身が出す時刻(crack_start / second_crack)を使う。
+    カラーチェンジだけは対応する事象がモデルに無いので、豆温度のしきい値
+    (guide_temps["beanColorChange"]、既定 BEAN_COLOR_CHANGE)で決める。
+    戻り値: {"t_cc","t_fc","t_sc","cc","fc","series"} または None。
+    """
+    pts = sorted(([p[0], p[1]] for p in roast_points), key=lambda p: p[0])
+    if len(pts) < 2:
+        return None
+    fan = sorted(([p[0], p[1]] for p in fan_points), key=lambda p: p[0]) if fan_points else None
+    r = E.estimate(pts, fan)
+    if not r:
+        return None
+    ser = r["series"]
+    cc = bean_color_change(guide_temps)
+    t_cc = _bean_rising_crossing(ser, cc)
+    t_fc = r["crack_start"]
+    if t_cc is None or t_fc is None:
+        return None
+    return {"t_cc": t_cc, "t_fc": t_fc, "t_sc": r["second_crack"],
+            "cc": cc, "fc": _bean_at(ser, t_fc), "series": ser}
+
+
+def _bean_early_ratio(series: list, est: dict, dip_t: float):
+    """ターニングポイント〜1ハゼの豆温度の上昇のうち、前半で上がった割合。
+
+    序盤にどれだけ熱が入ったかを、プロファイルごとの絶対値ではなく形で見る。
+    1ハゼに届かないカーブでは決められないので None を返す。
+    """
+    t_fc = est.get("crack_start")
+    if t_fc is None or t_fc <= dip_t + 1:
+        return None
+    b0 = _bean_at(series, dip_t)
+    span = _bean_at(series, t_fc) - b0
+    if span <= 0:
+        return None
+    return (_bean_at(series, dip_t + (t_fc - dip_t) / 2) - b0) / span
+
+
+def fit_bean_anchors(build, a_sec: int, fc_t: int, cc: float, fc: float,
+                     bean_cc: float, rounds: int = 5) -> tuple:
+    """豆温度モード用に、吸入温度のアンカー(カラーチェンジ・1ハゼ)を寄せる。
+
+    吸入モードでは「a_sec に吸入がccになる」ように制御点を置けば済んだが、
+    豆温度モードで狙うのは「a_sec に豆がカラーチェンジ、fc_t に豆が1ハゼ」で
+    ある。豆は空気より遅れて昇温するので、同じ時刻に置くべき吸入温度はカーブ
+    ごとに違う。逆に解くのは難しいが、吸入を上げれば豆も上がる単調な関係なので、
+    ずれを見て少しずつ寄せれば数回で収まる。
+
+    build(cc, fc) -> (roast_points, fan_points) を渡すこと。
+    戻り値: (cc, fc)。寄せられなければ渡された値をそのまま返す。
+    """
+    # 吸入を1℃上げたとき豆が何℃上がるか。豆は熱容量のぶん遅れるので1未満。
+    # 実測(プリセット174本)で0.4〜0.7に収まるため、真ん中を初期値にする。
+    gain = 0.55
+    for _ in range(max(rounds, 1)):
+        pts, fan = build(cc, fc)
+        r = E.estimate(pts, fan)
+        if not r:
+            return cc, fc
+        ser = r["series"]
+        e_cc = bean_cc - (_bean_at(ser, a_sec) or bean_cc)
+        # 1ハゼは「その時刻に豆がT_FC_BEANに達している」ことを狙う。
+        # crack_start の時刻ではなく温度で見るほうが、届かない場合も扱える。
+        e_fc = E.T_FC_BEAN - (_bean_at(ser, fc_t) or E.T_FC_BEAN)
+        if abs(e_cc) < 0.3 and abs(e_fc) < 0.3:
+            break
+        cc = _clamp(cc + e_cc / gain, _ABC_DIP_TEMP + 10, MAX_TEMPERATURE - 20)
+        fc = _clamp(fc + e_fc / gain, cc + 5, MAX_TEMPERATURE)
+    return cc, fc
+
+
+def analyze_abc_phases(roast_points: list, guide_temps: Optional[dict],
+                       fan_points: Optional[list] = None) -> Optional[dict]:
     """カーブ(制御点列)と温度ガイド線から、A/B/Cフェーズの時間とB内RoRの傾向を返す。
 
     戻り値: {"a_sec", "b_sec", "c_sec", "b_ror_diff"(後半-前半, ℃/分),
@@ -1120,40 +1389,62 @@ def analyze_abc_phases(roast_points: list, guide_temps: Optional[dict]) -> Optio
     または、境界を算出できない場合(ガイド未設定・カーブの温度帯が合わない等)は
     None。"c_sec"は常に「1ハゼ→カーブ終了」(infer_taste_profile()/
     infer_taste_axes()が参照しているため意味は変更しない)。
-    "c_sec_before_d"(1ハゼ→2ハゼ)・"d_sec"(2ハゼ→終了)は、カーブが1ハゼ後に
-    2ハゼ温度(ガイド線のsecondCrack、未設定時はABC_SECOND_CRACK_TEMP)を
-    上向きに通過する場合のみ算出し、それ以外はどちらもNoneになる。
+    "c_sec_before_d"(1ハゼ→2ハゼ)・"d_sec"(2ハゼ→終了)は、2ハゼの時刻が
+    求まった場合のみ算出し、それ以外はどちらもNoneになる。
+
+    境界の決め方は guide_temps["mode"] で選ぶ:
+      "air" (既定): 吸入温度がガイド線を上向きに横切った時刻。RoRも吸入温度。
+      "bean"      : 豆温度モデルが示す時刻(1ハゼ・2ハゼはモデル自身の
+                    crack_start / second_crack、カラーチェンジは豆温度の
+                    しきい値)。RoRも豆温度で測る。
+    fan_points を渡すと豆温度モデルが実際の風量で計算する(渡さなければ
+    FAN_REF固定)。風量は熱の入りやすさに効くので、あれば渡すこと。
     """
     gt = guide_temps or {}
-    cc, fc = gt.get("colorChange"), gt.get("firstCrack")
-    if cc is None or fc is None or fc <= cc:
-        return None
     pts = sorted((list(p) for p in roast_points), key=lambda p: p[0])
     if len(pts) < 2:
         return None
-    t_cc = _rising_crossing(pts, cc)
-    t_fc = _rising_crossing(pts, fc)
-    if t_cc is None or t_fc is None or t_fc - t_cc < 30:
+    bean = None
+    if phase_mode(gt) == PHASE_MODE_BEAN:
+        # 豆温度モード。境界は豆温度モデルが決める。RoRも豆温度で測る
+        # (吸入温度のRoRと豆温度のRoRは別物なので、混ぜてはいけない)。
+        bean = bean_phase_points(pts, fan_points, gt)
+        if bean is None:
+            return None
+        cc, fc = bean["cc"], bean["fc"]
+        t_cc, t_fc = bean["t_cc"], bean["t_fc"]
+    else:
+        cc, fc = gt.get("colorChange"), gt.get("firstCrack")
+        if cc is None or fc is None or fc <= cc:
+            return None
+        t_cc = _rising_crossing(pts, cc)
+        t_fc = _rising_crossing(pts, fc)
+    if t_cc is None or t_fc is None or fc is None or t_fc - t_cc < 30:
         return None
     end_t = pts[-1][0]
     mid_t = (t_cc + t_fc) / 2
-    mid_temp = _interp_at(pts, mid_t)
+    mid_temp = (_bean_at(bean["series"], mid_t) if bean
+                else _interp_at(pts, mid_t))
     half_min = (t_fc - t_cc) / 2 / 60.0
     if half_min <= 0:
         return None
     ror1 = (mid_temp - cc) / half_min / 60.0 * 60  # 前半RoR(℃/分)
     ror2 = (fc - mid_temp) / half_min / 60.0 * 60  # 後半RoR(℃/分)
     diff = ror2 - ror1
-    level = min(ABC_ROR_DIFF_TARGET, key=lambda k: abs(ABC_ROR_DIFF_TARGET[k] - diff))
+    targets = ror_diff_targets(gt)
+    level = min(targets, key=lambda k: abs(targets[k] - diff))
 
     c_sec_before_d = None
     d_sec = None
-    sc = gt.get("secondCrack") or ABC_SECOND_CRACK_TEMP
-    if sc > fc:
-        t_sc = _rising_crossing(pts, sc)
-        if t_sc is not None and t_fc < t_sc < end_t:
-            c_sec_before_d = round(t_sc - t_fc)
-            d_sec = round(end_t - t_sc)
+    if bean is not None:
+        # 2ハゼもモデル自身が出す(乾物がSC_DRY_FRACだけ分解した時刻)。
+        t_sc = bean["t_sc"]
+    else:
+        sc = gt.get("secondCrack") or ABC_SECOND_CRACK_TEMP
+        t_sc = _rising_crossing(pts, sc) if sc > fc else None
+    if t_sc is not None and t_fc < t_sc < end_t:
+        c_sec_before_d = round(t_sc - t_fc)
+        d_sec = round(end_t - t_sc)
 
     return {
         "a_sec": round(t_cc),
@@ -1263,9 +1554,14 @@ def _abc_expected_taste(
     if bases is None:
         bases = _effective_abc_bases(roast_level, None)
     clamp_d = ABC_TASTE_DELTA_CLAMP
+    # 注: Cの意味は2ハゼが取れたかどうかで変わる(取れれば「1ハゼ→2ハゼ」、
+    # 取れなければ「1ハゼ→終了」)が、基準値(bases)は同じ判定の下でプリセットから
+    # 計算されるので、両者の意味は自然に揃う。ここでD分を足して補正しようとすると
+    # 二重計上になり、実データとの一致が 1.153 → 0.962 まで落ちる(2026-09に確認)。
+    c_base = bases["c_sec"]
     da = _clamp((a_sec - bases["a_sec"]) / ABC_UNITS["a_sec"], -clamp_d, clamp_d)   # 30秒単位
     db = _clamp((b_sec - bases["b_sec"]) / ABC_UNITS["b_sec"], -clamp_d, clamp_d)   # 15秒単位
-    dc = _clamp((c_sec - bases["c_sec"]) / ABC_UNITS["c_sec"], -clamp_d, clamp_d)   # 5秒単位
+    dc = _clamp((c_sec - c_base) / ABC_UNITS["c_sec"], -clamp_d, clamp_d)   # 5秒単位
     dr = b_ror - ABC_BASE["b_ror"]                          # 「減少」基準
 
     acidity = ABC_ACIDITY_BASE.get(roast_level, 3.0) - db * 0.25 - dc * 0.12 + dr * 0.4
@@ -1401,6 +1697,12 @@ def generate_profile_abc(
     """
     gt = guide_temps or {}
     cc, fc = gt.get("colorChange"), gt.get("firstCrack")
+    if phase_mode(gt) == PHASE_MODE_BEAN and (cc is None or fc is None):
+        # 豆温度モードでは、この2点は fit_bean_anchors() が寄せていく出発点に
+        # すぎない(境界そのものは豆温度モデルが決める)。ガイド線を入れていなくても
+        # プリセットの中央値から始めれば同じ答えに収束するので、必須にしない。
+        cc = _ABC_SEED_CC if cc is None else cc
+        fc = _ABC_SEED_FC if fc is None else fc
     if cc is None or fc is None:
         raise ValueError("温度ガイド線(カラーチェンジ・1ハゼ)が設定されていません。先に「⚙ 温度ガイド線設定」で入力してください。")
     if roast_level not in ABC_ROAST_LEVELS:
@@ -1482,33 +1784,46 @@ def generate_profile_abc(
     # 測定値は(2/3)Δになるため、Δ=1.5×目標値とすれば測定値=目標値となり、
     # 生成→再解析の往復とプリセット統計との整合が保たれる。
     b_min = b_sec / 60.0
-    d = ABC_ROR_DIFF_TARGET[b_ror]
-    r_avg = (fc - cc) / b_min          # B全体の平均RoR(℃/分)
+    d = ror_diff_targets(guide_temps)[b_ror]
     delta = 1.5 * d                    # 3分割の端区間同士のRoR差
-    b1_temp = _clamp(cc + (r_avg - delta / 2) * b_min / 3, cc + 1, fc - 3)
-    b2_temp = _clamp(cc + (2 * r_avg - delta / 2) * b_min / 3, b1_temp + 1, fc - 1)
 
-    points = [
-        [0, charge],
-        [_ABC_DIP_T, _ABC_DIP_TEMP],
-        [a_sec, cc],
-        [round(a_sec + b_sec / 3), round(b1_temp)],
-        [round(a_sec + 2 * b_sec / 3), round(b2_temp)],
-        [fc_t, fc],
-    ]
-    if with_d:
-        points.append([sc_t, sc])
-    points.append([end_t, end_temp])
-    cleaned: list[list[float]] = []
-    for x, y in sorted(points, key=lambda p: p[0]):
-        if cleaned and x <= cleaned[-1][0]:
-            x = cleaned[-1][0] + 1
-        cleaned.append([int(x), int(round(y))])
+    def _build(cc_v, fc_v):
+        """アンカー2点から、制御点列と風量カーブを組む。"""
+        r_avg = (fc_v - cc_v) / b_min          # B全体の平均RoR(℃/分)
+        b1 = _clamp(cc_v + (r_avg - delta / 2) * b_min / 3, cc_v + 1, fc_v - 3)
+        b2 = _clamp(cc_v + (2 * r_avg - delta / 2) * b_min / 3, b1 + 1, fc_v - 1)
+        end_v = int(_clamp(max(end_temp_target, (sc + 4) if with_d else (fc_v + 4)),
+                           (sc + 4) if with_d else (fc_v + 4), MAX_TEMPERATURE))
+        pts = [
+            [0, charge],
+            [_ABC_DIP_T, _ABC_DIP_TEMP],
+            [a_sec, cc_v],
+            [round(a_sec + b_sec / 3), round(b1)],
+            [round(a_sec + 2 * b_sec / 3), round(b2)],
+            [fc_t, fc_v],
+        ]
+        if with_d:
+            pts.append([sc_t, sc])
+        pts.append([end_t, end_v])
+        out: list[list[float]] = []
+        for x, y in sorted(pts, key=lambda p: p[0]):
+            if out and x <= out[-1][0]:
+                x = out[-1][0] + 1
+            out.append([int(x), int(round(y))])
+        # 風量カーブ: フェーズ境界(カラーチェンジ=a_sec・1ハゼ=fc_t)にアンカーし、
+        # プリセット実測の形(投入50→ピーク80→なだらか減少、1ハゼで勾配が緩む、
+        # 深いほど発達期・終盤を高め)を再現する。
+        return out, _abc_fan_curve(roast_level, a_sec, fc_t, out[-1][0])
 
-    # 風量カーブ: フェーズ境界(カラーチェンジ=a_sec・1ハゼ=fc_t)にアンカーし、
-    # プリセット実測の形(投入50→ピーク80→なだらか減少、1ハゼで勾配が緩む、
-    # 深いほど発達期・終盤を高め)を再現する。
-    fan_cleaned = _abc_fan_curve(roast_level, a_sec, fc_t, cleaned[-1][0])
+    if phase_mode(guide_temps) == PHASE_MODE_BEAN:
+        # 狙いは「a_secに豆がカラーチェンジ、fc_tに豆が1ハゼ」。同じ時刻に
+        # 置くべき吸入温度はカーブごとに違うので、寄せてから組み直す。
+        bean_cc = (guide_temps or {}).get("beanColorChange")
+        bean_cc = float(bean_cc) if bean_cc is not None else BEAN_COLOR_CHANGE
+        cc, fc = fit_bean_anchors(_build, a_sec, fc_t, cc, fc, bean_cc)
+
+    cleaned, fan_cleaned = _build(cc, fc)
+    end_temp = cleaned[-1][1]
     cooldown = [cleaned[-1][0] + 120, 60]
 
     expected = _abc_expected_taste(roast_level, a_sec, b_sec, c_sec, b_ror, d_sec, bases=bases)
@@ -1835,7 +2150,8 @@ def generate_profile_axes(
 
     # 酸の質 → BフェーズRoR形状(ABCモードと同じ5段階の目標値を共有)
     if guide_temps:
-        cleaned = _apply_guide_shape(cleaned, guide_temps, ABC_ROR_DIFF_TARGET[aq], fc_shift=fc_shift)
+        cleaned = _apply_guide_shape(cleaned, guide_temps,
+                                     ror_diff_targets(guide_temps)[aq], fc_shift=fc_shift)
 
     # 風量: 明るい酸寄りはやや高め(クリーンに)、濃厚寄りはやや低め(熱をこもらせる)
     fan_end = _clamp(56 + aq * 3 - bd * 3, MIN_FAN, MAX_FAN)
@@ -1871,7 +2187,8 @@ def generate_profile_axes(
 
 
 def infer_taste_axes(roast_points: list, guide_temps: Optional[dict] = None,
-                     phase_bases: Optional[dict] = None) -> dict:
+                     phase_bases: Optional[dict] = None,
+                     fan_points: Optional[list] = None) -> dict:
     """カーブから3軸(酸の質・甘さの系統・ボディ)と焙煎度を逆推測する。
 
     generate_profile_axes()の順方向マッピングを逆に解く。ガイド温度がある場合は
@@ -1890,7 +2207,7 @@ def infer_taste_axes(roast_points: list, guide_temps: Optional[dict] = None,
     end_t, end_temp = pts[-1]
     roast_level = infer_roast_level(end_temp, end_t)
 
-    abc = analyze_abc_phases(pts, guide_temps) if guide_temps else None
+    abc = analyze_abc_phases(pts, guide_temps, fan_points) if guide_temps else None
     if abc:
         # ガイドあり: ABCフェーズ時間の基準(=中立の3軸生成が使うのと同じ値)から逆算。
         bases = _effective_abc_bases(roast_level, phase_bases)

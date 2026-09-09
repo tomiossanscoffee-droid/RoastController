@@ -279,11 +279,141 @@ final class AppControlBridge: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// 書き出し(データのエクスポート)を、Finderの保存パネルで受け取る。
+///
+/// WKWebViewは showSaveFilePicker に対応しておらず、<a download> も既定では
+/// 何も起きない。ダウンロードとして受け取り、保存先とファイル名を選ばせる。
+/// これでブラウザ版(Chrome等の showSaveFilePicker)と同じ操作感になる。
+/// 保存・読み込みのパネルを、フォルダを選べる形で開くための共通処理。
+enum FilePanels {
+    /// 前に選んだフォルダを覚えておく鍵。毎回ダウンロードから始まると、
+    /// いつも同じ場所に貯める使い方で毎回たどり直すことになる。
+    private static let lastFolderKey = "RoastStudioLastExportFolder"
+
+    /// パネルを、ファイルを辿れる大きい形で開かせる。
+    ///
+    /// NSSavePanelは既定だと名前を入れる欄とSaveボタンだけの小さい形で開き、
+    /// フォルダを選べない(開いてから三角印を押さないと出てこない)。
+    /// この設定は、OSが「前回どちらの形だったか」を覚えるための場所なので、
+    /// 出す前に入れておけば大きい形で開く。
+    static func preferExpanded() {
+        UserDefaults.standard.set(true, forKey: "NSNavPanelExpandedStateForSaveMode")
+        // 名前だけの小さい形で使っていた頃の窓の大きさが残っていると、
+        // 大きい形にしても窓が小さいままで結局フォルダが見えない。
+        // 一度だけ捨てる(その後は利用者が変えた大きさをそのまま覚える)。
+        if !UserDefaults.standard.bool(forKey: "RoastStudioPanelFrameReset") {
+            UserDefaults.standard.removeObject(forKey: "NSWindow Frame NSNavPanelAutosaveName")
+            UserDefaults.standard.set(true, forKey: "RoastStudioPanelFrameReset")
+        }
+    }
+
+    /// 最初に開くフォルダ。前に選んだところ、無ければダウンロード。
+    static func startFolder() -> URL? {
+        if let path = UserDefaults.standard.string(forKey: lastFolderKey),
+           FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+    }
+
+    /// 選んだファイルの置き場所を覚える。
+    static func remember(_ url: URL) {
+        UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: lastFolderKey)
+    }
+}
+
+
+final class DownloadBridge: NSObject, WKDownloadDelegate {
+    /// 保存先が決まるまでダウンロード自体を保持しておく(解放されると中断する)
+    private var keep: [WKDownload] = []
+
+    func hold(_ download: WKDownload) {
+        download.delegate = self
+        keep.append(download)
+    }
+
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping (URL?) -> Void
+    ) {
+        FilePanels.preferExpanded()
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedFilename
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.directoryURL = FilePanels.startFolder()
+        panel.message = "書き出したデータの保存先を選んでください"
+        // 独立した窓ではなく、アプリのウインドウに付ける。別窓だと、後ろの
+        // 画面が触れてしまい、他の窓と重なって分かりにくい。
+        let handler: (NSApplication.ModalResponse) -> Void = { result in
+            guard result == .OK, let url = panel.url else {
+                completionHandler(nil)          // 選ぶのをやめた
+                self.keep.removeAll { $0 === download }
+                return
+            }
+            // 同じ名前が既にあれば、保存パネルが上書きの確認を済ませている。
+            try? FileManager.default.removeItem(at: url)
+            FilePanels.remember(url)
+            completionHandler(url)
+        }
+        if let window = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) {
+            panel.beginSheetModal(for: window, completionHandler: handler)
+        } else {
+            panel.begin(completionHandler: handler)
+        }
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        keep.removeAll { $0 === download }
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error,
+                  resumeData: Data?) {
+        keep.removeAll { $0 === download }
+        let alert = NSAlert()
+        alert.messageText = "書き出せませんでした"
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+}
+
 /// WKWebViewは、WKUIDelegateを設定しない限りJavaScriptの
 /// alert()/confirm()/prompt()を一切表示しない(無言で無視される)。
 /// このアプリのGUI(「名前を付けて保存」「削除」「切断」の確認等)は
 /// これらに依存しているため、ネイティブのNSAlertに橋渡しする。
 final class UIDelegateBridge: NSObject, WKUIDelegate {
+    /// `<input type="file">` を押したときのファイル選択。
+    ///
+    /// これを用意しないと、WKWebViewはファイル選択の要求を黙って捨てる
+    /// (押しても何も起きない)。取り込みはこの入力欄を使っている。
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        FilePanels.preferExpanded()
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = true
+        panel.directoryURL = FilePanels.startFolder()
+        panel.message = "取り込むファイルを選んでください"
+        let handler: (NSApplication.ModalResponse) -> Void = { result in
+            guard result == .OK else { completionHandler(nil); return }
+            if let first = panel.urls.first { FilePanels.remember(first) }
+            completionHandler(panel.urls)
+        }
+        if let window = webView.window {
+            panel.beginSheetModal(for: window, completionHandler: handler)
+        } else {
+            panel.begin(completionHandler: handler)
+        }
+    }
+
     func webView(
         _ webView: WKWebView,
         runJavaScriptAlertPanelWithMessage message: String,
@@ -383,7 +513,8 @@ func isServerRunning(url: URL, timeout: TimeInterval = 1.0) -> Bool {
     return ok
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
+                         UNUserNotificationCenterDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var webView: WKWebView!
     var serverProcess: Process?
@@ -393,6 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     var tailscaleCLIUsed: String?
     let repoRoot = findRepoRoot()
     let uiDelegateBridge = UIDelegateBridge()
+    let downloadBridge = DownloadBridge()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if hasValidBundleForNotifications {
@@ -446,11 +578,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         config.userContentController.add(AppControlBridge(), name: "appControl")
         webView = WKWebView(frame: rect, configuration: config)
         webView.uiDelegate = uiDelegateBridge
+        // 書き出しをダウンロードとして受け取り、Finderの保存パネルを出すために要る
+        webView.navigationDelegate = self
         window.contentView = webView
 
         showMessage("サーバーを起動しています…")
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // ------------------------------------------------------------
+    // 書き出し(データのエクスポート)をダウンロードとして受け取る
+    // ------------------------------------------------------------
+    // 添付ファイルとして返ってきた応答は、画面に表示せずダウンロードに回す。
+    // こうしないとWKWebViewはJSONを本文として表示してしまい、保存できない。
+    // <a download> のリンクは、そのままでは何も起きない。ダウンロードに回す。
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        let disposition = (navigationResponse.response as? HTTPURLResponse)?
+            .value(forHTTPHeaderField: "Content-Disposition")?.lowercased() ?? ""
+        if disposition.hasPrefix("attachment") {
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
+                 didBecome download: WKDownload) {
+        downloadBridge.hold(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction,
+                 didBecome download: WKDownload) {
+        downloadBridge.hold(download)
     }
 
     // ============================================================
@@ -476,6 +652,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         ).target = self
         appMenu.addItem(.separator())
         appMenu.addItem(
+            withTitle: "設定…",
+            action: #selector(openSettings(_:)),
+            keyEquivalent: ","
+        ).target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(
             withTitle: "Roast Studio を隠す",
             action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h"
@@ -498,6 +680,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
             keyEquivalent: "q"
         )
 
+        // ---- ファイルメニュー(書き出し・取り込み) ----
+        // 画面の「設定」からも同じことができるが、Macでは保存・読み込みが
+        // ファイルメニューにあるのが当たり前なので、両方から辿れるようにする。
+        let fileMenuItem = NSMenuItem()
+        mainMenu.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "ファイル")
+        fileMenuItem.submenu = fileMenu
+        fileMenu.addItem(
+            withTitle: "上書き保存",
+            action: #selector(saveProfileOverwrite(_:)),
+            keyEquivalent: "s"
+        ).target = self
+        let saveAs = fileMenu.addItem(
+            withTitle: "名前を付けて保存…",
+            action: #selector(saveProfileAs(_:)),
+            keyEquivalent: "s"
+        )
+        saveAs.keyEquivalentModifierMask = [.command, .shift]
+        saveAs.target = self
+        fileMenu.addItem(.separator())
+        // 書き出しも取り込みも、専用の窓の中で選ぶ。項目を分けて並べていた
+        // ときは、設定の中の表示へ誘導する形になり、どこを見ればよいのか
+        // 分かりにくかった。
+        fileMenu.addItem(
+            withTitle: "インポート・エクスポート…",
+            action: #selector(openImportExport(_:)),
+            keyEquivalent: "e"
+        ).target = self
+
         // ---- 編集メニュー(取り消し/やり直しを含む標準構成) ----
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
@@ -519,12 +730,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         editMenu.addItem(withTitle: "コピー", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "貼り付け", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "すべてを選択", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        // 曲線の編集の取り消し。⌘Zは文字入力の取り消しに残しておきたいので、
+        // Optionを足したキーにする。
+        let curveUndo = editMenu.addItem(
+            withTitle: "プロファイルの編集を取り消す",
+            action: #selector(profileUndo(_:)),
+            keyEquivalent: "z"
+        )
+        curveUndo.keyEquivalentModifierMask = [.command, .option]
+        curveUndo.target = self
+        let curveRedo = editMenu.addItem(
+            withTitle: "プロファイルの編集をやり直す",
+            action: #selector(profileRedo(_:)),
+            keyEquivalent: "z"
+        )
+        curveRedo.keyEquivalentModifierMask = [.command, .option, .shift]
+        curveRedo.target = self
+        editMenu.addItem(
+            withTitle: "プロファイルを最初に戻す",
+            action: #selector(profileReset(_:)),
+            keyEquivalent: ""
+        ).target = self
+
+        // ---- 焙煎メニュー(送信・調整・選び直し) ----
+        // 焙煎中に手が離せない操作(送信・1ハゼ確認)は、画面のどこを見ていても
+        // キーだけで届くようにしておく。
+        let roastMenuItem = NSMenuItem()
+        mainMenu.addItem(roastMenuItem)
+        let roastMenu = NSMenu(title: "焙煎")
+        roastMenuItem.submenu = roastMenu
+        roastMenu.addItem(
+            withTitle: "プロファイルを送信",
+            action: #selector(sendProfile(_:)),
+            keyEquivalent: "\r"
+        ).target = self
+        let resend = roastMenu.addItem(
+            withTitle: "前回のプロファイルを送信",
+            action: #selector(resendLastProfile(_:)),
+            keyEquivalent: "\r"
+        )
+        resend.keyEquivalentModifierMask = [.command, .shift]
+        resend.target = self
+        roastMenu.addItem(.separator())
+        let firstCrack = roastMenu.addItem(
+            withTitle: "1ハゼ確認",
+            action: #selector(markFirstCrack(_:)),
+            keyEquivalent: "h"
+        )
+        firstCrack.keyEquivalentModifierMask = [.command, .shift]
+        firstCrack.target = self
+        roastMenu.addItem(.separator())
+        roastMenu.addItem(
+            withTitle: "浅めに調整",
+            action: #selector(adjustLighter(_:)),
+            keyEquivalent: "["
+        ).target = self
+        roastMenu.addItem(
+            withTitle: "深めに調整",
+            action: #selector(adjustDeeper(_:)),
+            keyEquivalent: "]"
+        ).target = self
+        roastMenu.addItem(
+            withTitle: "温度オフセット",
+            action: #selector(toggleOffset(_:)),
+            keyEquivalent: ""
+        ).target = self
+        roastMenu.addItem(.separator())
+        roastMenu.addItem(
+            withTitle: "プロファイルを選ぶ…",
+            action: #selector(pickProfile(_:)),
+            keyEquivalent: "p"
+        ).target = self
+        roastMenu.addItem(
+            withTitle: "焙煎する豆を選ぶ…",
+            action: #selector(pickBean(_:)),
+            keyEquivalent: "b"
+        ).target = self
+        roastMenu.addItem(.separator())
+        roastMenu.addItem(
+            withTitle: "較正を開く",
+            action: #selector(openCalibration(_:)),
+            keyEquivalent: ""
+        ).target = self
 
         // ---- 表示メニュー(WebViewの再読み込み・表示倍率・フルスクリーン) ----
         let viewMenuItem = NSMenuItem()
         mainMenu.addItem(viewMenuItem)
         let viewMenu = NSMenu(title: "表示")
         viewMenuItem.submenu = viewMenu
+        // 右側のタブ(焙煎グラフ・味を推測・豆の情報・焙煎履歴)を⌘1〜⌘4で。
+        for (index, tab) in AppDelegate.viewTabs.enumerated() {
+            let item = viewMenu.addItem(
+                withTitle: tab.title,
+                action: #selector(showViewTab(_:)),
+                keyEquivalent: String(index + 1)
+            )
+            item.tag = index
+            item.target = self
+        }
+        viewMenu.addItem(.separator())
         viewMenu.addItem(
             withTitle: "再読み込み",
             action: #selector(reloadPage(_:)),
@@ -553,6 +858,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
             keyEquivalent: "f"
         )
         fullScreen.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(
+            withTitle: "モバイル版のQRコード…",
+            action: #selector(showMobileQR(_:)),
+            keyEquivalent: ""
+        ).target = self
 
         // ---- ウインドウメニュー(OSが「ウインドウ」一覧を自動で差し込む) ----
         let windowMenuItem = NSMenuItem()
@@ -604,6 +915,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     @objc func showAboutPanel(_ sender: Any?) {
         NSApp.orderFrontStandardAboutPanel(sender)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // ------------------------------------------------------------
+    // 書き出し・取り込み(画面の「設定」と同じ処理をメニューから呼ぶ)
+    // ------------------------------------------------------------
+    @objc func openImportExport(_ sender: Any?) {
+        runJS("setTimeout(function(){ openIoDialog(); }, 0); true;",
+              failure: "インポート・エクスポートを開けませんでした")
+    }
+
+    /// 画面側の exportData() を呼ぶ。書き出しはダウンロードになり、
+    /// DownloadBridgeがFinderの保存パネルを出す。
+    /// 画面側のJavaScriptを呼ぶ。戻り値は見ない(見る必要のあるものは click が扱う)。
+    private func runJS(_ js: String, failure: String) {
+        guard let webView = webView else { return }
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                self.showIOError(failure, error.localizedDescription)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 画面のボタンを、メニューから押す
+    // ------------------------------------------------------------
+    /// 表示メニューに並べる、右側のタブ。順番がそのまま⌘1〜⌘4になる。
+    static let viewTabs: [(title: String, id: String)] = [
+        ("焙煎グラフ", "tabGraphView"),
+        ("味を推測", "tabTasteView"),
+        ("豆の情報", "tabBeanInfoView"),
+        ("焙煎履歴", "tabRoastHistoryView"),
+    ]
+
+    @objc func saveProfileOverwrite(_ sender: Any?) { click("btnOverwriteSave", "上書き保存") }
+    @objc func saveProfileAs(_ sender: Any?) { click("btnSave", "名前を付けて保存") }
+    @objc func profileUndo(_ sender: Any?) { click("btnUndo", "取り消し") }
+    @objc func profileRedo(_ sender: Any?) { click("btnRedo", "やり直し") }
+    @objc func profileReset(_ sender: Any?) { click("btnReset", "最初に戻す") }
+    @objc func sendProfile(_ sender: Any?) { click("btnSend", "プロファイルの送信") }
+    @objc func resendLastProfile(_ sender: Any?) { click("btnResendLast", "前回プロファイルの送信") }
+    @objc func markFirstCrack(_ sender: Any?) { click("btnFirstCrack", "1ハゼ確認") }
+    @objc func adjustLighter(_ sender: Any?) { click("btnAdjustLighter", "浅めに調整") }
+    @objc func adjustDeeper(_ sender: Any?) { click("btnAdjustDeeper", "深めに調整") }
+    @objc func toggleOffset(_ sender: Any?) { click("btnOffsetToggle", "温度オフセット") }
+    @objc func pickProfile(_ sender: Any?) { click("btnOpenProfileSelect", "プロファイルを選ぶ") }
+    @objc func pickBean(_ sender: Any?) { click("btnPickRoastBean", "豆を選ぶ") }
+    @objc func openCalibration(_ sender: Any?) { click("btnCalOpen", "較正") }
+    @objc func openSettings(_ sender: Any?) { click("btnSettings", "設定") }
+    @objc func showMobileQR(_ sender: Any?) { click("btnMobileQR", "モバイル版のQRコード") }
+
+    @objc func showViewTab(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              AppDelegate.viewTabs.indices.contains(item.tag) else { return }
+        let tab = AppDelegate.viewTabs[item.tag]
+        click(tab.id, tab.title)
+    }
+
+    /// 画面上のボタンを押す。今その場に無い(隠れている・別の画面にいる)ときは、
+    /// 黙って何も起きないと理由が分からないので、その旨を伝える。
+    private func click(_ elementID: String, _ label: String) {
+        guard let webView = webView else { return }
+        let js = """
+        (function(){
+          var el = document.getElementById(\(jsString(elementID)));
+          if(!el) return 'none';
+          if(el.disabled) return 'disabled';
+          var style = window.getComputedStyle(el);
+          if(!el.offsetParent && style.position !== 'fixed') return 'hidden';
+          // 押すのは後回しにする。ボタンによっては confirm や prompt が出るので、
+          // evaluateJavaScript の内側で動かすと窓が入れ子になる。
+          setTimeout(function(){ el.click(); }, 0);
+          return 'ok';
+        })();
+        """
+        webView.evaluateJavaScript(js) { result, error in
+            if let error = error {
+                self.showIOError("\(label)を実行できませんでした", error.localizedDescription)
+                return
+            }
+            switch result as? String {
+            case "ok":
+                break
+            case "disabled":
+                self.showIOError("\(label)は今は使えません",
+                                 "画面の同じボタンが押せる状態になってから選んでください。")
+            default:
+                self.showIOError("\(label)は今は使えません",
+                                 "この操作のボタンが表示されている画面で選んでください。")
+            }
+        }
+    }
+
+    /// 任意の文字列を、JavaScriptの文字列リテラルとして安全に埋め込む形にする。
+    /// 引用符や改行を自前で置き換えると必ず抜けが出るので、JSONに任せる。
+    private func jsString(_ value: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [value], options: []),
+              let text = String(data: data, encoding: .utf8) else { return "\"\"" }
+        return String(text.dropFirst().dropLast())   // 外側の [ ] を外す
+    }
+
+    private func showIOError(_ title: String, _ detail: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc func reloadPage(_ sender: Any?) {

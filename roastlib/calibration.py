@@ -25,8 +25,8 @@
 #     中断時刻と重量  → 乾燥速度   そこまでに水がどれだけ抜けたか
 #
 # ■ 但し書き(承知のうえで使うこと)
-#  ・2ハゼの豆温度は測れないので、一般に言われる225℃を仮定している。この仮定が
-#    ずれていれば H_ENDO もその分ずれる。5つのうち最も弱い項目。
+#  ・2ハゼは乾物の分解量で判定する(energy.py の SC_DRY_FRAC)。実測3本から
+#    決めた値で、以前の「豆温度225℃」という仮定より外れが一桁小さい。
 #  ・中断時の重量は「豆が予想より冷たかった」のか「乾きにくい豆だった」のかを
 #    区別できない(どちらも同じ重量になる)。ここでは後者として乾燥速度に寄せる。
 #    したがって、序盤の豆温度そのものは較正できないまま残る。
@@ -132,11 +132,89 @@ CALIBRATION_PROFILES = {
 }
 CALIBRATION_KIND_LABELS = {"deep": "深煎り", "light": "浅煎り", "long": "展開長め"}
 
+# ------------------------------------------------------------
+# アプリの初期値になる較正(2026-09)
+# ------------------------------------------------------------
+# 開発機(Panasonic The Roast)で較正用プロファイルを実際に焼き、耳と秤で
+# 測った値。新規インストール時と「較正を捨てる」を押したときは、空ではなく
+# この値から始まる。公開版にも同じ値が入る。
+#
+# 利用者が自分で測り直せば上書きされる(そのほうが自分の焙煎機に合う)。
+# 消したときに空へ戻すのではなくここへ戻すのは、何も無い状態よりは
+# 「別の個体で実測した値」のほうが確実にましだからである。
+#
+# overrides はこの measurements から当てはめた結果を、初回起動で計算し直さなくて
+# 済むように持たせてあるだけ。modelVersion が変わると
+# _refit_calibration_if_stale() が measurements から当てはめ直す。
+DEFAULT_CALIBRATION = {
+    "measurements": {
+        "roasts": {
+            "deep": {
+                "fcStart": 442.0,
+                "fcEnd": 508.0,
+                "scStart": 622.0,
+                "greenG": 50.0,
+                "roastedG": 40.9,
+                "aborts": [
+                    {
+                        "t": 180.0,
+                        "g": 49.2
+                    },
+                    {
+                        "t": 240.0,
+                        "g": 49.0
+                    },
+                    {
+                        "t": 300.0,
+                        "g": 49.0
+                    },
+                    {
+                        "t": 390.0,
+                        "g": 47.9
+                    }
+                ]
+            },
+            "light": {
+                "fcStart": 432.0,
+                "fcEnd": 542.0,
+                "roastedG": 43.1
+            }
+        }
+    },
+    "modelVersion": "2026-09-slowramp",
+    "overrides": {
+        "U0": 0.0038023231398269536,
+        "CRACK_SPREAD": 1.8032633504867561,
+        "H_ENDO": 1760.5655182218559,
+        "K_PYRO": 2756.9902342416344,
+        "K_SURFACE": 0.003564715010089278,
+        "K_INNER": 0.00026735112153112884
+    },
+    "scale": {
+        "K_DRY": 0.5008451133966445,
+        "U0": 1.1011651143431664,
+        "CRACK_SPREAD": 1.1186497211456303,
+        "H_ENDO": 1.0927723407745367,
+        "K_PYRO": 1.194174312055111
+    },
+    "notes": [],
+    "used": [
+        "abort",
+        "fcStart",
+        "fcEnd",
+        "scStart",
+        "roastedG"
+    ]
+}
+
+
 # 焙煎機に送れるプロファイル。いまは較正に使う3本と同じ。
 SENDABLE_PROFILES = dict(CALIBRATION_PROFILES)
 SENDABLE_KIND_LABELS = dict(CALIBRATION_KIND_LABELS)
 
-# 2ハゼのときの豆温度(℃)。測れないので一般に言われる値を置いている。
+# 2ハゼのときに一般に言われる豆温度(℃)。モデルはこれを判定に使わない
+# (energy.py の SC_DRY_FRAC が判定する)。テストが「その頃に2ハゼが来るか」を
+# 大まかに確かめるのに使うだけの、目安の数字である。
 T_SC_BEAN = 225.0
 
 # 較正で動かす定数と、既定値からどこまで離れてよいか。
@@ -204,14 +282,6 @@ def _overrides(scale: dict) -> dict:
     if "VENT_SPREAD" in scale:
         out["VENT_SPREAD"] = E.VENT_SPREAD * scale["VENT_SPREAD"]
     return out
-
-
-def _time_at_bean(series, temp: float) -> Optional[float]:
-    """豆温度が temp に達した時刻。届かなければ None。"""
-    for p in series:
-        if p["bean"] >= temp:
-            return p["t"]
-    return None
 
 
 def _bisect(lo: float, hi: float, value_of, target: float, rising: bool,
@@ -383,13 +453,13 @@ def fit(measurements: dict, moisture: float = E.MOISTURE,
             if _round == 0:
                 used.append("fcEnd")
 
-        # ---- 終盤の熱収支: 2ハゼ開始時刻 ----
-        # H_ENDOを上げるほど吸熱が増えて遅くなる = rising=True
-        if fit_one("H_ENDO", [c for c in cases if c["scStart"]],
-                   lambda c, r: _time_at_bean(r["series"], T_SC_BEAN),
-                   lambda c: c["scStart"], rising=True):
-            if _round == 0:
-                used.append("scStart")
+        # ---- 2ハゼ開始時刻は、当てはめには使わない(2026-09) ----
+        # 2ハゼは乾物の分解量で決まる(roastlib/energy.py の SC_DRY_FRAC)。つまり
+        # 焙煎後の重量と同じものを測っているので、別の定数を決める情報にはならない。
+        # 以前は H_ENDO をここで決めていたが、それは「2ハゼ=豆温度225℃」という
+        # 誤った判定が作り出した見かけの感度だった。判定を直すと H_ENDO の効き方は
+        # 半分以下になり、当てはめは範囲の端に張り付く。
+        # 2ハゼの測定値は、予想と見比べる検算として使う(_calibration_expected)。
 
         # ---- 乾物の分解: 焙煎後の重量 ----
         # 重量そのものではなく焙煎指数で合わせる。生豆の量が違っても比べられる。
@@ -419,100 +489,11 @@ def fit(measurements: dict, moisture: float = E.MOISTURE,
     return {"overrides": overrides, "scale": scale, "notes": notes, "used": used}
 
 
-# ------------------------------------------------------------
-# 焙煎ログから学ぶ
-# ------------------------------------------------------------
-# 較正用プロファイルを焼くのは1回きりだが、普段の焙煎ログは焼くたびに増える。
-# 「1ハゼ確認」を押した記録には、実測の吸入温度カーブと、本当に音が聞こえた時刻が
-# 揃っている。その時刻にモデルが出す豆温度を集めれば、1ハゼの豆温度そのものを
-# 実測から決められる。記録が増えるほど中央値は安定し、ばらつきも見えるようになる。
-#
-# 2ハゼも同じやり方で決められる。較正では2ハゼの豆温度を225℃と仮定していて、
-# これが5項目のうち最も弱い前提だった。実測できればその仮定が要らなくなる。
-#
-# ■ 使う記録を選ぶ条件
-#   ・実測カーブがある
-#   ・「1ハゼ確認」を押している(fc_time_inferred が偽)。ガイド温度からの推定値は
-#     モデルの入力から作った値なので、使うと自分で自分を較正することになる
-#   ・その時刻がカーブの範囲に入っている
-def learn_from_logs(records, moisture=E.MOISTURE, cal=None, altitude_of=None):
-    """焙煎ログから、1ハゼ・2ハゼの豆温度を集める。
-
-    records: 焙煎記録の一覧(roast_curve / fan_curve / fc_time / fc_time_inferred /
-             sc_time を持つ辞書)
-    altitude_of: 記録→標高帯 を返す関数(標高補正を効かせる場合)
-    戻り値: {"fc": {...}, "sc": {...}, "altitude": {...}, "skipped": {理由: 件数}}
-
-    altitude は、標高の分かる記録から求めた傾き(℃/1000m)。標高帯が2つ以上に
-    またがり、かつ4件以上ないと出さない(1つの帯に固まっていると、傾きなのか
-    基準値のずれなのか区別が付かないため)。
-    """
-    fc_temps, sc_temps = [], []
-    by_alt = []          # (標高の代表値m, 1ハゼの豆温度) 標高が分かっている記録だけ
-    skipped = {"カーブなし": 0, "1ハゼ未記録": 0, "推定値のみ": 0, "時刻が範囲外": 0}
-    for rec in records or []:
-        curve = rec.get("roast_curve") or []
-        if len(curve) < 2:
-            skipped["カーブなし"] += 1
-            continue
-        fc_t = rec.get("fc_time")
-        if fc_t is None:
-            skipped["1ハゼ未記録"] += 1
-            continue
-        if rec.get("fc_time_inferred"):
-            # ガイド温度から推し量った値。これで較正すると循環する。
-            skipped["推定値のみ"] += 1
-            continue
-        c = dict(cal or {})
-        if altitude_of is not None:
-            c["T_FC_BEAN"] = E.T_FC_BEAN + E.altitude_fc_offset(altitude_of(rec))
-        r = E.estimate([[p[0], p[1]] for p in curve],
-                       [[p[0], p[1]] for p in (rec.get("fan_curve") or [])] or None,
-                       moisture=moisture, cal=c)
-        if not r:
-            skipped["カーブなし"] += 1
-            continue
-        s = r["series"]
-        t_end = s[-1]["t"]
-        if not (0 < fc_t <= t_end):
-            skipped["時刻が範囲外"] += 1
-            continue
-        fc_bean = s[min(int(fc_t), len(s) - 1)]["bean"]
-        fc_temps.append(fc_bean)
-        if altitude_of is not None:
-            m = E.ALTITUDE_BUCKET_M.get((altitude_of(rec) or "").strip())
-            if m is not None:
-                by_alt.append((m, fc_bean))
-        sc_t = rec.get("sc_time")
-        if sc_t is not None and fc_t < sc_t <= t_end:
-            sc_temps.append(s[min(int(sc_t), len(s) - 1)]["bean"])
-
-    def stat(vals):
-        if not vals:
-            return {"n": 0, "median": None, "sd": None, "min": None, "max": None}
-        import statistics as st
-        return {"n": len(vals), "median": round(st.median(vals), 1),
-                "sd": round(st.pstdev(vals), 1) if len(vals) > 1 else 0.0,
-                "min": round(min(vals), 1), "max": round(max(vals), 1)}
-
-    # 標高の傾き(℃/1000m)。標高の分かる記録が2つ以上の帯にまたがって初めて出せる。
-    # 1つの帯に固まっていると、傾きなのか基準値のずれなのか区別が付かない。
-    alt = {"n": len(by_alt), "buckets": len({m for m, _ in by_alt}), "slope": None}
-    if alt["buckets"] >= 2 and len(by_alt) >= 4:
-        n = len(by_alt)
-        mx = sum(m for m, _ in by_alt) / n
-        my = sum(t for _, t in by_alt) / n
-        den = sum((m - mx) ** 2 for m, _ in by_alt)
-        if den > 0:
-            # 最小二乗の傾き(℃/m)を ℃/1000m に直す
-            per_m = sum((m - mx) * (t - my) for m, t in by_alt) / den
-            alt["slope"] = round(max(min(per_m * 1000.0, 10.0), -10.0), 2)
-            # 基準標高(ALTITUDE_FC_REF_M)での値。傾きを使うときの基準値になる。
-            # 中央値をそのまま基準値にすると、記録の標高の偏りが基準値に入ったうえ
-            # さらに傾きで足し引きされ、二重に効いてしまう。
-            alt["base"] = round(my + per_m * (E.ALTITUDE_FC_REF_M - mx), 1)
-    return {"fc": stat(fc_temps), "sc": stat(sc_temps),
-            "altitude": alt, "skipped": skipped}
+# 焙煎ログからの学習は roastlib/learning.py に移した。ここにあった
+# learn_from_logs() は /api/calibration/from_logs のためのもので、その経路が
+# 無くなってから本体からは一度も呼ばれていなかった(テストだけが生かしていた)。
+# 標高は線形の傾き1本で表していたが、学習層は標高・生産国・品種・精製方法を
+# 件数で育つ縮小推定として扱う。
 
 
 def _mass_at(result: dict, t: float, green_g: float) -> float:

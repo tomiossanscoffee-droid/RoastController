@@ -187,6 +187,10 @@
     -webkit-overflow-scrolling:touch;
   }
   .sidebar h1{ font-size:15px; margin:0 0 4px; color:var(--amber); }
+  /* 押せることが分かるように。名前そのものの見た目は変えない。 */
+  #btnHome{ cursor:pointer; display:inline-block; border-radius:4px; padding:1px 4px; margin-left:-4px; }
+  #btnHome:hover{ background:var(--panel-2); }
+  #btnHome:focus-visible{ outline:2px solid var(--amber); outline-offset:1px; }
   .sidebar .subtitle{ font-size:11px; color:var(--text-muted); margin-bottom:14px; }
   /* 「アプリについて」「モバイル版を開く」はサイドバー下部の設定欄にまとめて置く。 */
   .sidebar .app-about-link{ font-size:11px; margin-top:10px; }
@@ -246,7 +250,87 @@
   .filter-clear{ width:100%; margin-bottom:10px; }
   /* 絞り込みプルダウンを2列に詰めて空いた分を一覧に回す(.filter-grid参照)。
      一覧が主役なので、サイドバー全体の高さは以前より縮んだうえで表示件数が増える。 */
-  .profile-list{ overflow-y:auto; max-height:40vh; margin-bottom:10px; }
+  /* プロファイル一覧は、サイドバーの「残り全部」を使って必ず見えるようにする。
+     以前は中身なりの高さ(max-height:40vh)で上から順に積まれるだけだったため、
+     上の操作欄(送信・重量・連続焙煎・設定など)が伸びると一覧が画面の外へ
+     押し出され、起動直後に何も表示されていないように見えた(2026-09に報告)。
+     窓が1200x900のとき、見えていたのは7pxだけだった。
+     min-heightで下限を持たせ、それでも入り切らない極端に低い窓では
+     サイドバー全体が今までどおりスクロールする。 */
+  .sidebar > *{ flex:0 0 auto; }
+  /* プロファイル選択は右側のタブに置く。以前はサイドバーの一番下にあり、
+     上の操作欄(送信・重量・連続焙煎・設定など)が伸びると画面の外へ押し出されて、
+     起動直後に何も表示されていないように見えた(2026-09に報告)。
+     枠の高さいっぱいを使い、余った分は一覧が受け取る。 */
+  /* 「購入豆」の一覧は左のサイドバーに残る。サイドバーは縦のフレックスなので、
+     ここも残りの高さを受け取って、中だけスクロールさせる(そうしないと豆が
+     増えるほど下へ伸びて、画面の外へ出てしまう)。 */
+  /* 購入豆タブ。豆を探す一覧は「豆を選ぶ」画面(国→豆→プロファイル)に
+     一本化したので、ここは選んだ豆の詳細だけを全幅で出す。 */
+  .records-cols{ display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+  /* 中身が長いので、この枠の中でスクロールさせる。 */
+  #recordsContent{ min-height:0; overflow-y:auto; flex:1 1 auto; }
+  /* 詳細の中の2列を畳むかどうかは、この列の幅で決める(規則は .bean-detail-cols
+     の定義より後ろに置く。同じ詳細度なので、前に置くと負ける)。 */
+  #recordsContent{ container-type:inline-size; }
+
+  /* 設定は右の広い場所へ。幅があるときは2列に流す。 */
+  #settingsMain #settingsSection{ display:block; padding-top:0; columns:2; column-gap:32px; }
+  /* 見出しと、その下の入力欄が別の列に割れると読めなくなる。 */
+  #settingsMain #settingsSection > *{ break-inside:avoid; }
+  #settingsMain #settingsSection .settings-title{ break-after:avoid; }
+  @media (max-width: 1100px){ #settingsMain #settingsSection{ columns:1; } }
+
+  #profileSelectPanel{ display:flex; flex-direction:column; min-height:0; padding:14px 16px; }
+  /* 1クリックで選ぶだけ、ダブルクリックで移動、という区別は見て分からないので書く。 */
+  .select-hint{
+    font-size:11px; color:var(--text-muted); margin-bottom:8px; flex:0 0 auto;
+    display:flex; align-items:center; gap:10px;
+  }
+  .select-hint .spacer{ flex:1 1 auto; }
+  .select-hint .btn{ width:auto; padding:3px 12px; font-size:11.5px; }
+  /* 一覧の「読み込み中」「読み込めませんでした」。グリッドの中に入るので、
+     1件ぶんの枠に収まらないよう全列にまたがらせる。 */
+  .list-placeholder{
+    grid-column:1 / -1; font-size:12px; color:var(--text-muted); padding:10px 4px;
+    display:flex; align-items:center; gap:8px;
+  }
+  /* 回っている輪。止まって見えないので、待っていることが文字より早く伝わる。
+     動きを減らす設定にしている人には回さない(その場合は文字だけで伝わる)。 */
+  .spinner{
+    width:13px; height:13px; flex:0 0 auto; border-radius:50%;
+    border:2px solid var(--border); border-top-color:var(--amber);
+    animation:spin 0.7s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){ .spinner{ animation:none; } }
+  #profileSelectionArea{ flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
+  #profileSelectionArea > *{ flex:0 0 auto; }
+  #profileBrowserSidebar{ flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
+  #profileBrowserSidebar > *{ flex:0 0 auto; }
+  /* 一覧だけは残りを使う。上の「> *」もID1つで詳細度が同じなので、
+     クラスだけで書くと負けて flex:0 0 auto のままになる。 */
+  #profileBrowserSidebar > .profile-list{ flex:1 1 0; min-height:120px; }
+  .profile-list{ overflow-y:auto; margin-bottom:0; }
+  /* 幅が広くなったので、絞り込みは3列・一覧は2列以上に並べる。縦に積むだけだと
+     右half が空くばかりで、一度に見える件数も増えない。 */
+  /* 検索と並び順を横に。並び順は語が長いので幅を確保し、残りを検索に回す。 */
+  .browse-top-row{ display:flex; gap:6px; margin-bottom:10px; }
+  .browse-top-row .search-box{ margin-bottom:0; }
+  .browse-top-row #searchBox{ flex:1 1 auto; min-width:0; }
+  .browse-top-row #sortFilter{ flex:0 0 auto; width:210px; }
+  @media (max-width: 700px){
+    .browse-top-row{ flex-wrap:wrap; }
+    .browse-top-row #sortFilter{ width:100%; }
+  }
+  #profileSelectPanel .filter-grid{ grid-template-columns:repeat(3, 1fr); }
+  #profileSelectPanel .profile-list{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));
+    gap:2px 10px; align-content:start;
+  }
+  @media (max-width: 900px){
+    #profileSelectPanel .filter-grid{ grid-template-columns:repeat(2, 1fr); }
+  }
   .profile-item{
     padding:8px 10px; border-radius:4px; cursor:pointer; font-size:12.5px;
     border:1px solid transparent; margin-bottom:2px; line-height:1.4;
@@ -282,6 +366,10 @@
   }
   .tab-btn .sheet-mark{ cursor:inherit; }
   .tab-btn.active .sheet-mark{ color:#1c1917; }
+  /* 送信中〜焙煎完了までは、誤って別のプロファイルを選び直さないよう
+     「プロファイル選択」タブを使えなくする(setProfileSelectLocked)。
+     押せないことが見て分かるよう、薄くしてカーソルも変える。 */
+  .tab-btn.disabled{ opacity:0.4; cursor:not-allowed; }
 
   .top-actions{ margin-bottom:14px; }
 
@@ -320,20 +408,42 @@
   .settings-toggle-row.disabled{ color:var(--text-muted); cursor:default; }
   .settings-toggle-row.disabled input[type="checkbox"]{ cursor:not-allowed; }
   .settings-note{ font-size:11px; color:var(--text-muted); line-height:1.5; margin:-2px 0 6px; }
+  /* 書き出し・取り込みのボタン。横に2つ並べて縦の占有を減らす。 */
+  .io-row{ display:flex; gap:6px; margin-bottom:6px; }
+  .io-row .btn{ width:auto; flex:1; }
+  .io-heading{
+    margin:14px 0 6px; font-size:12px; color:var(--text-muted);
+    border-bottom:1px solid var(--border); padding-bottom:3px;
+  }
+  .io-heading:first-of-type{ margin-top:6px; }
+  .export-pick-list{
+    max-height:210px; overflow-y:auto; margin-bottom:6px;
+    border:1px solid var(--line); border-radius:6px; padding:4px 6px;
+  }
+  .export-pick-list label{
+    display:flex; gap:6px; align-items:baseline;
+    padding:3px 2px; cursor:pointer; font-size:12px;
+  }
+  .export-pick-list label:hover{ background:rgba(255,255,255,.05); }
+  .export-pick-list .sub{ color:var(--muted); font-size:11px; }
   /* 数値を入力する設定行(連続焙煎の待ち時間)。チェックの行と左端・行間を揃える。 */
   .settings-num-row{
     display:flex; align-items:center; justify-content:space-between; gap:10px;
     font-size:12.5px; color:var(--text); margin-bottom:6px;
   }
-  .settings-num-row .settings-num-field{
+  /* 連続焙煎の待ち時間も同じ体裁にする(設定の外に置いてあるが、見た目は揃える) */
+  .settings-num-row .settings-num-field,
+  .continuous-delay .settings-num-field{
     display:flex; align-items:center; gap:4px; color:var(--text-muted); font-size:11.5px;
   }
-  .settings-num-row input[type="number"]{
+  .settings-num-row input[type="number"],
+  .continuous-delay input[type="number"]{
     width:58px; padding:4px 6px; text-align:right;
     background:var(--panel-2); color:var(--text);
     border:1px solid var(--border); border-radius:4px; font-size:12.5px;
   }
-  .settings-num-row input[type="number"]:focus{ outline:none; border-color:var(--amber); }
+  .settings-num-row input[type="number"]:focus,
+  .continuous-delay input[type="number"]:focus{ outline:none; border-color:var(--amber); }
   .settings-select{
     padding:4px 6px; background:var(--panel-2); color:var(--text);
     border:1px solid var(--border); border-radius:4px; font-size:12.5px; cursor:pointer;
@@ -374,7 +484,30 @@
      下の実測値欄(metricsRow)は自然な高さのまま、表示・非表示が変わっても
      残りの高さが自動で再計算されるため、タブごとに高さがバラつかない。 */
   .main > #profileEditorMain{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  /* 豆を選ぶ・購入豆・設定も同じ。窓の残りを受け取り、はみ出す一覧は
+     その中でスクロールさせる(上のヘッダーとボタンを流さないため)。 */
+  .main > #beanPickerMain,
+  .main > #recordsMain,
+  .main > #settingsMain{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  .main > #beanPickerMain > .main-header,
+  .main > #recordsMain > .main-header,
+  .main > #settingsMain > .main-header,
+  .main > #beanPickerMain > .bean-picker-search{ flex:0 0 auto; }
+  #settingsMain > #settingsSection{ flex:1 1 auto; min-height:0; overflow-y:auto; }
   .main-header{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:16px; }
+  /* 見出しの右に置く「プロファイル選択」「豆を選ぶ」。名前が長いと折り返すので、
+     ボタン側は縮まないようにして、名前のほうを折り返させる。 */
+  .header-picks{ display:flex; gap:6px; flex:0 0 auto; align-items:center; }
+  /* 見出しの右のボタン。指定が無いと折り返して3段に散っていた。 */
+  .main-header .toolbar-group{
+    display:flex; justify-content:flex-end; align-items:center;
+    gap:6px; flex:0 0 auto;
+  }
+  .main-header .toolbar-group .btn{ width:auto; white-space:nowrap; }
+  /* ボタンではなく、見出しと説明文のほうを折り返させる。逆にすると、
+     ボタンが2段3段に散って押す場所が毎回変わる。 */
+  .main-header > div:first-child{ flex:1 1 auto; min-width:0; }
+  .header-picks .btn{ width:auto; padding:5px 12px; }
   .main-header h2{ font-size:20px; margin:0; color:var(--text); }
   .main-header .hint{ font-size:11px; color:var(--text-muted); margin-top:4px; }
   /* main-headerから外に出した編集操作の説明(#editHint)。見た目は元のヒント行と
@@ -383,8 +516,31 @@
 
   /* 焙煎する豆を選ぶ画面。左に豆、右に「その豆で前に焼いたプロファイル」を並べる。
      豆を選ぶだけでなく、前回どれで焼いてどうだったかを見て選び直せるようにするため。 */
-  .bean-picker-grid{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:16px; }
-  @media (max-width:1100px){ .bean-picker-grid{ grid-template-columns:1fr; } }
+  .bean-picker-grid{
+    display:grid; grid-template-columns:160px minmax(0,1fr) minmax(0,1.1fr); gap:16px;
+  }
+  /* 幅が足りないときは、国の列を畳んで2列に戻す(国は豆の名前の頭にも入っている)。 */
+  @media (max-width:1100px){
+    .bean-picker-grid{ grid-template-columns:1fr; }
+  }
+  /* 国の項目。豆のカードより小さくして、あくまで絞り込みの列だと分かるようにする。 */
+  .bp-country-item{
+    padding:6px 9px; margin-bottom:3px; border-radius:5px; cursor:pointer;
+    font-size:12.5px; color:var(--text-muted); border:1px solid transparent;
+    display:flex; align-items:baseline; gap:6px;
+  }
+  .bp-country-item:hover{ color:var(--text); border-color:var(--border); }
+  .bp-country-item.selected{
+    background:var(--panel-2); border-color:var(--amber); color:var(--text);
+  }
+  .bp-country-item .bp-country-count{ margin-left:auto; font-size:11px; opacity:0.75; }
+  .bp-country-item .bp-country-mark{ color:var(--amber); }
+  /* 見出しと右上のボタンは出したまま、一覧だけが中でスクロールするようにする。
+     以前は中身が伸びた分だけ .main ごと流れ、上のボタンが画面外へ出ていた。 */
+  .bean-picker-grid{ flex:1 1 auto; min-height:0; }
+  .bean-picker-col{ display:flex; flex-direction:column; min-height:0; }
+  .bean-picker-col > .bp-col-head{ flex:0 0 auto; }
+  #beanPickerList, #beanPickerCandidates{ flex:1 1 0; min-height:120px; overflow-y:auto; }
   .bean-picker-col h4{
     font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;
     margin:0 0 8px; font-weight:600;
@@ -395,8 +551,22 @@
   }
   .bp-card:hover{ border-color:var(--amber-dim); }
   .bp-card.selected{ border-color:var(--amber); background:var(--panel-2); }
+  /* いま選んでいるプロファイル。候補の一番上に出すので、見分けが付くようにする。 */
+  .bp-card.bp-current{ border-color:var(--amber-dim); background:var(--panel-2); }
+  .bp-card.bp-current .bp-meta{ color:var(--amber); }
+  /* カードの中身と「編集」を横に並べる。編集は右端で、幅は詰める。 */
+  .bp-card-row{ display:flex; align-items:flex-start; gap:8px; }
+  .bp-card-main{ flex:1 1 auto; min-width:0; }
+  .bp-edit{ width:auto; flex:0 0 auto; padding:3px 9px; font-size:11px; }
   .bp-card .bp-name{ font-size:13.5px; color:var(--text); line-height:1.35; }
   .bp-card .bp-meta{ font-size:11px; color:var(--text-muted); margin-top:3px; line-height:1.45; }
+  /* 列の見出しと並び替え。見出しは伸ばし、並び替えは右端に置く。 */
+  .bp-col-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .bp-col-head h4{ margin:0 !important; flex:1 1 auto; min-width:0; }
+  .bp-sort{ width:auto; flex:0 0 auto; font-size:11px; padding:4px 6px; }
+  /* 「別のプロファイルを選ぶ」。候補の有無に関わらず出して、その豆で焼いた
+     ことが無くても行き先が分かるようにする。 */
+  .bp-other{ width:100%; margin:0 0 10px; }
   .bp-card.unavailable{ opacity:.55; cursor:default; }
   .bp-card.unavailable:hover{ border-color:var(--border); }
   /* 前回の焙煎の行(焙煎日・焙煎度・評価)。1行に収める。 */
@@ -413,14 +583,26 @@
 
   /* 連続焙煎モードのトグル。加熱機器を自動で動かす設定のため、有効な間は
      色を変えて「今その状態である」ことがはっきり分かるようにする。 */
+  /* 連続焙煎モードは、トグルと待ち時間で1つの枠にする(待ち時間はこのモードで
+     しか使わないため)。枠線は外側の.continuous-boxが持ち、有効な間は枠ごと
+     色を変えて「今その状態である」ことがはっきり分かるようにする。 */
+  .continuous-box{
+    display:flex; flex-direction:column; gap:4px;
+    border:1px solid var(--border); border-radius:4px; padding:6px 8px;
+  }
+  .continuous-box.on{ border-color:var(--amber); background:var(--panel-2); }
+  .continuous-box.on .continuous-toggle,
+  .continuous-box.on .continuous-delay{ color:var(--amber); }
   .continuous-toggle{
     display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted);
-    border:1px solid var(--border); border-radius:4px; padding:6px 8px; cursor:pointer;
-    user-select:none;
+    cursor:pointer; user-select:none;
   }
   .continuous-toggle input{ accent-color:var(--amber); cursor:pointer; }
-  .continuous-toggle.on{ border-color:var(--amber); color:var(--amber); background:var(--panel-2); }
   .continuous-note{ font-size:11px; color:var(--amber); margin-top:4px; line-height:1.5; }
+  .continuous-delay{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    font-size:11.5px; color:var(--text-muted);
+  }
 
   .compare-bar{
     display:none; align-items:center; gap:10px; background:var(--panel-2);
@@ -491,28 +673,45 @@
      おり、ウィンドウの高さに関係なく常にスクロールバーが出ていた。今は表示エリア
      (.tab-panel-fill)の高さまでは伸びるようにしたため、中身が収まる時は
      スクロールバーは出ない。 */
-  .taste-layout-wrap{ display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+  /* 2つの枠は同じ高さにする。中身の高さのまま置くと、窓の高さによって
+     下のラインが片方だけ上に来たり、下へはみ出したりして揃わなかった。 */
+  .taste-layout-wrap{ display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }
   .taste-layout-wrap #generatorFormPanel{
     /* 調整項目は中身の高さのまま置き、表示エリアを超える分だけパネル内で
        スクロールさせる。中身が収まる時はスクロールバーは出ないため、
        見た目は従来通り。 */
     flex:1 1 400px; max-width:460px;
-    max-height:100%; overflow-y:auto; margin-bottom:0;
+    /* 上限を切っておかないと、折り返し(flex-wrap)のある並びでは行の高さが
+       中身で決まってしまい、枠だけが表示エリアの下へ突き抜ける。 */
+    max-height:100%; min-height:0; overflow-y:auto; margin-bottom:0;
   }
   /* グラフ列は表示エリアの高さいっぱいに広げ、その中でグラフ(#chartWrap)が
      残りを使い、下の「期待される味」パネルは中身の高さのままにする。 */
   .taste-layout-wrap #graphColumn{
     flex:2 1 380px; min-width:320px; height:100%;
     display:flex; flex-direction:column; min-height:0; gap:16px;
+    /* はみ出させない。グラフ(最低300px)とレーダー(最低216px)を足すと
+       表示エリアより高くなる窓では、左の列だけが下へ伸びて右の枠と
+       下のラインが揃わず、窓の縁で切れていた。 */
+    overflow:hidden;
   }
+  /* 窓が低いときは、まずグラフのほうを縮める。レーダーは200pxを割ると
+     形が読めなくなるので、先に譲るのはグラフ側でよい。 */
+  .taste-layout-wrap #graphColumn #chartWrap{ min-height:200px; }
   /* 「期待される味」パネルはレーダーチャート(200px)が読める高さは必ず確保し、
      表示エリアに収まらない分は味の傾向テキスト側をスクロールさせる。こうすると
      グラフ・レーダー・調整項目の3つが同時に見える状態を保てる
      (overflow:hiddenはフレックスの自動最小高さを解除して縮小を許可するため)。 */
   .taste-layout-wrap #graphColumn .taste-result-panel{
     margin-bottom:0; flex:0 1 auto; min-height:216px; overflow:hidden;
+    /* 中身の高さのまま置くと、窓が低いときに味の傾向の文章が場所を取り切って
+       グラフが最小(200px)まで潰れる。列の半分近くで頭打ちにし、あふれる分は
+       文章側をスクロールさせる。 */
+    max-height:45%;
   }
-  .taste-layout-wrap #graphColumn .taste-result-panel .taste-tendency{ overflow-y:auto; }
+  .taste-layout-wrap #graphColumn .taste-result-panel .taste-tendency{
+    overflow-y:auto; min-height:0;
+  }
 
   .graph-toggle{ display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px; }
 
@@ -624,6 +823,28 @@
   .bean-info .roast-history-item:hover{ border-color:var(--amber-dim); background:var(--panel); }
   .bean-info .roast-history-item .level-label{ font-weight:600; color:var(--amber); font-size:12px; margin-bottom:4px; }
   .bean-info-edit-hint{ color:var(--text-muted); font-size:12px; margin-bottom:14px; }
+  /* 豆の情報(左)と焙煎記録(右)を横に並べる。縦に積むと記録が画面の下に隠れて
+     スクロールが要り、豆を直しながら記録を見ることができなかった。
+     左を広めにするのは、中が2列の入力欄だからである(左右均等にすると
+     入力欄が4列ぶんの細さになって読みにくい)。 */
+  .bean-detail-cols{
+    display:grid; grid-template-columns:minmax(0, 1.7fr) minmax(0, 1fr);
+    gap:20px; align-items:start;
+  }
+  .bean-detail-col{ min-width:0; }
+  .bean-detail-col .record-sub-list{ margin-top:0; }
+  /* 幅が足りないときは、これまでどおり縦に積む(横に無理やり詰めると
+     どちらも読めなくなる)。 */
+  @media (max-width: 1100px){
+    .bean-detail-cols{ grid-template-columns:1fr; gap:0; }
+    .bean-detail-col .record-sub-list{ margin-top:18px; }
+  }
+  /* 購入豆タブでは左に一覧があるぶん、この2列に使える幅が窓幅より狭い。
+     窓幅で決めると勘定が合わないので、入る場所の幅で決める(#recordsContent)。 */
+  @container (max-width: 700px){
+    .bean-detail-cols{ grid-template-columns:1fr; gap:0; }
+    .bean-detail-col .record-sub-list{ margin-top:18px; }
+  }
   .bean-info-edit-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; margin-bottom:10px; }
   .bean-info-field{ display:flex; flex-direction:column; gap:4px; font-size:11.5px; color:var(--text-muted); }
   .bean-info-field input, .bean-info-field select, .bean-info-field textarea{
@@ -639,13 +860,35 @@
   .bean-info-save-status{ color:var(--text-muted); font-size:12px; margin-left:10px; }
 
   .record-mini-chart{ margin:14px 0; background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:10px; }
-  .record-actions{ display:flex; gap:8px; align-items:center; margin-top:14px; }
+  .record-actions{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:14px; }
+  /* ボタンは中身なりの幅で、文字は折り返さない。既定の width:100% のままだと
+     互いに押し合って、1つのボタンの中で文字が2段になっていた。 */
+  .record-actions .btn{ width:auto; flex:0 0 auto; white-space:nowrap; }
   .record-delete{ margin-left:auto; opacity:0.75; }
+  /* 記録の上段(プロファイル名 + 保存・削除)。名前は伸ばし、ボタンは右端に置く。
+     以前は保存も削除も一番下(グラフの下)にあり、直したあとスクロールして
+     戻らないと押せなかった。 */
+  .record-actions-top{
+    margin:14px 0 4px; flex-wrap:wrap;
+    border-bottom:1px solid var(--border); padding-bottom:10px;
+  }
+  .record-actions-top h4{ margin:0 !important; }
+  .rr-profile-gone{ font-size:11px; color:var(--text-muted); font-weight:normal; }
+  .record-actions-top .spacer{ flex:1 1 auto; }
+  /* 上段では右端にまとめるので、削除だけを押しやる必要はない */
+  .record-actions-top .record-delete{ margin-left:0; }
   .record-sub-list{ margin-top:18px; }
   .record-sub-list h4{ font-size:12.5px; color:var(--text-muted); margin:0 0 8px; text-transform:uppercase; letter-spacing:0.05em; }
   /* 2026-07: 元は.profile-roast-records配下限定のセレクタだったが、実際の.rr-item要素は
      この祖先クラス無しで使われており、スタイルが一切効いていなかったため直接指定に修正。 */
   .rr-item{ padding:5px 0; border-bottom:1px solid var(--border); cursor:pointer; font-size:12px; color:var(--text-muted); }
+  /* 記録の行はどれも2行にする。名前の長さで1行になったり2行になったりすると、
+     右のボタンの縦位置が行ごとにずれて、並びが揃って見えなかった。 */
+  .rr-label{ display:block; min-width:0; }
+  .rr-title{ display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rr-when{ display:block; font-size:11px; opacity:0.85; }
+  /* 記録が増えると豆の情報のほうまで押し下げてしまうので、一覧の中で送る。 */
+  #beanRoastRecordList{ max-height:min(52vh, 460px); overflow-y:auto; }
   .rr-item:hover{ color:var(--text); }
   /* 焙煎ログ表示中バーに出す「紐付いた購入豆」へのリンク。 */
   .overlay-bean-link{
@@ -707,12 +950,19 @@
   }
   .taste-axes-heading{ font-size:12px; color:var(--text-muted); margin-bottom:8px; font-weight:600; }
   /* 期待される味: レーダー + 傾向テキストを横並び(グラフ下・左カラム) */
+  /* align-items は stretch のままにすること。center にすると、傾向テキストの
+     箱が中身の高さのまま中央に置かれ、パネルの上下にはみ出す。パネル側は
+     overflow:hidden なので上にはみ出した分は切られ、テキスト自身の
+     overflow-y:auto も箱が縮んでいないため効かず、冒頭が読めずスクロールも
+     できない状態になっていた(2026-09に報告)。 */
   .taste-result-panel{
-    display:flex; gap:14px; align-items:center;
+    display:flex; gap:14px; align-items:stretch;
     background:var(--panel); border:1px solid var(--border); border-radius:6px;
     padding:12px 14px; margin-bottom:16px;
   }
-  .taste-result-panel .taste-radar-box{ width:200px; height:200px; flex:0 0 200px; }
+  .taste-result-panel .taste-radar-box{
+    width:200px; height:200px; flex:0 0 200px; align-self:center;
+  }
   .taste-result-panel .taste-tendency{ flex:1; font-size:12px; line-height:1.7; color:var(--text); min-width:0; }
   .taste-result-panel .taste-tendency .tt-title{ color:var(--text-muted); font-size:11px; margin-bottom:4px; }
   .taste-result-panel .taste-tendency ul{ margin:0; padding-left:16px; }
@@ -731,6 +981,12 @@
       border:1px solid var(--amber-dim); border-radius:4px; color:var(--amber);
       font-size:14px;
     }
+  }
+  /* 基準値の作成待ち。案内(abc-not-ready)と同じ見た目にして、切り替わっても
+     枠の大きさが変わらないようにする。 */
+  .abc-loading{
+    font-size:12px; color:var(--text-muted); line-height:1.7; padding:10px 0;
+    display:flex; align-items:center; gap:8px;
   }
   .abc-not-ready{
     background:var(--panel-2); border:1px solid var(--amber-dim); border-radius:6px;
@@ -793,7 +1049,19 @@
   .metric-card .metric-label{
     font-size:10.5px; color:var(--text-muted); letter-spacing:0.04em;
     line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    display:flex; align-items:center; gap:4px;
   }
+  /* 数値の右端に置く、一覧の並べ替えボタン。数字を見ながら「この値の順で
+     見たい」と思った所で押せるようにする。 */
+  .metric-sort{ margin-left:auto; display:inline-flex; gap:1px; flex:0 0 auto; }
+  .metric-sub .metric-sort{ margin-left:6px; }
+  .ms-btn{
+    width:15px; height:14px; padding:0; line-height:1; font-size:8px;
+    background:transparent; color:var(--text-muted);
+    border:1px solid transparent; border-radius:3px; cursor:pointer;
+  }
+  .ms-btn:hover{ color:var(--text); border-color:var(--border); }
+  .ms-btn.active{ background:var(--amber-dim); color:#1c1917; border-color:var(--amber); }
   .metric-card .metric-value{
     font-family:'IBM Plex Mono',monospace; font-size:21px; line-height:1.2;
     margin-top:1px; color:var(--amber); white-space:nowrap;
@@ -810,6 +1078,127 @@
     margin-top:1px; color:var(--text-muted);
   }
   .metric-card .metric-sub:empty{ display:none; }
+
+  /* 焙煎記録が豆温度モデルの学習に使えるかどうかの注記。足りない項目を促す。 */
+  .rr-learn-note{
+    margin:6px 0 2px; padding:6px 9px; border-radius:4px; font-size:12px;
+    line-height:1.45; color:var(--text-muted);
+    background:var(--panel); border:1px solid var(--border);
+  }
+  .rr-learn-note.ok{ color:var(--sage); border-color:var(--sage); }
+
+  /* 焙煎ログの一覧に出す、学習に使えるかどうかの印と編集ボタン。 */
+  .rr-badge{
+    display:inline-block; margin-left:6px; padding:0 5px; border-radius:3px;
+    font-size:10.5px; color:var(--text-muted); border:1px solid var(--border);
+  }
+  .rr-badge.ok{ color:var(--sage); border-color:var(--sage); }
+
+  /* 焙煎記録の実測値。4つとも短い数値なので横一列に詰める。 */
+  .rr-meas{
+    border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-bottom:10px;
+  }
+  .rr-meas-title{ font-size:10.5px; color:var(--text-muted); margin-bottom:6px; letter-spacing:0.03em; }
+  /* 「詳細」から開いたときの主役の枠。見出しと同じ行に保存・キャンセルを置く。 */
+  .rr-meas-primary{ border-color:var(--amber-dim); margin-top:14px; }
+  .rr-meas-head{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:2px; }
+  .rr-meas-head .rr-meas-title{ margin-bottom:0; }
+  .rr-meas-head .spacer{ flex:1 1 auto; }
+  .rr-meas-head .btn{ width:auto; padding:3px 12px; }
+  .rr-meas-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:8px 12px; }
+  .rr-meas-grid label{ display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-muted); }
+  .rr-meas-grid label > span:first-child{ width:38px; flex:none; }
+  .rr-meas-field{ display:flex; align-items:center; gap:4px; flex:1; min-width:0; }
+  .rr-meas-field input{
+    width:100%; min-width:0; padding:5px 7px; background:var(--bg); color:var(--text);
+    border:1px solid var(--border); border-radius:4px;
+    font-family:'IBM Plex Mono',monospace; font-size:12.5px; text-align:right;
+  }
+  .rr-meas-field i{ font-style:normal; font-size:10.5px; color:var(--text-muted); flex:none; }
+  .rr-meas .rr-learn-note{ margin:8px 0 0; }
+  .roast-history-item .rr-edit{ float:right; width:auto; padding:1px 8px; font-size:11px; }
+  /* 時系列一覧。焼いた順に並べ、実測値が入っているかを左端の帯で示す。 */
+  .tl-item{
+    border:1px solid var(--border); border-left-width:3px; border-radius:5px;
+    padding:7px 9px; margin-bottom:5px; cursor:pointer;
+  }
+  .tl-item:hover{ border-color:var(--amber); }
+  .tl-item.ok{ border-left-color:var(--sage); }
+  .tl-item.todo{ border-left-color:var(--amber); }
+  .tl-head{ display:flex; align-items:baseline; gap:8px; }
+  .tl-when{ font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text-muted); }
+  .tl-name{ font-size:12.5px; color:var(--text); flex:1; word-break:break-word; }
+  .tl-vals{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-muted); margin-top:3px; }
+  .tl-vals .miss{ color:var(--amber); }
+  .tl-item .btn{ width:auto; padding:1px 8px; font-size:11px; }
+
+  /* 焙煎前後の重量。送信ボタンのすぐ下に置く(焼く前に量って入れる流れ)。 */
+  /* 送信ボタンの上に置くので、余白は下側に取る(以前は下にあったので上だった)。 */
+  .weigh-box{
+    border:1px solid var(--border); border-radius:6px; padding:7px 9px; margin-bottom:8px;
+  }
+  .weigh-row{ display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--text-muted); }
+  .weigh-row + .weigh-row{ margin-top:5px; }
+  .weigh-row > span:first-child{ flex:1; }
+  .weigh-field{ display:flex; align-items:center; gap:4px; }
+  .weigh-field input{
+    width:72px; padding:4px 6px; background:var(--bg); color:var(--text);
+    border:1px solid var(--border); border-radius:4px;
+    font-family:'IBM Plex Mono',monospace; font-size:12.5px; text-align:right;
+  }
+  .weigh-field i{ font-style:normal; font-size:11px; color:var(--text-muted); }
+  .weigh-note{ font-size:10.5px; color:var(--text-muted); margin-top:5px; line-height:1.4; }
+  .weigh-note.ok{ color:var(--sage); }
+
+  /* 豆温度モデルの学習の状態。焙煎ログが増えるほど育つ。 */
+  .learn-box{
+    background:var(--panel); border:1px solid var(--border); border-radius:6px;
+    padding:9px 11px; margin-top:6px;
+  }
+  .learn-line{ font-size:12.5px; line-height:1.5; color:var(--text); }
+  .learn-line b{ color:var(--amber); }
+  .learn-progress{
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text-muted);
+    margin-top:6px;
+  }
+  .learn-grown{ color:var(--sage); }
+  /* 節目を越えたら枠を強調する(通知も飛んでいる状態) */
+  .learn-box.due{ border-color:var(--sage); }
+
+  /* 実測値の簡易入力ダイアログ */
+  .qi-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:900;
+    display:flex; align-items:center; justify-content:center; padding:16px;
+  }
+  .qi-dialog{
+    background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    padding:14px 16px; width:min(420px, 100%); box-shadow:0 8px 30px rgba(0,0,0,0.4);
+  }
+  .qi-head{ display:flex; align-items:flex-start; gap:8px; margin-bottom:10px; }
+  .qi-head .qi-title{ font-size:14px; color:var(--text); }
+  .qi-head .qi-sub{ font-size:11.5px; color:var(--text-muted); margin-top:2px; line-height:1.4; }
+  .qi-head .btn{ width:auto; margin-left:auto; padding:2px 8px; }
+  .qi-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px 10px; }
+  .qi-grid label{ display:flex; flex-direction:column; gap:3px; font-size:11.5px; color:var(--text-muted); }
+  .qi-field{ display:flex; align-items:center; gap:4px; }
+  .qi-field input{
+    flex:1; min-width:0; padding:6px 8px; background:var(--bg); color:var(--text);
+    border:1px solid var(--border); border-radius:4px;
+    font-family:'IBM Plex Mono',monospace; font-size:13px;
+  }
+  .qi-field i{ font-style:normal; font-size:11px; color:var(--text-muted); }
+  .qi-note{ margin-top:10px; font-size:11.5px; line-height:1.5; color:var(--text-muted); }
+  .qi-note.ok{ color:var(--sage); }
+  .qi-actions{ display:flex; align-items:center; gap:6px; margin-top:12px; }
+  .qi-actions .qi-status{ flex:1; font-size:11.5px; color:var(--text-muted); }
+  .qi-actions .btn{ width:auto; }
+  .learn-result{
+    margin-top:8px; font-size:12px; line-height:1.5;
+    border-left:2px solid var(--border); padding-left:8px;
+  }
+  .learn-result.grown{ border-left-color:var(--sage); }
+  .learn-result table{ border-collapse:collapse; margin-top:4px; }
+  .learn-result td{ padding:1px 8px 1px 0; font-family:'IBM Plex Mono',monospace; font-size:11.5px; }
 
   .offset-row{
     display:flex; align-items:center; gap:10px; background:var(--panel);
@@ -854,11 +1243,12 @@
   .notice-item.show{ opacity:1; transform:translateY(0); }
   .notice-item.error{ border-left-color:#e07a4a; color:#f0b79c; }
 
+  /* 上段(QRコード・設定)。たまにしか押さないものを横に並べて1行に収める。 */
   .mobile-access{
     display:flex; align-items:center; gap:6px; flex-wrap:wrap;
     margin:6px 0 10px; font-size:11px; color:var(--text-muted);
   }
-  .mobile-access .btn{ width:auto; padding:2px 10px; }
+  .mobile-access .btn{ width:auto; padding:2px 10px; flex:1; }
   #mobileQrImage svg{ display:block; width:180px; height:180px; }
   .modal-overlay{
     position:fixed; inset:0; background:rgba(0,0,0,0.55);
@@ -878,17 +1268,31 @@
 <div class="layout">
   <!-- サイドバー -->
   <div class="sidebar">
-    <h1>Roast Studio</h1>
+    <!-- アプリ名は最初の画面へ戻るボタンを兼ねる。設定・豆選び・記録の編集と
+         奥へ入ったとき、まとめて戻れる場所が無かった。選んでいるプロファイルや
+         豆はそのまま残す(戻るのは表示であって、選択ではない)。 -->
+    <h1 id="btnHome" role="button" tabindex="0"
+        title="最初の画面(焙煎グラフ)に戻ります。選んでいるプロファイル・豆はそのままです">Roast Studio</h1>
     <div class="subtitle">プロファイル編集・送信・ライブトレース</div>
 
     <!-- モバイル版アクセス用のLANアドレス表示 + QRボタン -->
     <!-- アドレスはQRのダイアログ側にも表示されるため、通常画面では出さず、
          ダイアログを開くボタンだけ置く(サイドバーの情報量を減らす)。 -->
-    <div class="mobile-access" id="mobileAccess" style="display:none;">
-      <button class="btn small" id="btnMobileQR" title="スマホで開くためのQRコードとアドレスを表示">モバイル版のQRコード</button>
+    <!-- 上段は「たまにしか押さないもの」をまとめる。設定は普段は畳んでおく
+         (滅多に触らない項目が常に見えていると、プロファイル一覧が圧迫される)。
+         押すとプロファイル一覧と入れ替わりに設定が出る。 -->
+    <div class="mobile-access" id="topUtilityRow">
+      <button class="btn small" id="btnMobileQR" style="display:none;"
+              title="スマホで開くためのQRコードとアドレスを表示">モバイル版のQRコード</button>
+      <button class="btn small" id="btnSettings"
+              title="設定と豆温度モデルの較正を開きます">⚙ 設定</button>
     </div>
 
-    <div class="status-panel">
+    <!-- 設定は「⚙ 設定」ボタンの直下に出す。以前はプロファイル一覧の位置
+         (サイドバーのずっと下)に現れていたため、上のボタンを押したのに
+         どこが変わったのか分かりにくかった(2026-09に報告)。 -->
+
+    <div class="status-panel" id="statusPanel">
       <div style="font-size:12px;">
         <span class="status-dot" id="statusDot"></span><span id="statusText">未接続</span>
       </div>
@@ -898,279 +1302,104 @@
     <!-- 焙煎する豆 → プロファイル → 送信、の順に並べる。豆は選ばなくても焙煎でき、
          その場合は今までどおり焙煎後に記録から紐づけられる。 -->
     <div class="roast-bean-bar empty" id="roastBeanBar">
-      <div class="rb-caption">焙煎する豆</div>
-      <div class="rb-name" id="roastBeanName">選んでいません(選ばなくても焙煎できます)</div>
-      <div class="rb-actions">
-        <button class="btn small" id="btnPickRoastBean">豆を選ぶ</button>
+      <!-- 「(任意)」を見出しに入れて、名前の行は状態だけにする。以前は
+           「選んでいません(選ばなくても焙煎できます)」で2行に折り返していた。 -->
+      <div class="rb-caption">焙煎する豆(任意)</div>
+      <div class="rb-name" id="roastBeanName">選んでいません</div>
+      <!-- 選んでいないうちは、この枠の中から選べるようにする(枠に名前しか
+           出ていないと、どこから選ぶのか分からない)。選んだあとは、選び直しは
+           プロファイル名の右(header-picks)に任せ、ここには記録・外すを出す。 -->
+      <div class="rb-actions" id="rbActions">
+        <button class="btn small" id="btnPickRoastBeanInline">豆を選ぶ</button>
+        <!-- 選んだ豆の焙煎記録へ直行する。重量やハゼ時刻を後から入れる用。 -->
+        <button class="btn small" id="btnOpenRoastBeanRecords" style="display:none;"
+          title="この豆の焙煎記録を開きます(重量やハゼ時刻を入れられます)">焙煎記録</button>
         <button class="btn small" id="btnClearRoastBean" style="display:none;">外す</button>
       </div>
     </div>
 
-    <div class="top-actions">
+    <div class="top-actions" id="topActions">
+      <!-- 焙煎前後の重量。量ってから送るので、送信ボタンより上に置く。
+           入れておくと焙煎記録に一緒に保存され、豆温度モデルの学習に使われる。
+           どちらも空欄のままでも焙煎はできる(焙煎後の重量は焙煎が終わってから出る)。 -->
+      <div class="weigh-box">
+        <label class="weigh-row"><span>焙煎前の重量</span>
+          <span class="weigh-field"><input type="number" step="0.1" min="0" id="roastGreenG"
+            placeholder="50" title="生豆の重量。空欄でも焙煎できます"><i>g</i></span></label>
+        <label class="weigh-row" id="roastRoastedRow" style="display:none;"><span>焙煎後の重量</span>
+          <span class="weigh-field"><input type="number" step="0.1" min="0" id="roastRoastedG"
+            placeholder="42.0" title="冷めてから量った重量。入れると学習に使われます"><i>g</i></span></label>
+        <div class="weigh-note" id="roastWeighNote">入れておくと焙煎記録に残り、豆温度モデルの学習に使われます</div>
+      </div>
       <button class="btn primary" id="btnSend" style="width:100%;" disabled>プロファイルを送信</button>
-      <button class="btn small" id="btnResendLast" style="width:100%; display:none;"></button>
+      <!-- 送信の代替手段なので、送信ボタンのすぐ下に置く(前回と同じものをもう一度
+           焼くのは、選び直すより先に思いつく操作のため)。 -->
+      <button class="btn small" id="btnResendLast" style="width:100%; margin-top:6px; display:none;"></button>
       <!-- 連続焙煎モード: 排出完了(冷却・容器交換まで完了)から数秒後に、同じプロファイルを
            自動で再送して次の焙煎を始められる状態にする。停止はこのボタンでも、
            焙煎機側で次を始めないことでも行える。 -->
-      <label class="continuous-toggle" id="continuousToggleRow" for="continuousToggle"
-             title="排出完了から、設定した待ち時間のあとに同じプロファイルを自動で再送します。もう一度押すと停止します。">
-        <input type="checkbox" id="continuousToggle">
-        <span>連続焙煎モード</span>
-      </label>
-      <button class="btn small" id="btnExit" style="width:100%;">終了</button>
-      <!-- 設定は普段は畳んでおく。滅多に触らない項目(ガイド線・豆温度モデルの前提・
-           較正)が常に見えていると、プロファイル一覧の表示領域を圧迫するため。
-           押すとプロファイル一覧と入れ替わりに設定が出る。 -->
-      <button class="btn small" id="btnSettings" style="width:100%; margin-top:6px;"
-              title="設定と豆温度モデルの較正を開きます">⚙ 設定</button>
+      <div class="continuous-box" id="continuousToggleRow">
+        <label class="continuous-toggle" for="continuousToggle"
+               title="排出完了から、下の待ち時間のあとに同じプロファイルを自動で再送します。もう一度押すと停止します。">
+          <input type="checkbox" id="continuousToggle">
+          <span>連続焙煎モード</span>
+        </label>
+        <!-- 待ち時間はこのモードでしか使わないので、設定の奥ではなくここに置く
+             (豆の計量や容器の清掃にかかる時間に合わせて変える)。 -->
+        <div class="continuous-delay"
+             title="排出完了から次のプロファイルを送るまでの待ち時間です(5〜600秒)。変更は次の焙煎から反映されます">
+          <label for="continuousDelayInput">待ち時間</label>
+          <span class="settings-num-field">
+            <input type="number" id="continuousDelayInput" min="5" max="600" step="5" value="10">
+            <span>秒</span>
+          </span>
+        </div>
+      </div>
+      <button class="btn small" id="btnExit" style="width:100%; margin-top:6px;">終了</button>
     </div>
+
+    <!-- 「購入豆」タブの一覧。プロファイルの一覧は右のタブへ移したが、こちらは
+         左に残す。豆を選んだあとは右側が記録の詳細で埋まるため、一覧を右に置くと
+         選んだ瞬間に消えてしまう。プロファイルのタブへは、見出しの右の
+         「プロファイル選択」から戻る。 -->
 
     <!-- プロファイル送信後〜焙煎完了(または未接続)までは、誤って別のプロファイルを
          選び直してしまわないよう、選択UIごと非表示にする(setProfileSelectLocked参照)。 -->
-    <div id="profileSelectionArea">
-    <div class="tabs source-tabs">
-      <div class="tab-btn active" id="tabPreset" onclick="switchTab('preset')">プリセット</div>
-      <div class="tab-btn" id="tabCustom" onclick="switchTab('custom')">保存済み</div>
-      <div class="tab-btn" id="tabIkawa" onclick="switchTab('ikawa')">IKAWA</div>
-      <div class="tab-btn" id="tabRecords" onclick="switchTab('records')">購入豆</div>
-    </div>
+<!-- /profileSelectionArea -->
 
-    <div id="profileBrowserSidebar">
-      <!-- 名前で探すのが一番早いので、絞り込みプルダウンより上に置く
-           (プリセットは174件あり、以前は検索自体が出ていなかった)。 -->
-      <input class="search-box" id="searchBox" placeholder="豆の名前で検索…">
-      <!-- 絞り込みプルダウンは2列に並べて縦の占有を半分にする(6個を縦一列に
-           並べると、肝心のプロファイル一覧の表示領域を圧迫するため)。
-           選択中のものは色を変え、6個を読み返さなくても効いている絞り込みが
-           分かるようにする(updateFilterActiveStates)。 -->
-      <div class="filter-grid" id="filterGrid">
-        <select class="search-box" id="categoryFilter" style="display:none;"></select>
-        <select class="search-box" id="roastLevelFilter" style="display:none;"></select>
-        <select class="search-box" id="varietyFilter" style="display:none;"></select>
-        <select class="search-box" id="processFilter" style="display:none;"></select>
-        <select class="search-box" id="altitudeFilter" style="display:none;"></select>
-        <select class="search-box" id="roasterFilter" style="display:none;"></select>
-      </div>
-      <button class="btn small filter-clear" id="btnClearFilters" style="display:none;">絞り込みを解除</button>
-      <select class="search-box" id="sortFilter">
-        <option value="favorite">並び順: お気に入り優先</option>
-        <option value="duration_desc">並び順: 焙煎時間(長)</option>
-        <option value="duration_asc">並び順: 焙煎時間(短)</option>
-        <option value="max_temp_desc">並び順: 最高温度(高)</option>
-        <option value="max_temp_asc">並び順: 最高温度(低)</option>
-        <option value="end_bean_temp_desc">並び順: 最終豆温度(高)</option>
-        <option value="end_bean_temp_asc">並び順: 最終豆温度(低)</option>
-        <option value="roast_count_desc">並び順: 焙煎回数順</option>
-      </select>
-      <div class="profile-list" id="profileList"></div>
-      <!-- 比較機能(2026-07簡易化): 専用のフィルタ・検索・一覧は廃止し、この一覧の
-           各行にある「⇄」アイコン(searchProfiles()参照)から直接比較に追加する。
-           compareProfile/selectCompareProfile/#compareBarの仕組み自体は変更なし。 -->
-    </div>
 
-    <div id="recordsSidebar" style="display:none;">
-      <!-- 新しい豆の登録は、探すより先に来ることが多い(買ってきた豆をまず登録する)。
-           一覧の下に置くと、豆が増えるほどスクロールしないと押せなくなる。 -->
-      <button class="btn" id="btnAddRecord" style="width:100%; margin-bottom:8px;">＋ 豆を追加</button>
-      <input class="search-box" id="recordsSearchBox" placeholder="豆を検索…">
-      <div class="filter-grid" id="recordsFilterGrid">
-        <select class="search-box" id="beanCountryFilter"><option value="">国</option></select>
-        <select class="search-box" id="beanProcessFilter"><option value="">精製方法</option></select>
-        <select class="search-box" id="beanVarietyFilter"><option value="">品種</option></select>
-        <select class="search-box" id="beanCropYearFilter"><option value="">生産年</option></select>
-      </div>
-      <button class="btn small filter-clear" id="btnClearBeanFilters" style="display:none;">絞り込みを解除</button>
-      <select class="search-box" id="beanSortFilter">
-        <option value="purchase_date_desc">並び順: 購入日(新しい順)</option>
-        <option value="purchase_date_asc">並び順: 購入日(古い順)</option>
-        <option value="price_per_kg_asc">並び順: 単価(安い順)</option>
-        <option value="price_per_kg_desc">並び順: 単価(高い順)</option>
-      </select>
-      <div class="profile-list" id="recordsList"></div>
-    </div>
-    </div><!-- /profileSelectionArea -->
 
-    <div class="settings-section" id="settingsSection" style="display:none;">
-      <div class="settings-title">設定</div>
-      <!-- 画面の配色。実体は :root と [data-theme=...] のCSS変数(app/static/index.html上部)。
-           グラフの線の色も同じ変数から取るので、切り替えるとグラフも一緒に変わる。 -->
-      <div class="settings-num-row" title="画面とグラフの配色を切り替えます">
-        <label for="themeSelect">配色</label>
-        <select id="themeSelect" class="settings-select">
-          <option value="dark">ダーク(既定)</option>
-          <option value="light">ライト</option>
-          <option value="contrast">高コントラスト</option>
-        </select>
+  <!-- 焙煎ログの実測値だけを手早く入れるダイアログ。
+       焙煎直後や、あとから思い出したときに、重量とハゼ時刻だけを入れる用。
+       どの入口(時系列一覧・豆情報・焙煎履歴)からも同じものが開く。 -->
+  <div class="qi-backdrop" id="quickInputBackdrop" style="display:none;">
+    <div class="qi-dialog" role="dialog" aria-modal="true" aria-labelledby="qiTitle">
+      <div class="qi-head">
+        <div>
+          <div class="qi-title" id="qiTitle">実測値を入れる</div>
+          <div class="qi-sub" id="qiSub"></div>
+        </div>
+        <button class="btn small ghost" id="qiClose" title="閉じる">×</button>
       </div>
-      <label class="settings-toggle-row" for="notifyToggle">
-        <span>焙煎完了の通知</span>
-        <input type="checkbox" id="notifyToggle" checked>
-      </label>
-      <label class="settings-toggle-row" for="showLogToggle">
-        <span>ログを表示</span>
-        <input type="checkbox" id="showLogToggle" checked>
-      </label>
-      <label class="settings-toggle-row" for="skipDuplicateToggle"
-             title="同じ日に同じプロファイルで2回目以降を焙煎したとき、確認せずに焙煎ログを保存しません(焙煎回数には加算されます)">
-        <span>同日2回目以降は記録しない</span>
-        <input type="checkbox" id="skipDuplicateToggle">
-      </label>
-      <!-- プロファイル選択のタブを出すかどうか。元データが無い場合(nhm.sqlite /
-           ikawa_profiles.jsonが無い)は、この設定に関わらず非表示になり、チェックも
-           操作できなくなる(applySourceTabVisibility参照)。 -->
-      <label class="settings-toggle-row" id="showPresetTabRow" for="showPresetTabToggle">
-        <span>プリセットタブを表示</span>
-        <input type="checkbox" id="showPresetTabToggle" checked>
-      </label>
-      <label class="settings-toggle-row" id="showIkawaTabRow" for="showIkawaTabToggle">
-        <span>IKAWAタブを表示</span>
-        <input type="checkbox" id="showIkawaTabToggle" checked>
-      </label>
-      <div class="settings-note" id="sourceTabNote" style="display:none;"></div>
-      <!-- 焙煎機を見ながら決めた、カラーチェンジ・1ハゼ・2ハゼの空気温度。
-           A/B/C/Dフェーズの境界として、味を推測・ABCモードの計算に使われる。
-           2026-08: 以前はボタンでグラフ横のパネルを開閉していたが、押しても枠が
-           出ないことがあった(パネルがメインエリア側にあり、ビューによっては
-           畳まれるため)。設定の中に入力欄そのものを置く形にした。 -->
-      <div class="settings-title" style="margin-top:12px;">温度ガイド線(吸入温度)</div>
-      <div class="settings-note" style="margin-bottom:6px;">
-        焙煎機の画面を見て決めた<b>吸入温度</b>。空欄にすると未設定に戻ります。
-        下の「豆温度モデルの前提」は豆側の温度で、別物です。
+      <div class="qi-grid">
+        <label><span>焙煎前の重量</span>
+          <span class="qi-field"><input type="number" step="0.1" min="0" id="qiGreen" placeholder="50"><i>g</i></span></label>
+        <label><span>焙煎後の重量</span>
+          <span class="qi-field"><input type="number" step="0.1" min="0" id="qiRoasted" placeholder="42.0"><i>g</i></span></label>
+        <label><span>1ハゼ開始</span>
+          <span class="qi-field"><input type="text" id="qiFc" placeholder="7:22"><i>m:ss</i></span></label>
+        <label><span>2ハゼ開始</span>
+          <span class="qi-field"><input type="text" id="qiSc" placeholder="10:22"><i>m:ss</i></span></label>
       </div>
-      <div class="settings-num-row">
-        <label for="guideColorChange">カラーチェンジ</label>
-        <span class="settings-num-field">
-          <input type="number" id="guideColorChange" placeholder="未設定" min="50" max="255"><span>℃</span>
-        </span>
-      </div>
-      <div class="settings-num-row">
-        <label for="guideFirstCrack">1ハゼ</label>
-        <span class="settings-num-field">
-          <input type="number" id="guideFirstCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
-        </span>
-      </div>
-      <div class="settings-num-row">
-        <label for="guideSecondCrack">2ハゼ</label>
-        <span class="settings-num-field">
-          <input type="number" id="guideSecondCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
-        </span>
-      </div>
-      <!-- 連続焙煎モードで、排出完了(容器交換まで終わった状態)から次のプロファイルを
-           送るまでの待ち時間。豆の計量や容器の清掃にかかる時間に合わせて変えられる。 -->
-      <div class="settings-num-row"
-           title="連続焙煎モードで、排出完了から次のプロファイルを送るまでの待ち時間です(5〜600秒)。変更は次の焙煎から反映されます">
-        <label for="continuousDelayInput">連続焙煎の待ち時間</label>
-        <span class="settings-num-field">
-          <input type="number" id="continuousDelayInput" min="5" max="600" step="5" value="10">
-          <span>秒</span>
-        </span>
-      </div>
-      <!-- 豆温度モデル(roastlib/energy.py)の前提。上の「温度ガイド線」とは別物で、
-           こちらは豆側の温度・状態を決める。混同されやすいので見出しを分けてある
-           (「1ハゼ 223℃」と「1ハゼの豆温度 196℃」が並ぶと、どちらが何の温度か
-           分からなくなる。前者は焙煎機が測る吸入温度、後者はモデルの豆温度)。
-           豆の投入量は50g固定なので、設定するのは含水率と1ハゼの豆温度だけ。 -->
-      <!-- 2つの設定は同じ現象を別の測り方で表している。モデルが両者を繋いでいるので、
-           「この豆温度だと吸入温度は何度になる見込みか」を出して、ガイド線の設定と
-           突き合わせられるようにする。強制はしない(片方を変えてももう片方は動かない)。 -->
-      <div class="settings-note" id="fcConsistencyNote" style="margin:-2px 0 6px;"></div>
-      <!-- 豆温度モデルの較正。専用プロファイルを1回焼いて、耳と秤で測れるものだけを
-           入れてもらい、モデルの定数を実機に合わせ直す(roastlib/calibration.py)。
-           普段は畳んでおく。使うのは焙煎するたびではなく、豆や環境が変わったときだけ。 -->
-      <div class="settings-title" style="margin-top:12px;">豆温度モデルの較正</div>
-      <div class="settings-note" style="margin-bottom:6px;">
-        専用プロファイルを1回焼いて測った値で、推定をこの焙煎機と豆に合わせます。
-      </div>
-      <button class="btn small" id="btnCalOpen" style="width:auto;">較正を開く</button>
-      <div id="calPanel" style="display:none; margin-top:8px;">
-        <!-- 焼く前に決まっている豆の前提。測定値の入力より前に置く。
-             較正の手順は「前提を入れる → 焼く → 測った値を入れる」の順なので、
-             画面もその順に並べる。どちらも普段は触らない値。 -->
-        <div class="settings-note">焼く前に分かっている豆の前提:</div>
-        <div class="settings-num-row"
-             title="生豆の含水率(5〜15%)。推定入熱・推定焙煎指数に効きます">
-          <label for="beanMoistureInput">生豆の含水率</label>
-          <span class="settings-num-field">
-            <input type="number" id="beanMoistureInput" min="5" max="15" step="0.5" value="10">
-            <span>%</span>
-          </span>
-        </div>
-        <!-- チャフ(薄皮)の量。焙煎前後の重量差は水分と揮発性ガスだけではなく、
-             乾いて剥がれる薄皮の分もある。豆の種類で変わり、50gに対して1g未満。
-             乾物の分解に混ぜていると、分解は温度依存なのにチャフはほぼ一定という
-             違いが吸収され、当てはめていない焙煎度の指数がずれる。 -->
-        <div class="settings-num-row"
-             title="焙煎中に剥がれる薄皮の量(豆50gあたり0〜2g)。推定焙煎指数に効きます">
-          <label for="chaffInput">チャフの量</label>
-          <span class="settings-num-field">
-            <input type="number" id="chaffInput" min="0" max="2" step="0.1" value="0.5">
-            <span>g</span>
-          </span>
-        </div>
-
-        <div class="settings-note">
-          校正用プロファイルを焼いて、測れた項目だけ入れてください(ひとつでも構いません)。
-        </div>
-        <button class="btn small" id="btnCalLoadProfile" style="width:auto; margin:6px 0;">校正用プロファイルを読み込む</button>
-        <!-- 較正用プロファイルは2つある。440秒までは同じ形で、止めるところだけが
-             違う。豆の水の大半が抜けるのは1ハゼの前後なので、そこで止めたほう
-             (浅煎り用)の焙煎後の重量がいちばん効く実測になる。両方焼くと、
-             2つの重量の差がそのまま「1ハゼの前後で抜けた水」を表す。 -->
-        <div class="settings-title" style="margin-top:12px;">どちらの校正用プロファイルか</div>
-        <div class="tabs" style="margin-bottom:6px;">
-          <div class="tab-btn active" id="calKindDeep" onclick="switchCalKind('deep')">深煎り用</div>
-          <div class="tab-btn" id="calKindLight" onclick="switchCalKind('light')">浅煎り用</div>
-          <div class="tab-btn" id="calKindLong" onclick="switchCalKind('long')">展開長め</div>
-        </div>
-        <div class="settings-note" id="calKindNote" style="margin-bottom:6px;"></div>
-        <div class="settings-num-row" title="1ハゼの音が聞こえ始めた時刻(2回目のハゼ音)。mm:ss または 秒で入れられます">
-          <label for="calFcStart">1ハゼ開始</label>
-          <span class="settings-num-field"><input type="text" id="calFcStart" placeholder="7:19"></span>
-        </div>
-        <div class="settings-num-row" title="ハゼ音がほぼ止んだ時刻">
-          <label for="calFcEnd">1ハゼ終了</label>
-          <span class="settings-num-field"><input type="text" id="calFcEnd" placeholder="8:23"></span>
-        </div>
-        <div class="settings-num-row" id="calScRow" title="2ハゼの音が聞こえ始めた時刻">
-          <label for="calScStart">2ハゼ開始</label>
-          <span class="settings-num-field"><input type="text" id="calScStart" placeholder="10:24"></span>
-        </div>
-        <div class="settings-num-row" title="投入した生豆の重さ。量っていなければ50gのままで構いません">
-          <label for="calGreenG">生豆の重さ</label>
-          <span class="settings-num-field"><input type="number" id="calGreenG" min="10" max="100" step="0.1" placeholder="50"><span>g</span></span>
-        </div>
-        <div class="settings-num-row" title="最後まで焼いた豆の重さ(冷めてから量ってください)">
-          <label for="calRoastedG">焙煎後の重さ</label>
-          <span class="settings-num-field"><input type="number" id="calRoastedG" min="10" max="100" step="0.1" placeholder="39.6"><span>g</span></span>
-        </div>
-        <!-- 途中で止めて量った重量。1点だけだとそこに引っぱられて他の時刻の重量が
-             かえって外れるので、何点でも入れられるようにしてある(実際、3分の1点
-             だけで当てはめると乾燥の速さが6.1倍まで振れた)。 -->
-        <div class="settings-note" style="margin-top:8px;">
-          (任意)途中で止めて量った重量。<b>浅煎り用を焼けば、この行は要りません</b>
-          — 最後まで焼いて量るほうが、冷却の途中で止めるより正確だからです:
-        </div>
-        <div id="calAbortRows"></div>
-        <button class="btn small" id="btnCalAbortAdd" style="width:auto; margin-top:4px;">＋ 行を追加</button>
-        <div style="display:flex; gap:6px; margin-top:8px;">
-          <button class="btn small" id="btnCalApply" style="width:auto;">この値で較正する</button>
-          <button class="btn small" id="btnCalReset" style="width:auto;">既定値に戻す</button>
-        </div>
-        <div id="calResult" class="settings-note" style="margin-top:8px;"></div>
-        <!-- 焙煎ログから学ぶ。焼くたびに記録が増えるので、押すほど確からしくなる。 -->
-        <div class="settings-title" style="margin-top:14px;">焙煎ログから学ぶ</div>
-        <div class="settings-note" style="margin-bottom:6px;">
-          「1ハゼ確認」「2ハゼ確認」を押した記録から、ハゼの豆温度を実測で決めます。
-          豆情報に標高が入っていれば、標高による差も一緒に学びます
-          (標高の違う豆が4件以上そろってから)。焼くほど記録が増えて確かになります。
-        </div>
-        <div id="calLogsResult" class="settings-note"></div>
-        <div style="display:flex; gap:6px; margin-top:6px;">
-          <button class="btn small" id="btnCalLogsApply" style="width:auto;">この実測を採用する</button>
-          <button class="btn small" id="btnCalLogsClear" style="width:auto;">採用をやめる</button>
-        </div>
+      <div class="qi-note" id="qiNote"></div>
+      <div class="qi-actions">
+        <span class="qi-status" id="qiStatus"></span>
+        <button class="btn small ghost" id="qiPrev" title="ひとつ前の未入力ログへ">← 前</button>
+        <button class="btn small ghost" id="qiNext" title="次の未入力ログへ">次 →</button>
+        <button class="btn small primary" id="qiSave">保存</button>
       </div>
     </div>
+  </div>
 
     <!-- 設定ではないので、設定を畳んでも消えないようサイドバー直下に置く。 -->
     <div class="sidebar-footer">
@@ -1194,6 +1423,13 @@
           <button class="btn small" id="btnOpenSavedRecord">記録を開く</button>
         </div>
       </div>
+      <!-- 「何を焼くか」を決める2つ。名前のすぐ右に置く(名前がその結果なので、
+           変えたくなったときに目を移す先が近い)。 -->
+      <div class="header-picks" id="headerPicks">
+        <button class="btn small" id="btnOpenProfileSelect"
+                title="プロファイルの一覧を開きます">プロファイル選択</button>
+        <button class="btn small" id="btnPickRoastBean" title="焙煎する豆を選びます">豆を選ぶ</button>
+      </div>
     </div>
 
     <div class="compare-bar" id="compareBar">
@@ -1210,6 +1446,9 @@
       <!-- このログに紐付いた購入豆があれば表示し、クリックで購入豆タブの該当データを開く -->
       <a id="historyOverlayBean" class="overlay-bean-link" style="display:none;" title="この豆の購入記録を開きます"></a>
       <span class="spacer"></span>
+      <!-- 重ねて見ているログを、そのまま編集できるようにする。重量やハゼ時刻を
+           入れると豆温度モデルの学習に使われるので、入口は多いほうがよい。 -->
+      <button class="btn small" id="btnEditHistoryRecord" title="このログの重量・ハゼ時刻などを編集します">記録を編集</button>
       <button class="btn small" id="btnEndHistoryOverlay">表示を終了</button>
     </div>
 
@@ -1280,47 +1519,128 @@
          始まると(metricsRowに切り替わるため)隠す。 -->
     <div class="metrics-row" id="profileOverviewRow" style="display:none; margin-bottom:16px;">
       <div class="metric-card">
-        <div class="metric-label">予熱温度</div>
+        <div class="metric-label">予熱温度<span class="metric-sort" data-sort-key="preheat_temp"><button type="button" class="ms-btn" data-dir="asc" title="この数値の小さい順に並べ替えます">▲</button><button type="button" class="ms-btn" data-dir="desc" title="この数値の大きい順に並べ替えます">▼</button></span></div>
         <div class="metric-value mono" id="ovPreheatTemp">--</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">焙煎時間</div>
+        <div class="metric-label">焙煎時間<span class="metric-sort" data-sort-key="duration"><button type="button" class="ms-btn" data-dir="asc" title="この数値の小さい順に並べ替えます">▲</button><button type="button" class="ms-btn" data-dir="desc" title="この数値の大きい順に並べ替えます">▼</button></span></div>
         <div class="metric-value mono" id="ovRoastTime">--</div>
       </div>
       <!-- 最終温度は、焙煎機が測る吸入温度と、そこから推定した豆温度を一枚にまとめる。
            別々のカードに離すと、どちらがどちらか分かりにくく、差(20℃前後が目安)も
            見比べないと分からないため。 -->
       <div class="metric-card" title="上段が吸入温度(焙煎機が測る温度)、下段が推定した豆温度と、その差です">
-        <div class="metric-label">最終温度</div>
+        <div class="metric-label">最終温度
+          <span class="metric-sort" data-sort-key="max_temp">
+            <button type="button" class="ms-btn" data-dir="asc" title="吸入温度の低い順に並べ替えます">▲</button>
+            <button type="button" class="ms-btn" data-dir="desc" title="吸入温度の高い順に並べ替えます">▼</button>
+          </span>
+        </div>
         <div class="metric-value mono" id="ovFinalTemp">--</div>
-        <div class="metric-sub mono" id="ovEndBeanTemp">--</div>
+        <!-- 並べ替えボタンは ovEndBeanTemp の外に置く。中に入れると、
+             値を書き換えるたびにボタンごと消える。 -->
+        <div class="metric-sub mono">
+          <span id="ovEndBeanTemp">--</span>
+          <span class="metric-sort" data-sort-key="end_bean_temp">
+            <button type="button" class="ms-btn" data-dir="asc" title="推定豆温度の低い順に並べ替えます">▲</button>
+            <button type="button" class="ms-btn" data-dir="desc" title="推定豆温度の高い順に並べ替えます">▼</button>
+          </span>
+        </div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Development Time</div>
+        <div class="metric-label">Development Time<span class="metric-sort" data-sort-key="dev_time"><button type="button" class="ms-btn" data-dir="asc" title="この数値の小さい順に並べ替えます">▲</button><button type="button" class="ms-btn" data-dir="desc" title="この数値の大きい順に並べ替えます">▼</button></span></div>
         <div class="metric-value mono" id="ovDevTime">--</div>
         <div class="metric-sub mono" id="ovDevTimeLabel">見込み</div>
       </div>
       <!-- 温度カーブと風量カーブから計算した推定値。実測ではない。
            生豆50g・含水率10%を前提としている(roastlib/energy.py参照)。 -->
       <div class="metric-card" title="温度と風量から計算した、豆が受け取る熱量の推定値">
-        <div class="metric-label">推定入熱</div>
+        <div class="metric-label">推定入熱<span class="metric-sort" data-sort-key="energy_kcal"><button type="button" class="ms-btn" data-dir="asc" title="この数値の小さい順に並べ替えます">▲</button><button type="button" class="ms-btn" data-dir="desc" title="この数値の大きい順に並べ替えます">▼</button></span></div>
         <div class="metric-value mono" id="ovEnergy">--</div>
       </div>
       <!-- 焙煎指数(生豆÷焙煎後)と、その逆数(焙煎後÷生豆=歩留まり)を並べる。
            指数は焙煎度の目安として、歩留まりは「50gが何gになるか」を掴むのに使う。
            どちらも同じ数字の裏表なので、片方だけだと毎回頭の中で割ることになる。 -->
       <div class="metric-card" title="生豆重量 ÷ 焙煎後重量 の推定値。浅1.099〜 / 中1.129〜 / 中深1.158〜 / 深1.188〜。横の値はその逆数(歩留まり)">
-        <div class="metric-label">推定焙煎指数</div>
+        <div class="metric-label">推定焙煎指数<span class="metric-sort" data-sort-key="roast_index"><button type="button" class="ms-btn" data-dir="asc" title="この数値の小さい順に並べ替えます">▲</button><button type="button" class="ms-btn" data-dir="desc" title="この数値の大きい順に並べ替えます">▼</button></span></div>
         <div class="metric-value mono" id="ovRoastIndex">--</div>
         <div class="metric-sub mono" id="ovRoastIndexLevel"></div>
       </div>
+    </div>
+
+    <!-- プロファイル・豆の選択。以前はサイドバーの一番下にあり、上の操作欄が
+         伸びると画面の外へ押し出されていた。右側のタブにすると、幅も高さも
+         十分に取れて一覧が読める。 -->
+    <div class="chart-wrap tab-panel-fill" id="profileSelectPanel" style="display:none;">
+    <!-- 1クリックは選ぶだけなので、そのままグラフへ行く道も出しておく
+         (ダブルクリックだけだと、選んだあとの行き先が分からない)。 -->
+    <div class="select-hint">
+      <span>クリックで選択(上に数値が出ます)・ダブルクリックで焙煎グラフへ</span>
+      <span class="spacer"></span>
+      <button class="btn small primary" id="btnGoGraphFromSelect"
+              style="display:none;" title="選んだプロファイルを焙煎グラフで開きます">焙煎グラフへ ›</button>
+    </div>
+    <div id="profileSelectionArea">
+    <div class="tabs source-tabs">
+      <div class="tab-btn active" id="tabPreset" onclick="switchTab('preset')">プリセット</div>
+      <div class="tab-btn" id="tabCustom" onclick="switchTab('custom')">保存済み</div>
+      <div class="tab-btn" id="tabIkawa" onclick="switchTab('ikawa')">IKAWA</div>
+      <div class="tab-btn" id="tabRecords" onclick="switchTab('records')">購入豆</div>
+    </div>
+
+    <div id="profileBrowserSidebar">
+      <!-- 名前で探すのが一番早いので、絞り込みプルダウンより上に置く
+           (プリセットは174件あり、以前は検索自体が出ていなかった)。
+           検索と並び順は横に並べる。縦に積むと、その分だけ一覧に見える件数が
+           減る(プリセットは174件あり、一覧の高さがそのまま操作量になる)。 -->
+      <div class="browse-top-row">
+        <input class="search-box" id="searchBox" placeholder="豆の名前で検索…">
+        <!-- 数値での並べ替えは、上の概要欄の各カードにある▲▼へ移した。
+             同じ並びが2か所にあると、どちらが効いているのか分からなくなる。
+             ここには数値以外の並びだけを残す。 -->
+        <select class="search-box" id="sortFilter">
+          <option value="favorite">並び順: お気に入り優先</option>
+          <option value="name_asc">並び順: 名前順</option>
+          <option value="roast_count_desc">並び順: 焙煎回数(多い順)</option>
+        </select>
+      </div>
+      <!-- 絞り込みプルダウンは2列に並べて縦の占有を半分にする(6個を縦一列に
+           並べると、肝心のプロファイル一覧の表示領域を圧迫するため)。
+           選択中のものは色を変え、6個を読み返さなくても効いている絞り込みが
+           分かるようにする(updateFilterActiveStates)。 -->
+      <div class="filter-grid" id="filterGrid">
+        <select class="search-box" id="categoryFilter" style="display:none;"></select>
+        <select class="search-box" id="roastLevelFilter" style="display:none;"></select>
+        <select class="search-box" id="varietyFilter" style="display:none;"></select>
+        <select class="search-box" id="processFilter" style="display:none;"></select>
+        <select class="search-box" id="altitudeFilter" style="display:none;"></select>
+        <select class="search-box" id="roasterFilter" style="display:none;"></select>
+      </div>
+      <button class="btn small filter-clear" id="btnClearFilters" style="display:none;">絞り込みを解除</button>
+      <div class="profile-list" id="profileList"></div>
+      <!-- 比較機能(2026-07簡易化): 専用のフィルタ・検索・一覧は廃止し、この一覧の
+           各行にある「⇄」アイコン(searchProfiles()参照)から直接比較に追加する。
+           compareProfile/selectCompareProfile/#compareBarの仕組み自体は変更なし。 -->
+    </div>
+
+
+    </div>
     </div>
 
     <div class="chart-wrap bean-info tab-panel-fill" id="beanInfoPanel" style="display:none;">
       <div id="beanInfoContent"></div>
     </div>
     <div class="chart-wrap bean-info tab-panel-fill" id="roastHistoryPanel" style="display:none;">
+      <!-- 表示の切り替え。既定は「このプロファイル」で、これまでと同じ。
+           「すべて(時系列)」は豆やプロファイルを問わず焼いた順に並べる。
+           実測値の入力漏れを拾って埋めていく用。 -->
+      <div class="tabs" style="margin-bottom:8px;">
+        <div class="tab-btn active" id="rhScopeProfile" onclick="switchHistoryScope('profile')">このプロファイル</div>
+        <div class="tab-btn" id="rhScopeAll" onclick="switchHistoryScope('all')">すべて(時系列)</div>
+        <div class="tab-btn" id="rhScopeTodo" onclick="switchHistoryScope('todo')">実測値の未入力</div>
+      </div>
       <div id="roastHistoryContent"></div>
+      <div id="roastTimelineContent" style="display:none;"></div>
     </div>
 
     <!-- 「味を推測」タブでは、グラフ(graphColumn)と調整項目(generatorFormPanel)を
@@ -1339,6 +1659,9 @@
         </div>
       </div>
       <div class="chart-wrap bean-info" id="generatorFormPanel" style="display:none;">
+        <!-- プリセット由来の基準値をサーバーが作っている間の表示。豆温度モードでは
+             174本にモデルを走らせるため、暖機が間に合わないと数秒かかる。 -->
+        <div class="abc-loading" id="abcLoading" style="display:none;"><span class="spinner"></span>読み込み中…</div>
         <div class="abc-not-ready" id="abcNotReady" style="display:none;">
           このプロファイル調整を使うには、先に温度ガイド線(カラーチェンジ・1ハゼの温度)の設定が必要です。<br>
           <button class="btn small" id="btnAbcOpenGuide" style="width:auto; margin-top:8px;">温度ガイド線設定を開く</button>
@@ -1383,7 +1706,7 @@
           <!-- Aフェーズ・Bフェーズ -->
           <div class="abc-steppers">
             <div class="abc-stepper">
-              <span class="abc-label">A: 投入 → カラーチェンジ(<span id="abcCcTemp">-</span>℃)</span>
+              <span class="abc-label">A: 投入 → カラーチェンジ(<span id="abcCcTemp">-</span>)</span>
               <span class="abc-controls">
                 <button class="offset-btn" id="abcAMinus">−</button>
                 <span class="abc-value" id="abcAVal">3:00</span>
@@ -1392,7 +1715,7 @@
               </span>
             </div>
             <div class="abc-stepper">
-              <span class="abc-label">B: カラーチェンジ → 1ハゼ(<span id="abcFcTemp">-</span>℃)</span>
+              <span class="abc-label">B: カラーチェンジ → 1ハゼ(<span id="abcFcTemp">-</span>)</span>
               <span class="abc-controls">
                 <button class="offset-btn" id="abcBMinus">−</button>
                 <span class="abc-value" id="abcBVal">3:00</span>
@@ -1490,23 +1813,281 @@
       <div class="main-header">
         <div>
           <h2>焙煎する豆を選ぶ</h2>
-          <div class="hint">選んでおくと、焙煎記録に自動で紐づきます。選ばずに焙煎することもできます。</div>
+          <div class="hint">左で豆を選ぶと、右に「その豆で前に焼いたプロファイル」が出ます。
+            そこから選ぶか、「別のプロファイルを選ぶ」で一覧へ移れます。選ばずに焙煎することもできます。</div>
         </div>
-        <div class="toolbar-group">
+        <!-- ここに header-picks(プロファイル選択・豆を選ぶ)が移ってくる。
+             どの画面からでも選び直せるように(moveHeaderPicks参照)。 -->
+        <div class="toolbar-group" data-picks-slot>
           <button class="btn small" id="btnBeanPickerAdd" style="width:auto;">＋ 豆を追加</button>
           <button class="btn small" id="btnBeanPickerClear" style="width:auto;">選択を外す</button>
           <button class="btn small" id="btnBeanPickerClose" style="width:auto;">閉じる</button>
         </div>
       </div>
       <input class="search-box bean-picker-search" id="beanPickerSearch" placeholder="豆を検索…">
+      <!-- 国 → 豆 → その豆で焼いたプロファイル、と左から右へ絞り込む3列。
+           国は名前だけなので細くてよく、右2列の幅を削らずに済む。畳んで
+           開き直す形にすると、いま何の中を見ているのかが分かりにくかった。 -->
       <div class="bean-picker-grid">
+        <div class="bean-picker-col bp-country-col">
+          <div class="bp-col-head">
+            <h4>国</h4>
+          </div>
+          <div id="beanPickerCountries"></div>
+        </div>
         <div class="bean-picker-col">
-          <h4>豆</h4>
+          <div class="bp-col-head">
+            <h4 id="beanPickerListTitle">豆</h4>
+            <select class="search-box bp-sort" id="beanPickerSort">
+              <option value="country">国順(あいうえお)</option>
+              <option value="purchase_desc">購入順(新しい順)</option>
+            </select>
+          </div>
           <div id="beanPickerList"></div>
         </div>
         <div class="bean-picker-col">
-          <h4 id="beanPickerCandTitle">この豆で焙煎したプロファイル</h4>
+          <div class="bp-col-head">
+            <h4 id="beanPickerCandTitle">この豆で焙煎したプロファイル</h4>
+            <select class="search-box bp-sort" id="beanPickerCandSort">
+              <option value="count">焙煎回数(多い順)</option>
+              <option value="date">日にち順(新しい順)</option>
+              <option value="rating">評価順(星の多い順)</option>
+            </select>
+          </div>
           <div id="beanPickerCandidates"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 設定。以前は「⚙ 設定」ボタンの直下(左のサイドバー)に出していたが、
+         幅257pxでは入力欄も説明文も詰まって読みにくかった。右の広い場所に出し、
+         幅があるときは2列に流す。開いている間は他の画面を隠す。 -->
+    <div id="settingsMain" style="display:none;">
+      <div class="main-header">
+        <div><h2>設定</h2></div>
+        <div class="toolbar-group">
+          <button class="btn small primary" id="btnSettingsClose" style="width:auto;">✕ 設定を閉じる</button>
+        </div>
+      </div>
+      <div class="settings-section" id="settingsSection">
+          <!-- 書き出し・取り込み。機械を買い替えたとき、別の端末へ移すとき、
+             プロファイルを人に渡すときに使う。中身は独立した窓にまとめてある
+             (設定の中に並べると、メニューから呼んだときに設定を開かせる形に
+             なり、どこを見ればよいのか分かりにくかった)。
+             設定の一番上に置くのは、他の項目と違って「設定を変える」ものでは
+             なく、単独で使う入口だからである。 -->
+        <button class="btn small" id="btnOpenIo"
+                style="width:auto; margin-bottom:12px;">インポート・エクスポートを開く</button>
+
+        <!-- 画面の配色。実体は :root と [data-theme=...] のCSS変数(app/static/index.html上部)。
+             グラフの線の色も同じ変数から取るので、切り替えるとグラフも一緒に変わる。 -->
+        <div class="settings-num-row" title="画面とグラフの配色を切り替えます">
+          <label for="themeSelect">配色</label>
+          <select id="themeSelect" class="settings-select">
+            <option value="dark">ダーク(既定)</option>
+            <option value="light">ライト</option>
+            <option value="contrast">高コントラスト</option>
+          </select>
+        </div>
+        <label class="settings-toggle-row" for="notifyToggle">
+          <span>焙煎完了の通知</span>
+          <input type="checkbox" id="notifyToggle" checked>
+        </label>
+        <label class="settings-toggle-row" for="showLogToggle">
+          <span>ログを表示</span>
+          <input type="checkbox" id="showLogToggle" checked>
+        </label>
+        <label class="settings-toggle-row" for="skipDuplicateToggle"
+               title="同じ日に同じプロファイルで2回目以降を焙煎したとき、確認せずに焙煎ログを保存しません(焙煎回数には加算されます)">
+          <span>同日2回目以降は記録しない</span>
+          <input type="checkbox" id="skipDuplicateToggle">
+        </label>
+        <!-- プロファイル選択のタブを出すかどうか。元データが無い場合(nhm.sqlite /
+             ikawa_profiles.jsonが無い)は、この設定に関わらず非表示になり、チェックも
+             操作できなくなる(applySourceTabVisibility参照)。 -->
+        <label class="settings-toggle-row" id="showPresetTabRow" for="showPresetTabToggle">
+          <span>プリセットタブを表示</span>
+          <input type="checkbox" id="showPresetTabToggle" checked>
+        </label>
+        <label class="settings-toggle-row" id="showIkawaTabRow" for="showIkawaTabToggle">
+          <span>IKAWAタブを表示</span>
+          <input type="checkbox" id="showIkawaTabToggle" checked>
+        </label>
+        <div class="settings-note" id="sourceTabNote" style="display:none;"></div>
+        <!-- 焙煎機を見ながら決めた、カラーチェンジ・1ハゼ・2ハゼの空気温度。
+             A/B/C/Dフェーズの境界として、味を推測・ABCモードの計算に使われる。
+             2026-08: 以前はボタンでグラフ横のパネルを開閉していたが、押しても枠が
+             出ないことがあった(パネルがメインエリア側にあり、ビューによっては
+             畳まれるため)。設定の中に入力欄そのものを置く形にした。 -->
+        <!-- ABCモード・味を推測が、A/B/C/Dの境界をどう決めるか。ラジオを縦に
+             並べると狭いサイドバーで説明文が折り返して場所を取るので、他の設定
+             (配色など)と同じ1行のプルダウンにしてある。 -->
+        <div class="settings-title" style="margin-top:12px;">フェーズ境界の決め方</div>
+        <div class="settings-num-row">
+          <label for="phaseModeSelect">判定の基準</label>
+          <select id="phaseModeSelect" style="flex:0 0 auto;">
+            <option value="air">吸入温度</option>
+            <option value="bean">豆温度モデル</option>
+          </select>
+        </div>
+        <div class="settings-note" id="phaseModeNote"></div>
+        <div class="settings-num-row" id="beanCcRow" style="display:none;"
+             title="豆温度モードでのカラーチェンジ。1ハゼ・2ハゼはモデル自身が判定するので設定は要りません">
+          <label for="beanColorChange">カラーチェンジ(豆温度)</label>
+          <span class="settings-num-field">
+            <input type="number" id="beanColorChange" min="80" max="180" step="1"><span>°C</span>
+          </span>
+        </div>
+
+        <!-- 温度ガイド線は、境界を吸入温度で決めるときにしか使わない。
+             豆温度モードでは境界をモデルが決めるので、出しておくと
+             「どちらの数字が効いているのか」が分からなくなる。 -->
+        <div id="guideTempRows">
+        <div class="settings-title" style="margin-top:12px;">温度ガイド線(吸入温度)</div>
+        <div class="settings-note">
+          焙煎機の画面を見て決めた<b>吸入温度</b>。空欄で未設定に戻ります。
+        </div>
+        <div class="settings-num-row">
+          <label for="guideColorChange">カラーチェンジ</label>
+          <span class="settings-num-field">
+            <input type="number" id="guideColorChange" placeholder="未設定" min="50" max="255"><span>℃</span>
+          </span>
+        </div>
+        <div class="settings-num-row">
+          <label for="guideFirstCrack">1ハゼ</label>
+          <span class="settings-num-field">
+            <input type="number" id="guideFirstCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
+          </span>
+        </div>
+        <div class="settings-num-row">
+          <label for="guideSecondCrack">2ハゼ</label>
+          <span class="settings-num-field">
+            <input type="number" id="guideSecondCrack" placeholder="未設定" min="50" max="255"><span>℃</span>
+          </span>
+        </div>
+        </div>
+        <!-- 豆温度モデル(roastlib/energy.py)の前提。上の「温度ガイド線」とは別物で、
+             こちらは豆側の温度・状態を決める。混同されやすいので見出しを分けてある
+             (「1ハゼ 223℃」と「1ハゼの豆温度 196℃」が並ぶと、どちらが何の温度か
+             分からなくなる。前者は焙煎機が測る吸入温度、後者はモデルの豆温度)。
+             豆の投入量は50g固定なので、設定するのは含水率と1ハゼの豆温度だけ。 -->
+        <!-- 2つの設定は同じ現象を別の測り方で表している。モデルが両者を繋いでいるので、
+             「この豆温度だと吸入温度は何度になる見込みか」を出して、ガイド線の設定と
+             突き合わせられるようにする。強制はしない(片方を変えてももう片方は動かない)。 -->
+        <div class="settings-note" id="fcConsistencyNote" style="margin:-2px 0 6px;"></div>
+        <!-- 焙煎ログからの学習と、モデル構造の見直し。
+             学習は焙煎するたびに少しずつ効く(連続的で小さい)。構造の見直しは
+             ハゼ時刻や焙煎指数の意味が変わるので、押したときだけ走らせる。 -->
+        <div class="settings-title" style="margin-top:16px;">豆温度モデルの学習</div>
+        <div id="learnBox" class="learn-box">
+          <div class="learn-line" id="learnCount">読み込み中…</div>
+          <div class="settings-note" id="learnNeed"></div>
+          <div class="learn-line" id="learnGrowth" style="display:none;"></div>
+          <div id="structureBox" style="display:none;">
+            <button class="btn small" id="btnStructureRun" style="width:auto; margin-top:8px;">モデル構造を見直す</button>
+            <div class="settings-note" id="structureHint"></div>
+          </div>
+          <div id="structureProgress" class="learn-progress" style="display:none;"></div>
+          <div id="structureResult" style="display:none;"></div>
+          <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="btn small ghost" id="btnLearnReset" style="width:auto;">豆温度学習データ初期化</button>
+            <button class="btn small ghost" id="btnStructureRevert" style="width:auto; display:none;">構造を既定に戻す</button>
+          </div>
+        </div>
+
+        <!-- 豆温度モデルの較正。専用プロファイルを1回焼いて、耳と秤で測れるものだけを
+             入れてもらい、モデルの定数を実機に合わせ直す(roastlib/calibration.py)。
+             学習の下に置くのは、普段使うのが学習のほうだからである(焙煎するたびに
+             効く)。較正は豆や環境が変わったときだけ触る。
+             測った値そのものを消してはいけない。モデルを直すたびに、この生の測定から
+             当てはめ直している(_refit_calibration_if_stale)。1ハゼ終了・途中の重量は
+             通常の焙煎ログには記録されないので、他から作り直せない。 -->
+        <div class="settings-title" style="margin-top:16px;">豆温度モデルの較正</div>
+        <div class="settings-note" style="margin-bottom:6px;">
+          専用プロファイルを1回焼いて測った値で、推定をこの焙煎機と豆に合わせます。
+        </div>
+        <button class="btn small" id="btnCalOpen" style="width:auto;">較正を開く</button>
+
+        <div id="calPanel" style="display:none; margin-top:8px;">
+          <!-- 焼く前に決まっている豆の前提。測定値の入力より前に置く。
+               較正の手順は「前提を入れる → 焼く → 測った値を入れる」の順なので、
+               画面もその順に並べる。どちらも普段は触らない値。 -->
+          <div class="settings-note">焼く前に分かっている豆の前提:</div>
+          <div class="settings-num-row"
+               title="生豆の含水率(5〜15%)。推定入熱・推定焙煎指数に効きます">
+            <label for="beanMoistureInput">生豆の含水率</label>
+            <span class="settings-num-field">
+              <input type="number" id="beanMoistureInput" min="5" max="15" step="0.5" value="10">
+              <span>%</span>
+            </span>
+          </div>
+          <!-- チャフ(薄皮)の量。焙煎前後の重量差は水分と揮発性ガスだけではなく、
+               乾いて剥がれる薄皮の分もある。豆の種類で変わり、50gに対して1g未満。
+               乾物の分解に混ぜていると、分解は温度依存なのにチャフはほぼ一定という
+               違いが吸収され、当てはめていない焙煎度の指数がずれる。 -->
+          <div class="settings-num-row"
+               title="焙煎中に剥がれる薄皮の量(豆50gあたり0〜2g)。推定焙煎指数に効きます">
+            <label for="chaffInput">チャフの量</label>
+            <span class="settings-num-field">
+              <input type="number" id="chaffInput" min="0" max="2" step="0.1" value="0.5">
+              <span>g</span>
+            </span>
+          </div>
+
+          <div class="settings-note">
+            校正用プロファイルを焼いて、測れた項目だけ入れてください(ひとつでも構いません)。
+          </div>
+          <button class="btn small" id="btnCalLoadProfile" style="width:auto; margin:6px 0;">校正用プロファイルを読み込む</button>
+          <!-- 較正用プロファイルは2つある。440秒までは同じ形で、止めるところだけが
+               違う。豆の水の大半が抜けるのは1ハゼの前後なので、そこで止めたほう
+               (浅煎り用)の焙煎後の重量がいちばん効く実測になる。両方焼くと、
+               2つの重量の差がそのまま「1ハゼの前後で抜けた水」を表す。 -->
+          <div class="settings-title" style="margin-top:12px;">どちらの校正用プロファイルか</div>
+          <div class="tabs" style="margin-bottom:6px;">
+            <div class="tab-btn active" id="calKindDeep" onclick="switchCalKind('deep')">深煎り用</div>
+            <div class="tab-btn" id="calKindLight" onclick="switchCalKind('light')">浅煎り用</div>
+            <div class="tab-btn" id="calKindLong" onclick="switchCalKind('long')">展開長め</div>
+          </div>
+          <div class="settings-note" id="calKindNote" style="margin-bottom:6px;"></div>
+          <div class="settings-num-row" title="1ハゼの音が聞こえ始めた時刻(2回目のハゼ音)。mm:ss または 秒で入れられます">
+            <label for="calFcStart">1ハゼ開始</label>
+            <span class="settings-num-field"><input type="text" id="calFcStart" placeholder="7:19"></span>
+          </div>
+          <div class="settings-num-row" title="ハゼ音がほぼ止んだ時刻">
+            <label for="calFcEnd">1ハゼ終了</label>
+            <span class="settings-num-field"><input type="text" id="calFcEnd" placeholder="8:23"></span>
+          </div>
+          <div class="settings-num-row" id="calScRow" title="2ハゼの音が聞こえ始めた時刻">
+            <label for="calScStart">2ハゼ開始</label>
+            <span class="settings-num-field"><input type="text" id="calScStart" placeholder="10:24"></span>
+          </div>
+          <div class="settings-num-row" title="投入した生豆の重さ。量っていなければ50gのままで構いません">
+            <label for="calGreenG">生豆の重さ</label>
+            <span class="settings-num-field"><input type="number" id="calGreenG" min="10" max="100" step="0.1" placeholder="50"><span>g</span></span>
+          </div>
+          <div class="settings-num-row" title="最後まで焼いた豆の重さ(冷めてから量ってください)">
+            <label for="calRoastedG">焙煎後の重さ</label>
+            <span class="settings-num-field"><input type="number" id="calRoastedG" min="10" max="100" step="0.1" placeholder="39.6"><span>g</span></span>
+          </div>
+          <!-- 途中で止めて量った重量。1点だけだとそこに引っぱられて他の時刻の重量が
+               かえって外れるので、何点でも入れられるようにしてある(実際、3分の1点
+               だけで当てはめると乾燥の速さが6.1倍まで振れた)。 -->
+          <div class="settings-note" style="margin-top:8px;">
+            (任意)途中で止めて量った重量。<b>浅煎り用を焼けば、この行は要りません</b>
+            — 最後まで焼いて量るほうが、冷却の途中で止めるより正確だからです:
+          </div>
+          <div id="calAbortRows"></div>
+          <button class="btn small" id="btnCalAbortAdd" style="width:auto; margin-top:4px;">＋ 行を追加</button>
+          <div style="display:flex; gap:6px; margin-top:8px;">
+            <button class="btn small" id="btnCalApply" style="width:auto;">この値で較正する</button>
+            <button class="btn small" id="btnCalReset" style="width:auto;">既定値に戻す</button>
+          </div>
+          <div id="calResult" class="settings-note" style="margin-top:8px;"></div>
+          <!-- 焙煎ログからの学習は、上の「豆温度モデルの学習」に一本化した(2026-09)。
+               以前はここに別の学習(1ハゼ・2ハゼの豆温度と標高の傾き)があったが、
+               同じ T_FC_BEAN を2つの経路が別々に決めて食い違う状態だった。
+               新しい仕組みは標高も軸の1つとして扱い、生産国・品種・精製方法・
+               質量まで学ぶので、旧のほうは完全に含まれる。 -->
         </div>
       </div>
     </div>
@@ -1514,11 +2095,21 @@
     <div id="recordsMain" style="display:none;">
       <div class="main-header">
         <div>
-          <h2 id="recordsTitle">記録を選択してください</h2>
-          <div class="hint">左の一覧から選ぶか、「＋ 新しく追加」で作成してください。</div>
+          <h2 id="recordsTitle">豆を選択してください</h2>
+          <!-- ボタンの名前は「＋ 豆を追加」。案内と食い違っていたので合わせた。
+               右上の「プロファイル選択」で、プロファイルの一覧へ戻れる。 -->
+          <div class="hint">左の一覧から豆を選ぶか、「＋ 豆を追加」で登録してください。
+            プロファイルの一覧へは右上の「プロファイル選択」で戻れます。</div>
         </div>
+        <div class="toolbar-group" data-picks-slot></div>
       </div>
-      <div id="recordsContent"></div>
+      <!-- 豆の一覧(左)と、選んだ豆の詳細(右)を横に並べる。以前は一覧だけを
+           左のサイドバーに置いていた。幅257pxの列に検索・絞り込み・並び順を積むため、
+           7件あっても1件分しか見えていなかった。右の広い場所へ移す。2列にするのは、
+           右が詳細で埋まっても一覧が消えないようにするためである。 -->
+      <div class="records-cols">
+        <div id="recordsContent"></div>
+      </div>
     </div>
 
     <div class="log-box" id="logBox"></div>
@@ -1575,6 +2166,78 @@
   </div>
 </div>
 
+<!-- インポート・エクスポート。設定の中ではなく独立した窓にしてある。
+     メニューバーからも、設定からも、ここへ来る。 -->
+<div class="modal-overlay" id="ioOverlay" style="display:none;">
+  <div class="modal-box" style="max-width:520px; max-height:86vh; overflow-y:auto;">
+    <h3>インポート・エクスポート</h3>
+
+    <div class="io-heading">書き出す</div>
+    <div class="io-row">
+      <button class="btn small" id="btnExportAll">一式を書き出す</button>
+      <button class="btn small" id="btnExportProfiles">プロファイルを選んで</button>
+    </div>
+    <!-- どのプロファイルを書き出すか選ぶ。1件だけ人に渡すこともある。 -->
+    <div id="exportPickPanel" style="display:none; margin-bottom:6px;">
+      <div class="io-row">
+        <button class="btn small ghost" id="btnExportPickAll">全部にする</button>
+        <button class="btn small ghost" id="btnExportPickNone">全部外す</button>
+      </div>
+      <div id="exportPickList" class="export-pick-list"></div>
+      <div class="io-row">
+        <button class="btn small primary" id="btnExportPickRun">選んだものを書き出す</button>
+        <button class="btn small ghost" id="btnExportPickCancel">やめる</button>
+      </div>
+    </div>
+
+    <div class="io-heading">取り込む</div>
+    <div class="io-row">
+      <button class="btn small ghost" id="btnImport">ファイルから取り込む</button>
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none;">
+    </div>
+
+    <div class="settings-note" id="ioNote">
+      一式には、保存したプロファイル・焙煎ログ・豆の情報・較正の実測値・
+      モデル構造・設定と、豆温度モデルの学習後の値が入ります。
+      「プロファイルを選んで」では、保存済みの中から書き出すものを選べます。
+      取り込む前に、いまのデータの控えが自動で作られます。
+    </div>
+    <div class="modal-actions">
+      <button class="btn small primary" id="btnIoClose">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 取り込むファイルに、いま持っているのと同じプロファイルが入っていたとき。
+     黙って上書きすると、手を入れた自分のプロファイルが消える。 -->
+<div class="modal-overlay" id="importConflictOverlay" style="display:none;">
+  <div class="modal-box" style="max-width:480px;">
+    <h3>同じプロファイルがあります</h3>
+    <div id="importConflictBody" style="color:var(--text-muted); font-size:12px;"></div>
+    <div class="export-pick-list" id="importConflictList" style="margin-top:8px;"></div>
+    <div class="modal-actions" style="flex-wrap:wrap;">
+      <button class="btn small ghost" id="btnImportConflictCancel">やめる</button>
+      <button class="btn small" id="btnImportConflictSkip">重ならないものだけ</button>
+      <button class="btn small primary" id="btnImportConflictOverwrite">上書きする</button>
+    </div>
+  </div>
+</div>
+
+<!-- 豆に紐付いていない焙煎記録を、その場で豆に結びつける。豆の画面まで行って
+     「＋ 過去の焙煎記録を追加」を開かないと結べなかったので、記録の側からも
+     たどれるようにする。 -->
+<div class="modal-overlay" id="linkBeanOverlay" style="display:none;">
+  <div class="modal-box" style="max-width:520px;">
+    <h3>この焙煎記録を豆に紐付ける</h3>
+    <div id="linkBeanRecordLabel" style="color:var(--text-muted); font-size:12px; margin-bottom:8px;"></div>
+    <input class="search-box" id="linkBeanSearch" placeholder="豆を検索…">
+    <div class="export-pick-list" id="linkBeanList" style="max-height:300px;"></div>
+    <div class="modal-actions">
+      <button class="btn small ghost" id="btnLinkBeanCancel">やめる</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="duplicateConfirmOverlay" style="display:none;">
   <div class="modal-box">
     <h3>本日すでに焙煎記録があります</h3>
@@ -1601,6 +2264,9 @@ let roastingProfileRef = null;
 // この端末の識別ID(編集中カーブの同期で、自分のブロードキャストのエコーを無視する用)
 const clientId = 'pc-' + Math.random().toString(36).slice(2);
 let currentTab = 'preset';
+// 「購入豆」から戻るとき、どのプロファイルのタブに戻すか
+// (プリセットを見ていた人をいつも保存済みに戻すと迷う)。
+let lastProfileSourceTab = 'preset';
 // プリセット/IKAWAタブを出すかどうかは、次の2つのANDで決まる(applySourceTabVisibility)。
 //   sourceDataAvailable … 元データがあるか(server_infoのhas_presets/has_ikawa)。
 //                         無ければ一覧が空にしかならないので、設定に関わらず隠す。
@@ -1734,18 +2400,40 @@ function updatePreheatMetricsVisibility(){
 let profileSelectLocked = false;
 function setProfileSelectLocked(locked){
   profileSelectLocked = locked;
-  applySidebarView();
+  // 送信後〜焙煎完了までは、誤って別のプロファイルを選び直さないよう選択タブを
+  // 使えなくする。一覧は右のタブへ移したので、タブごと押せなくする。
+  const btn = document.getElementById('btnOpenProfileSelect');
+  if(btn) btn.disabled = locked;
+  const area = document.getElementById('profileSelectionArea');
+  if(area) area.style.display = locked ? 'none' : '';
+  if(locked && currentGraphView === 'select') switchGraphView('graph');
 }
 
 // サイドバーに何を出すか。プロファイル一覧と設定は場所を取り合うので、
 // 「送信中でロックされているか」と「設定を開いているか」の両方から一箇所で決める
 // (別々にstyle.displayを触ると、ロック解除の拍子に設定の裏から一覧が出てくる)。
 let settingsOpen = false;
+// 設定は右の広い場所に出す。以前は「⚙ 設定」ボタンの直下(左のサイドバー)に
+// 出していたが、幅257pxでは入力欄も説明文も詰まって読みにくかった。左は
+// 焙煎の操作(接続・豆・重量・送信)だけを置く場所として残す。
 function applySidebarView(){
-  const sel = document.getElementById('profileSelectionArea');
-  const set = document.getElementById('settingsSection');
-  if(sel) sel.style.display = (settingsOpen || profileSelectLocked) ? 'none' : '';
-  if(set) set.style.display = settingsOpen ? '' : 'none';
+  const main = document.getElementById('settingsMain');
+  if(main) main.style.display = settingsOpen ? '' : 'none';
+  // 開いている間は、いま出ていた画面を隠す。閉じたら隠したものだけを戻す
+  // (どれが出ていたかを覚えておかないと、閉じた瞬間に全部出てしまう)。
+  for(const id of ['profileEditorMain', 'beanPickerMain', 'recordsMain']){
+    const el = document.getElementById(id);
+    if(!el) continue;
+    if(settingsOpen){
+      if(el.style.display !== 'none'){
+        el.dataset.hiddenBySettings = '1';
+        el.style.display = 'none';
+      }
+    } else if(el.dataset.hiddenBySettings){
+      delete el.dataset.hiddenBySettings;
+      el.style.display = '';
+    }
+  }
   const b = document.getElementById('btnSettings');
   if(b){
     b.textContent = settingsOpen ? '✕ 設定を閉じる' : '⚙ 設定';
@@ -1912,7 +2600,7 @@ const ENERGY = {
   BEAN_G: 50.0, MOISTURE: 0.10,          // 生豆50g・含水率10%
   C_DRY: 1.70, C_W: 4.18,                // 比熱 kJ/(kg·K)
   T_START: 20.0, T_FC_BEAN: 196.0,       // 投入時の豆温度 / 1ハゼの豆温度
-  U0: 0.0034530, FAN_REF: 70.0, FAN_EXP: 0.8,
+  U0: 0.0032728, FAN_REF: 70.0, FAN_EXP: 0.8,
   // 熱の入りやすさは乾き具合で変わる。濡れている間はU_WET倍(表面の蒸発冷却と
   // 内部の温度勾配)、乾くほど多孔質になって入りやすくなる。これが無いと投入直後に
   // 豆が空気温度を追い越してしまう。
@@ -1925,16 +2613,13 @@ const ENERGY = {
   // この分け方だと潜熱が一点に集中しないので、「入熱の何割まで」という上限が要らない。
   // 標高による1ハゼ豆温度の補正。既定0=補正なし(roastlib/energy.py 参照)。
   // 傾きは焙煎ログの実測から学ぶ(既定は0=補正なし)。
-  ALTITUDE_FC_SLOPE: 0.0, ALTITUDE_FC_REF_M: 1750.0,
-  ALTITUDE_BUCKET_M: {'1000m未満':750.0, '1000-1500m':1250.0,
-                      '1500-2000m':1750.0, '2000m以上':2200.0},
   // 2026-08: 実測(途中で止めて量った重量・カラーチェンジの時刻)に合わせて
   // 配分を変えた。豆の水の大半は最後まで中に残る。roastlib/energy.py 参照。
   FRAC_SURFACE: 0.10, FRAC_SEALED: 0.75,
   // チャフ(薄皮)は乾物の一部だが、熱で分解して飛ぶのではなく乾いて剥がれる。
   // 分解と混ぜていると、温度依存の分解とほぼ一定のチャフの違いが吸収されてしまう。
   CHAFF_G: 0.5,
-  K_SURFACE: 7.1174e-3, K_INNER: 5.3380e-4, CRACK_SPREAD: 1.612,
+  K_SURFACE: 4.832e-3, K_INNER: 3.624e-4, CRACK_SPREAD: 1.612,
   // 密閉水が水蒸気として抜けていく温度の中心と幅。音として聞こえるハゼより
   // ずっと広い温度域にわたる(energy.py の VENT_SHIFT / VENT_SPREAD と同じ)。
   VENT_SHIFT: 6.0, VENT_SPREAD: 10.0,
@@ -1972,14 +2657,6 @@ function energySatPressureRel(tC){
 }
 
 // 標高帯から、1ハゼ豆温度に足す補正(℃)。分からない標高は0(補正しない)。
-// roastlib/energy.py の altitude_fc_offset と同じ計算。
-function energyAltitudeFcOffset(bucket, slope){
-  const s = (slope === undefined || slope === null) ? ENERGY.ALTITUDE_FC_SLOPE : slope;
-  if(!s) return 0.0;
-  const m = ENERGY.ALTITUDE_BUCKET_M[(bucket || '').trim()];
-  if(m === undefined) return 0.0;
-  return s * (m - ENERGY.ALTITUDE_FC_REF_M) / 1000.0;
-}
 
 // その豆温度までに壊れた細胞の割合(0〜1)。細胞の強度にはばらつきがあるので一斉には
 // 壊れず、1ハゼ豆温度を中心にCRACK_SPREAD℃の幅を持つロジスティックになる。
@@ -2099,27 +2776,22 @@ function estimateRoastEnergy(roastPoints, fanPoints){
 // ドラッグ中もrenderChart()から呼ばれうるので、同じログなら結果を使い回す。
 let beanTempSeriesCache = {key: null, result: []};
 // 焙煎ログの実測カーブから豆温度を推定する。
-// altitudeBucket は「その記録に紐づけた豆」(豆情報)の標高帯。記録ごとに違うので、
-// 渡さないと補正なしで計算される。
-function beanTempSeriesFrom(roastPoints, fanPoints, altitudeBucket){
+// 1ハゼ豆温度はENERGY.T_FC_BEANをそのまま使う。標高・生産国・品種・精製方法に
+// よる補正はサーバー側の学習が済ませてから届くので、画面側で標高をもう一度
+// 足すと二重に効く。以前はここだけ既定の196℃を直に見ていたため、較正で
+// 1ハゼ豆温度が動いても、このグラフだけ196℃のままだった。
+function beanTempSeriesFrom(roastPoints, fanPoints){
   if(!roastPoints || roastPoints.length < 2) return [];
-  const tFc = baseFcBeanTemp()
-            + energyAltitudeFcOffset(altitudeBucket || '', altitudeFcSlope);
   // 全点をJSON化すると点数が多いときに逆に重いので、等間隔に9点だけ拾って鍵にする。
   // 別の記録が偶然同じ長さ・同じ端点でも、途中が違えば別物と判定できる。
   let key = roastPoints.length + '/' + (fanPoints ? fanPoints.length : 0) + '/'
-          + energyAssumptionKey() + '/' + tFc;
+          + energyAssumptionKey();
   for(let i = 0; i < 9; i++){
     const p = roastPoints[Math.min(Math.floor(roastPoints.length * i / 8), roastPoints.length - 1)];
     key += '|' + p[0] + ',' + p[1];
   }
   if(beanTempSeriesCache.key === key) return beanTempSeriesCache.result;
-  // その記録の豆の標高で計算する。計算の間だけ差し替えて、必ず元に戻す。
-  const saved = ENERGY.T_FC_BEAN;
-  ENERGY.T_FC_BEAN = tFc;
-  let est;
-  try { est = estimateRoastEnergy(roastPoints, fanPoints || null); }
-  finally { ENERGY.T_FC_BEAN = saved; }
+  const est = estimateRoastEnergy(roastPoints, fanPoints || null);
   const result = est
     ? est.series.filter((s, i) => i % 5 === 0 || i === est.series.length - 1)
                 .map(s => ({x: s.t, y: s.bean}))
@@ -2174,13 +2846,23 @@ function switchTab(tab){
     document.getElementById('beanPickerMain').style.display = 'none';
   }
   const isRecords = tab === 'records';
+  if(!isRecords) lastProfileSourceTab = tab;
   document.getElementById('profileBrowserSidebar').style.display = isRecords ? 'none' : '';
-  document.getElementById('recordsSidebar').style.display = isRecords ? '' : 'none';
   document.getElementById('profileEditorMain').style.display = isRecords ? 'none' : '';
   document.getElementById('recordsMain').style.display = isRecords ? '' : 'none';
+  moveHeaderPicks();
   if(isRecords){
-    populateBeanFilters();
-    loadRecordsList(document.getElementById('recordsSearchBox').value);
+    // 単独の焙煎記録を開いていた場合の後始末。ここは豆の一覧としての表示なので、
+    // 見出しと中身も戻す(戻さないと「焙煎記録(豆は未設定です)」のまま、
+    // 前に開いた記録が残り続ける)。
+    setRecordsHintForStandalone(false);
+    document.getElementById('recordsTitle').textContent = '豆を選択してください';
+    // 豆を探す一覧は「豆を選ぶ」画面に一本化してある。ここで空の画面のまま
+    // 止まらないよう、その場から開けるようにしておく。
+    document.getElementById('recordsContent').innerHTML = emptyWithAction(
+      '豆を選ぶと、その豆の情報と焙煎記録がここに出ます。',
+      '豆を選ぶ', "document.getElementById('btnPickRoastBean').click()");
+    currentRecordOpenBeanId = null;
     return;
   }
 
@@ -2365,21 +3047,24 @@ function renderRoastBeanBar(){
   const name = document.getElementById('roastBeanName');
   const pick = document.getElementById('btnPickRoastBean');
   const clear = document.getElementById('btnClearRoastBean');
+  const recs = document.getElementById('btnOpenRoastBeanRecords');
   if(!bar) return;
   const has = !!selectedBeanId;
   bar.classList.toggle('empty', !has);
-  name.textContent = has ? selectedBeanLabel : '選んでいません(選ばなくても焙煎できます)';
-  pick.textContent = has ? '別の豆にする' : '豆を選ぶ';
+  name.textContent = has ? selectedBeanLabel : '選んでいません';
+  // 見出しの右のボタンは、選ぶ前と後で役目が変わる(選び直しになる)。
+  if(pick) pick.textContent = has ? '別の豆にする' : '豆を選ぶ';
+  // 選ぶ前は「豆を選ぶ」だけ、選んだあとは「焙煎記録」「外す」だけを出す。
+  const inline = document.getElementById('btnPickRoastBeanInline');
+  if(inline) inline.style.display = has ? 'none' : '';
   clear.style.display = has ? '' : 'none';
+  if(recs) recs.style.display = has ? '' : 'none';
 }
 
 // 選び直したら、購入豆の一覧と開いている詳細の表示も合わせる。
 function refreshBeanPickUI(){
   renderRoastBeanBar();
   if(beanPickerOpen) loadBeanPickerCandidates(selectedBeanId);
-  if(currentTab === 'records'){
-    loadRecordsList(document.getElementById('recordsSearchBox').value);
-  }
   const b = document.getElementById('btnPickThisBean');
   if(b && currentRecordOpenBeanId){
     b.textContent = selectedBeanId === currentRecordOpenBeanId
@@ -2419,12 +3104,44 @@ async function loadSelectedBean(){
 // 右側に広く出して、豆と「その豆で前に焼いたプロファイル」を並べて選べるようにする。
 let beanPickerOpen = false;
 
+// 「プロファイル選択」「豆を選ぶ」は、どの画面からでも押せるようにする。
+// 3つの画面(プロファイル編集・豆を選ぶ・購入豆)は同時に出ないので、ボタンは
+// 複製せず、いま出ている画面のヘッダーへ same の要素ごと移す
+// (複製すると文言や無効状態を2か所で持つことになり、片方が取り残される)。
+// いま出ている画面へ行くだけのボタンは出さない。押しても同じ画面が出るだけで、
+// 並んでいると押せるものに見える(右上が3段に散る原因でもあった)。
+let profileSelectViewOpen = false;
+
+function updateHeaderPicks(){
+  const sel = document.getElementById('btnOpenProfileSelect');
+  const bean = document.getElementById('btnPickRoastBean');
+  if(sel) sel.style.display = (profileSelectViewOpen && !beanPickerOpen) ? 'none' : '';
+  if(bean) bean.style.display = beanPickerOpen ? 'none' : '';
+}
+
+function moveHeaderPicks(){
+  const picks = document.getElementById('headerPicks');
+  if(!picks) return;
+  const mains = ['beanPickerMain', 'recordsMain', 'profileEditorMain'];
+  const shown = mains.find(id => {
+    const el = document.getElementById(id);
+    return el && el.style.display !== 'none';
+  }) || 'profileEditorMain';
+  const host = document.getElementById(shown);
+  const slot = host.querySelector('[data-picks-slot]') || host.querySelector('.main-header');
+  if(slot && picks.parentElement !== slot) slot.appendChild(picks);
+}
+
 function openBeanPicker(){
   if(settingsOpen){ settingsOpen = false; applySidebarView(); }
   beanPickerOpen = true;
   document.getElementById('profileEditorMain').style.display = 'none';
   document.getElementById('recordsMain').style.display = 'none';
   document.getElementById('beanPickerMain').style.display = '';
+  // この画面自体が豆の一覧なので、左の一覧は畳む。出したままだと豆の一覧が
+  // 2つ並び、左を押しても開く先(購入豆の詳細)がこの画面の裏に隠れてしまう。
+  moveHeaderPicks();
+  updateHeaderPicks();
   loadBeanPickerList();
 }
 
@@ -2435,6 +3152,8 @@ function closeBeanPicker(){
   const isRecords = currentTab === 'records';
   document.getElementById('profileEditorMain').style.display = isRecords ? 'none' : '';
   document.getElementById('recordsMain').style.display = isRecords ? '' : 'none';
+  moveHeaderPicks();
+  updateHeaderPicks();
 }
 
 async function loadBeanPickerList(){
@@ -2451,18 +3170,28 @@ async function loadBeanPickerList(){
     renderBeanPickerCandidates(null);
     return;
   }
-  listEl.innerHTML = items.map(it => {
-    const meta = [it.process, it.variety, it.altitude, it.purchase_date,
-                  it.price_per_kg != null ? `${it.price_per_kg}円/kg` : '']
-      .filter(Boolean).join(' ・ ');
-    const sel = selectedBeanId === it.id ? ' selected' : '';
-    return `<div class="bp-card${sel}" data-bean-id="${it.id}">
-      <div class="bp-name">${escapeHtml(it.label)}${selectedBeanId === it.id ? ' ●' : ''}</div>
-      <div class="bp-meta">${escapeHtml(meta)}</div>
-    </div>`;
-  }).join('');
+  items = sortBeanPickerItems(items);
+  beanPickerItemsCache = items;
+  renderBeanPickerCountries(items);
+  const shown = beanPickerCountry
+    ? items.filter(it => (it.country || '(国の記入なし)') === beanPickerCountry) : [];
+  document.getElementById('beanPickerListTitle').textContent =
+    beanPickerCountry ? `豆(${beanPickerCountry})` : '豆';
+  listEl.innerHTML = shown.length ? renderBeanPickerCards(shown)
+    : '<div class="bp-empty">左の列から国を選んでください。</div>';
+  listEl.querySelectorAll('[data-edit-bean]').forEach(btn => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();          // カードの「この豆で焼く」は動かさない
+      closeBeanPicker();
+      openBeanPurchaseDetail(btn.dataset.editBean, null, 'picker');
+    };
+  });
   listEl.querySelectorAll('.bp-card').forEach(el => {
     el.onclick = async () => {
+      // 豆を選んだらこの画面に留まる。右の列に「この豆で焙煎したプロファイル」が
+      // 出るので、そこから選ぶか、別のプロファイルを選ぶかを決められる。
+      // (2026-09: 一度ここで焙煎グラフへ飛ばしたが、それでは過去にその豆で
+      //  使ったプロファイルを選べなくなるため戻した。)
       await pickRoastBean(el.dataset.beanId);
       loadBeanPickerList();
     };
@@ -2471,28 +3200,179 @@ async function loadBeanPickerList(){
   loadBeanPickerCandidates(selectedBeanId);
 }
 
+// 同じ国の豆は、国の見出しの下にまとめる。同じ産地の豆を何度も買うと
+// 「エチオピア ○○」「エチオピア △△」が並び、名前の頭が同じで見分けにくい。
+// 1件しか無い国は、見出しを付けても入れ子が深くなるだけなので、そのまま並べる。
+// いま出ている豆(「＋ 豆を追加」の初期値を作るのに使う)。
+let beanPickerItemsCache = [];
+
+// いま開いている国。まだ選んでいなければ null。
+// 豆は必ず国を選んでから選ぶ。1件しかない国を素通りできると、ある豆は
+// 国の下、ある豆は直に並ぶことになり、どこを探せばよいのか揺れる。
+let beanPickerCountry = null;
+
+// 左の列に国を並べる。国を選ぶと、真ん中の列がその国の豆だけになる。
+// 同じ産地を繰り返し買うと名前の頭が同じ豆が並び、一列では見分けにくいため。
+function renderBeanPickerCountries(items){
+  const el = document.getElementById('beanPickerCountries');
+  if(!el) return;
+  // 出てきた順(=豆の並び順)のまま国のまとまりを作る。
+  const order = [];
+  const byCountry = new Map();
+  for(const it of items){
+    const key = it.country || '(国の記入なし)';
+    if(!byCountry.has(key)){ byCountry.set(key, []); order.push(key); }
+    byCountry.get(key).push(it);
+  }
+  // 選んでいた国が無くなったら外す(検索で消えることがある)。
+  if(beanPickerCountry && !byCountry.has(beanPickerCountry)) beanPickerCountry = null;
+  // まだ選んでいなければ、いま焙煎する豆の国を開く。無ければ先頭の国。
+  // 開いた直後に右が空だと、何をすればよいのか分からないため。
+  if(!beanPickerCountry && order.length){
+    const current = items.find(it => it.id === selectedBeanId);
+    beanPickerCountry = (current && (current.country || '(国の記入なし)')) || order[0];
+  }
+
+  el.innerHTML = order.map(key => {
+    const list = byCountry.get(key);
+    const sel = (key === beanPickerCountry) ? ' selected' : '';
+    const mark = list.some(it => it.id === selectedBeanId)
+      ? '<span class="bp-country-mark">●</span>' : '';
+    return `<div class="bp-country-item${sel}" data-country="${escapeHtml(key)}">`
+      + `<span>${escapeHtml(key)}</span>${mark}`
+      + `<span class="bp-country-count">${list.length}</span></div>`;
+  }).join('');
+
+  el.querySelectorAll('.bp-country-item').forEach(item => {
+    item.onclick = () => {
+      beanPickerCountry = item.dataset.country;
+      loadBeanPickerList();
+    };
+  });
+}
+
+// 真ん中の列。国で絞ってあるときは、頭の国名を落として名前を短くする。
+function renderBeanPickerCards(items){
+  return items.map(it => {
+    const meta = [it.process, it.variety, it.altitude, it.purchase_date,
+                  it.price_per_kg != null ? `${it.price_per_kg}円/kg` : '']
+      .filter(Boolean).join(' ・ ');
+    const sel = selectedBeanId === it.id ? ' selected' : '';
+    // 国の列で絞ってあるので、名前の頭の国名は省く。
+    const label = (it.country && it.label.startsWith(it.country))
+      ? (it.label.slice(it.country.length).trim() || it.label) : it.label;
+    // カードを押すと「この豆で焼く」。購入日や価格を直したいだけのことも
+    // あるので、その行き先は別のボタンにする(押し分けられないと、選ぶ
+    // つもりが無いのに焙煎する豆が変わってしまう)。
+    return `<div class="bp-card${sel}" data-bean-id="${it.id}">
+      <div class="bp-card-row">
+        <div class="bp-card-main">
+          <div class="bp-name">${escapeHtml(label)}${selectedBeanId === it.id ? ' ●' : ''}</div>
+          <div class="bp-meta">${escapeHtml(meta)}</div>
+        </div>
+        <button class="btn small ghost bp-edit" data-edit-bean="${it.id}"
+                title="この豆の購入日・価格・標高などを直します">編集</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// 豆の並び。国は日本語なので localeCompare で「あいうえお順」にする
+// (単純な比較だと文字コード順になり、カタカナと漢字が入り混じる)。
+function sortBeanPickerItems(items){
+  const mode = (document.getElementById('beanPickerSort') || {}).value || 'country';
+  const arr = items.slice();
+  if(mode === 'purchase_desc'){
+    // 購入日が空の豆は日付順に並べようがないので、最後にまとめる。
+    arr.sort((a, b) => {
+      const x = a.purchase_date || '', y = b.purchase_date || '';
+      if(!x && !y) return (a.label || '').localeCompare(b.label || '', 'ja');
+      if(!x) return 1;
+      if(!y) return -1;
+      return y.localeCompare(x);
+    });
+  } else {
+    arr.sort((a, b) => (a.country || '').localeCompare(b.country || '', 'ja')
+      || (a.label || '').localeCompare(b.label || '', 'ja'));
+  }
+  return arr;
+}
+
+// 候補の並び。同じ値のときは焙煎回数の多い順にして、順番が入れ替わらないようにする。
+function sortBeanPickerCandidates(cands){
+  const mode = (document.getElementById('beanPickerCandSort') || {}).value || 'count';
+  const arr = cands.slice();
+  const byCount = (a, b) => (b.count || 0) - (a.count || 0);
+  if(mode === 'date'){
+    arr.sort((a, b) => String(b.last_roasted_at || '').localeCompare(String(a.last_roasted_at || ''))
+      || byCount(a, b));
+  } else if(mode === 'rating'){
+    arr.sort((a, b) => (b.best_rating || 0) - (a.best_rating || 0) || byCount(a, b));
+  } else {
+    arr.sort(byCount);
+  }
+  return arr;
+}
+
 async function loadBeanPickerCandidates(beanId){
   const el = document.getElementById('beanPickerCandidates');
   const title = document.getElementById('beanPickerCandTitle');
   if(!beanId){
     title.textContent = 'この豆で焙煎したプロファイル';
-    el.innerHTML = '<div class="bp-empty">左から豆を選ぶと、その豆で前に焼いたプロファイルが出ます。</div>';
+    el.innerHTML = '<div class="bp-empty">左から豆を選ぶと、その豆で前に焼いたプロファイルが出ます。'
+      + '<br>その豆で焼いたことが無い場合は、下から一覧へ移れます。</div>'
+      + '<button class="btn small bp-other" id="btnPickOtherProfile">別のプロファイルを選ぶ ›</button>';
+    bindPickOtherProfile();
     return;
   }
   el.innerHTML = '<div class="bp-empty">読み込み中…</div>';
   try {
     const d = await fetchJSON(`${API}/api/bean_roast_candidates?bean_purchase_id=${encodeURIComponent(beanId)}`);
     title.textContent = `「${d.bean_label}」で焙煎したプロファイル`;
+    beanPickerCandCache = d.candidates;
     renderBeanPickerCandidates(d.candidates);
   } catch(e){ el.innerHTML = '<div class="bp-empty">読み込めませんでした。</div>'; }
+}
+
+// 並び替えを変えたときに、もう一度サーバーへ聞かなくて済むよう覚えておく。
+let beanPickerCandCache = null;
+
+// すでにプロファイルを選んである状態で豆を選びに来たときは、その
+// プロファイルを候補の一番上に出す。「この豆をいま選んでいるカーブで焼く」が
+// 一番ありがちな流れなのに、候補に埋もれる(あるいは載らない)と、
+// わざわざ一覧へ回って選び直すことになる。
+function currentProfileCard(){
+  if(!currentProfile || !currentProfileSource) return '';
+  return `<div class="bp-card bp-current"
+               data-src="${escapeHtml(currentProfileSource)}"
+               data-pid="${escapeHtml(String(currentProfile.id))}" data-ok="1">
+    <div class="bp-name">${escapeHtml(currentProfile.name || '(名称不明)')}
+      <span class="bp-meta">いま選んでいる</span></div>
+    <div class="bp-roast">この豆で焼いた記録はありません。このまま焼くこともできます。</div>
+  </div>`;
+}
+
+function isCurrentProfile(c){
+  return !!currentProfile && !!currentProfileSource
+    && String(c.profile_source) === String(currentProfileSource)
+    && String(c.profile_id) === String(currentProfile.id);
 }
 
 function renderBeanPickerCandidates(candidates){
   const el = document.getElementById('beanPickerCandidates');
   if(!candidates){ el.innerHTML = ''; return; }
+  candidates = sortBeanPickerCandidates(candidates);
+  // いま選んでいるプロファイルは、並び順に関わらず先頭へ回す。
+  const mine = candidates.filter(isCurrentProfile);
+  if(mine.length) candidates = mine.concat(candidates.filter(c => !isCurrentProfile(c)));
+  // 候補があってもなくても、別のプロファイルを選ぶ道は出しておく。
+  const otherBtn = '<button class="btn small bp-other" id="btnPickOtherProfile">'
+    + '別のプロファイルを選ぶ ›</button>';
   if(!candidates.length){
-    el.innerHTML = '<div class="bp-empty">この豆での焙煎記録はまだありません。'
-      + '左のタブからプロファイルを選んでください。</div>';
+    el.innerHTML = otherBtn + currentProfileCard()
+      + '<div class="bp-empty">この豆での焙煎記録はまだありません。</div>';
+    bindPickOtherProfile();
+    bindBeanPickerCandidateClicks(el);
     return;
   }
   el.innerHTML = candidates.map(c => {
@@ -2509,32 +3389,91 @@ function renderBeanPickerCandidates(candidates){
     }).join('');
     const more = c.count > 3 ? `<div class="bp-roast">ほか${c.count - 3}回</div>` : '';
     const gone = c.available ? '' : '<div class="bp-roast">(このプロファイルは今はありません)</div>';
-    return `<div class="bp-card${c.available ? '' : ' unavailable'}"
+    const now = isCurrentProfile(c) ? ' bp-current' : '';
+    const nowMark = isCurrentProfile(c)
+      ? ' <span class="bp-meta">いま選んでいる</span>' : '';
+    return `<div class="bp-card${c.available ? '' : ' unavailable'}${now}"
                  data-src="${escapeHtml(c.profile_source)}" data-pid="${escapeHtml(String(c.profile_id))}"
                  data-ok="${c.available ? '1' : '0'}">
-      <div class="bp-name">${escapeHtml(c.profile_name || '(名称不明)')} <span class="bp-meta">${c.count}回</span></div>
+      <div class="bp-name">${escapeHtml(c.profile_name || '(名称不明)')} <span class="bp-meta">${c.count}回</span>${nowMark}</div>
       ${roasts}${more}${gone}
     </div>`;
   }).join('');
+  // 候補に載っていないときも、いま選んでいるプロファイルは先頭に出す。
+  if(!mine.length) el.insertAdjacentHTML('afterbegin', currentProfileCard());
+  // 一覧の上に置く。候補が多いとき、下に置くとスクロールしないと見えない。
+  el.insertAdjacentHTML('afterbegin', otherBtn);
+  bindPickOtherProfile();
+  bindBeanPickerCandidateClicks(el);
+}
+
+function bindBeanPickerCandidateClicks(el){
   el.querySelectorAll('.bp-card').forEach(card => {
     if(card.dataset.ok !== '1') return;
     card.onclick = async () => {
       closeBeanPicker();
       await selectProfileFromRoastRecord(card.dataset.src, card.dataset.pid);
+      // 選んだら焙煎グラフで見せる(この列から選ぶのは「これで焼く」という意味)。
+      leaveGeneratorTo('graph');
     };
   });
 }
 
+// 「別のプロファイルを選ぶ」= 豆はそのままに、プロファイル一覧へ移る。
+function bindPickOtherProfile(){
+  const b = document.getElementById('btnPickOtherProfile');
+  if(b) b.onclick = () => {
+    closeBeanPicker();
+    if(currentTab === 'records') switchTab(lastProfileSourceTab || 'preset');
+    leaveGeneratorTo('select');
+  };
+}
+
+document.getElementById('beanPickerSort').addEventListener('change', () => loadBeanPickerList());
+document.getElementById('beanPickerCandSort').addEventListener('change', () => {
+  // 覚えてある候補を並べ替えるだけ。サーバーへ聞き直さない。
+  if(beanPickerCandCache) renderBeanPickerCandidates(beanPickerCandCache);
+});
 document.getElementById('btnPickRoastBean').onclick = openBeanPicker;
+document.getElementById('btnPickRoastBeanInline').onclick = openBeanPicker;
+// どの画面から押しても、プロファイル一覧のあるプロファイル編集画面へ戻してから開く。
+// 戻さないと、一覧は閉じている画面の中で表示されることになり、何も起きないように見える。
+// 選んだプロファイルを焙煎グラフで開く。1クリックでは移動しない作りなので、
+// 選んだあとの行き先をボタンとしても出しておく。
+document.getElementById('btnGoGraphFromSelect').onclick = () => leaveGeneratorTo('graph');
+
+document.getElementById('btnOpenProfileSelect').onclick = () => {
+  closeBeanPicker();
+  if(currentTab === 'records') switchTab(lastProfileSourceTab || 'preset');
+  leaveGeneratorTo('select');
+};
 document.getElementById('btnClearRoastBean').onclick = () => pickRoastBean(null);
 document.getElementById('btnBeanPickerClose').onclick = closeBeanPicker;
 document.getElementById('btnBeanPickerClear').onclick = async () => {
   await pickRoastBean(null);
   loadBeanPickerList();
 };
+// 国まで、あるいは豆まで選んである状態で押したときは、そこまでの内容を
+// 新しい豆の入力欄に入れておく。同じ産地の豆を買い足すことが多く、
+// 毎回同じ国名や農園名を打ち直すのは手間なので。
 document.getElementById('btnBeanPickerAdd').onclick = () => {
+  // 「いま焙煎する豆」ではなく、この画面で開いている国の中の豆を見る
+  // (別の国を開いているのに、前に選んだ豆の内容が入ると戸惑う)。
+  const bean = beanPickerItemsCache.find(it => it.id === selectedBeanId
+    && (it.country || '(国の記入なし)') === beanPickerCountry);
+  let prefill = null;
+  if(bean){
+    prefill = {
+      country: bean.country || '', region: bean.region || '',
+      process: bean.process || '', variety: bean.variety || '',
+      crop_year: bean.crop_year || '', source: bean.source || '',
+      purchase_date: '', price: '', weight_kg: '', memo: '',
+    };
+  } else if(beanPickerCountry && beanPickerCountry !== '(国の記入なし)'){
+    prefill = {country: beanPickerCountry};
+  }
   closeBeanPicker();
-  openBeanPurchaseDetail(null);   // 「購入豆」タブの登録画面へ
+  openBeanPurchaseDetail(null, prefill, 'picker');   // 「購入豆」タブの登録画面へ
 };
 let beanPickerSearchTimer = null;
 document.getElementById('beanPickerSearch').oninput = () => {
@@ -2542,49 +3481,6 @@ document.getElementById('beanPickerSearch').oninput = () => {
   beanPickerSearchTimer = setTimeout(loadBeanPickerList, 250);
 };
 
-async function loadRecordsList(q){
-  const listEl = document.getElementById('recordsList');
-  listEl.innerHTML = '<div style="padding:12px; color:var(--text-muted); font-size:12px;">読み込み中…</div>';
-  const params = new URLSearchParams({q: q || ''});
-  const country = document.getElementById('beanCountryFilter').value;
-  const process = document.getElementById('beanProcessFilter').value;
-  const variety = document.getElementById('beanVarietyFilter').value;
-  const cropYear = document.getElementById('beanCropYearFilter').value;
-  if(country) params.set('country', country);
-  if(process) params.set('process', process);
-  if(variety) params.set('variety', variety);
-  if(cropYear) params.set('crop_year', cropYear);
-  const items = await fetchJSON(`/api/bean_purchases?${params.toString()}`);
-  if(!items.length){
-    listEl.innerHTML = '<div style="padding:12px; color:var(--text-muted); font-size:12px;">まだありません。「＋ 豆を追加」から作成してください。</div>';
-    return;
-  }
-  const sorted = sortBeanPurchases(items, document.getElementById('beanSortFilter').value);
-
-  // 生産年違いの同じ豆(country・産地・品種・精製方法・購入先が一致)は、
-  // 一覧が増えても見つけやすいよう、親(共通情報)+子(生産年ごと)のツリーにまとめる。
-  const groups = [];
-  const groupByKey = new Map();
-  for(const it of sorted){
-    if(!groupByKey.has(it.group_key)){
-      const group = {items: []};
-      groupByKey.set(it.group_key, group);
-      groups.push(group);
-    }
-    groupByKey.get(it.group_key).items.push(it);
-  }
-
-  listEl.innerHTML = groups.map(g => {
-    if(g.items.length === 1) return renderBeanListItem(g.items[0], false);
-    const first = g.items[0];
-    const parentLabel = [first.country, first.region, first.source].filter(Boolean).join(' ') || '(名称未設定)';
-    const children = g.items.map(it => renderBeanListItem(it, true)).join('');
-    return `<div class="bean-tree-group">
-      <div class="bean-tree-parent">${escapeHtml(parentLabel)}<span class="bean-tree-count">${g.items.length}件</span></div>
-      <div class="bean-tree-children">${children}</div>
-    </div>`;
-  }).join('');
-}
 
 function renderBeanListItem(it, isChild){
   const metaParts = [];
@@ -2612,71 +3508,19 @@ function renderBeanListItem(it, isChild){
   </div>`;
 }
 
-function sortBeanPurchases(items, sortKey){
-  const arr = [...items];
-  if(sortKey === 'purchase_date_asc'){
-    arr.sort((a, b) => (a.purchase_date || '').localeCompare(b.purchase_date || ''));
-  } else if(sortKey === 'price_per_kg_asc'){
-    arr.sort((a, b) => (a.price_per_kg ?? Infinity) - (b.price_per_kg ?? Infinity));
-  } else if(sortKey === 'price_per_kg_desc'){
-    arr.sort((a, b) => (b.price_per_kg ?? -Infinity) - (a.price_per_kg ?? -Infinity));
-  }
-  // purchase_date_desc(既定)はサーバー側で既に新しい順にソート済みのため、そのまま使う。
-  return arr;
-}
 
-// 購入豆の絞り込み候補も、他の絞り込み・検索語に連動させて、実際に該当する
-// 豆がある値だけを出す(プロファイル側と同じ考え方。サーバー側の
-// /api/bean_purchase_filter_options 参照)。
-async function populateBeanFilters(){
-  const setOptions = (id, values) => {
-    const sel = document.getElementById(id);
-    const current = sel.value;
-    const placeholder = sel.options[0];
-    sel.innerHTML = '';
-    sel.appendChild(placeholder);
-    values.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v; opt.textContent = v;
-      sel.appendChild(opt);
-    });
-    if(values.includes(current)) sel.value = current;
-  };
-  const params = new URLSearchParams();
-  const searchEl = document.getElementById('recordsSearchBox');
-  if(searchEl && searchEl.value) params.set('q', searchEl.value);
-  for(const [id, key] of [['beanCountryFilter','country'], ['beanProcessFilter','process'],
-                          ['beanVarietyFilter','variety'], ['beanCropYearFilter','crop_year']]){
-    const v = document.getElementById(id).value;
-    if(v) params.set(key, v);
-  }
-  const opts = await fetchJSON(`${API}/api/bean_purchase_filter_options?${params.toString()}`);
-  setOptions('beanCountryFilter', opts.country || []);
-  setOptions('beanProcessFilter', opts.process || []);
-  setOptions('beanVarietyFilter', opts.variety || []);
-  setOptions('beanCropYearFilter', opts.crop_year || []);
-  updateBeanFilterStates();
-}
 
-let beanFilterOptionsTimer = null;
-document.getElementById('recordsSearchBox').oninput = (e) => {
-  loadRecordsList(e.target.value);
-  clearTimeout(beanFilterOptionsTimer);
-  beanFilterOptionsTimer = setTimeout(populateBeanFilters, 350);
-};
-document.getElementById('btnAddRecord').onclick = () => openBeanPurchaseDetail(null);
-['beanCountryFilter', 'beanProcessFilter', 'beanVarietyFilter', 'beanCropYearFilter', 'beanSortFilter'].forEach(id => {
-  document.getElementById(id).addEventListener('change', () => {
-    loadRecordsList(document.getElementById('recordsSearchBox').value);
-    // 並び順以外を変えた時は、他の絞り込みの候補も今の状態に合わせて作り直す。
-    if(id !== 'beanSortFilter') populateBeanFilters();
-  });
-});
 
 // ------------------------------------------------------------
 // 豆の購入記録
 // ------------------------------------------------------------
-async function openBeanPurchaseDetail(id, prefill){
+// この画面をどこから開いたか。保存したあとの戻り先に使う。
+// 「豆を選ぶ」から編集しに来た場合、保存しても同じ画面が出続けて、
+// 選ぶ作業に戻る道がその場で途切れていた。
+let beanDetailReturnTo = null;
+
+async function openBeanPurchaseDetail(id, prefill, returnTo){
+  beanDetailReturnTo = returnTo || null;
   switchTab('records');
   currentRecordOpenBeanId = id;
   compareRoastRecordIds = [];
@@ -2685,7 +3529,15 @@ async function openBeanPurchaseDetail(id, prefill){
   const data = id ? await fetchJSON(`/api/bean_purchases/${id}`)
     : (prefill || {country:'', region:'', process:'', variety:'', purchase_date:'', crop_year:'', source:'', weight_kg:'', price:'', memo:''});
   currentRecordOpenBeanGroupKey = id ? data.group_key : null;
-  document.getElementById('recordsTitle').textContent = id ? _beanLabel(data) : (prefill ? `${_beanLabel(prefill)}(別の購入日で新規登録)` : '新しい豆を追加');
+  // 国だけ引き継いだのか、豆の中身まで引き継いだのかで見出しを変える。
+  // 国だけなのに「別の購入日で新規登録」と出ると、何を複製したのか分からない。
+  const carriedBean = !!prefill && !!(prefill.region || prefill.variety
+                                      || prefill.process || prefill.source);
+  document.getElementById('recordsTitle').textContent =
+    id ? _beanLabel(data)
+       : carriedBean ? `${_beanLabel(prefill)}(別の購入日で新規登録)`
+       : (prefill && prefill.country) ? `新しい豆を追加(${prefill.country})`
+       : '新しい豆を追加';
 
   // 以前に別の豆で入力した値を、そのまま選んで入力できるようにする候補一覧。
   // datalistを使うので、候補から選ぶことも、これまで通り自由に入力することもできる。
@@ -2731,7 +3583,14 @@ async function openBeanPurchaseDetail(id, prefill){
   };
   const pricePerKgText = data.price_per_kg != null ? `${data.price_per_kg} 円/kg` : '';
 
+  // 豆を開いている間は、一覧の選び方の案内は要らない(単独の焙煎記録と同じ扱い)。
+  setRecordsHintForStandalone(true);
   document.getElementById('recordsContent').innerHTML = `
+    <!-- 豆の情報と焙煎記録は、縦に積むと記録が画面の下に隠れてスクロールが要る。
+         横に並べて、どちらも一度に見えるようにする。選んだ記録のグラフだけは
+         幅が要るので、2列の下に全幅で出す。 -->
+    <div class="bean-detail-cols">
+    <div class="bean-detail-col">
     <div class="bean-info-edit-grid">
       ${field('country', '国', '例: コロンビア')}
       ${field('region', '産地', '例: ウイラ')}
@@ -2760,10 +3619,10 @@ async function openBeanPurchaseDetail(id, prefill){
     </div>
     <label class="bean-info-field bean-info-note">
       <span>メモ</span>
-      <!-- rows=7 は「3行のときの欄の高さ(62px)のちょうど倍(126px)」になる行数。
-           上下の余白と枠線(計14px)は行数に比例しないため、単純に3→6行では
-           1.77倍にしかならない。 -->
-      <textarea data-field="memo" rows="7" placeholder="自由記述のメモ">${escapeHtml(data.memo || '')}</textarea>
+      <!-- 横並びにして左の列が狭くなったぶん、メモは4行にする(7行だと空欄が
+           縦に伸びて、下の保存ボタンまで遠くなる)。長い文章は欄の中で
+           スクロールできる。 -->
+      <textarea data-field="memo" rows="4" placeholder="自由記述のメモ">${escapeHtml(data.memo || '')}</textarea>
     </label>
     <div class="record-actions">
       <button class="btn small primary" id="btnSaveBeanPurchase">保存</button>
@@ -2772,19 +3631,31 @@ async function openBeanPurchaseDetail(id, prefill){
       ${id ? '<button class="btn small" id="btnDuplicateBeanPurchase" style="width:auto;">＋ 別の購入日で登録</button>' : ''}
       ${id ? '<button class="btn small record-delete" id="btnDeleteBeanPurchase">この豆を削除</button>' : ''}
     </div>
+    </div>
     ${id ? `
-    <div class="record-sub-list">
-      <h4>この豆の焙煎記録(生産年違いの購入分も含みます。2件チェックすると温度ログを重ねて比較できます)</h4>
-      <div id="beanRoastRecordList"></div>
-      <button class="btn small" id="btnAddManualRoastRecord" style="width:auto; margin-top:8px;">＋ 過去の焙煎記録を追加</button>
-      <div class="record-mini-chart" id="beanCompareChartWrap" style="display:none;">
-        <canvas id="beanCompareChart" height="90"></canvas>
+    <div class="bean-detail-col">
+      <div class="record-sub-list">
+        <!-- 列が狭いので、見出しは短く。補足はホバーで読めるようにする。 -->
+        <h4 title="生産年違いの購入分も含みます。2件チェックすると温度ログを重ねて比較できます">この豆の焙煎記録</h4>
+        <div id="beanRoastRecordList"></div>
+        <button class="btn small" id="btnAddManualRoastRecord" style="width:auto; margin-top:8px;">＋ 過去の焙煎記録を追加</button>
       </div>
-      <div id="beanRoastRecordDetail"></div>
     </div>` : ''}
+    </div>
+    ${id ? `
+    <!-- 選んだ記録のグラフと詳細。2列の下に、幅いっぱいで出す。 -->
+    <div class="record-mini-chart" id="beanCompareChartWrap" style="display:none;">
+      <canvas id="beanCompareChart" height="90"></canvas>
+    </div>
+    <div id="beanRoastRecordDetail"></div>` : ''}
   `;
   document.getElementById('btnSaveBeanPurchase').onclick = () => saveBeanPurchase(id);
-  if(id) document.getElementById('btnAddManualRoastRecord').onclick = () => renderAddPastRoastRecordPanel(id);
+  if(id){
+    document.getElementById('btnAddManualRoastRecord').onclick = () => renderAddPastRoastRecordPanel(id);
+    // 紐付いていない記録が何件あるかをボタンに出す。件数が見えないと、
+    // ここから紐付けられること自体に気づけない。
+    showUnlinkedCountOnAddButton();
+  }
   if(id) document.getElementById('btnDeleteBeanPurchase').onclick = () => deleteBeanPurchase(id);
   if(id) document.getElementById('btnDuplicateBeanPurchase').onclick = () => duplicateAsNewPurchase(data);
   if(id) document.getElementById('btnPickThisBean').onclick =
@@ -2810,12 +3681,99 @@ async function loadBeanRoastRecordList(groupKey){
     const checked = compareRoastRecordIds.includes(r.id) ? ' checked' : '';
     // グラフ表示中の記録には .selected を付け、どのログを見ているか分かるようにする。
     const sel = currentInlineRoastRecordId === r.id ? ' selected' : '';
+    const full = `${cropYear}${r.profile_name || ''} ・ ${when}`;
     return `<div class="rr-item${sel}" data-record-id="${r.id}" style="display:flex; align-items:center; gap:8px; cursor:default;">
       <input type="checkbox" data-compare-id="${r.id}" onchange="toggleCompareRoastRecord('${r.id}', this.checked)"${checked}>
-      <span class="rr-label" style="flex:1; cursor:pointer;" onclick="showRoastRecordInline('${r.id}')">${cropYear}${escapeHtml(r.profile_name || '')} ${stars} ・ ${escapeHtml(when)}</span>
-      <button class="btn small" style="width:auto;" title="この豆との紐付けを解除します(記録は残ります)" onclick="unlinkRoastRecordFromBean('${r.id}')">紐付けを解除</button>
+      <span class="rr-label" style="flex:1; cursor:pointer;" title="${escapeHtml(full)}" onclick="showRoastRecordInline('${r.id}')">
+        <span class="rr-title">${escapeHtml(r.profile_name || '(プロファイル不明)')} ${stars}</span>
+        <span class="rr-when">${cropYear}${escapeHtml(when)}</span>
+      </span>
+      <button class="btn small" style="width:auto; flex:0 0 auto;" title="この豆との紐付けを解除します(記録は残ります)" onclick="unlinkRoastRecordFromBean('${r.id}')">紐付けを解除</button>
     </div>`;
   }).join('');
+}
+
+// 豆に紐付いていない焙煎記録を、購入豆の一覧から選んで結びつける。
+let linkBeanTargetId = null;
+let linkBeanCache = [];
+
+async function openLinkBeanPicker(recordId){
+  linkBeanTargetId = recordId;
+  const overlay = document.getElementById('linkBeanOverlay');
+  const listEl = document.getElementById('linkBeanList');
+  const label = document.getElementById('linkBeanRecordLabel');
+  document.getElementById('linkBeanSearch').value = '';
+  listEl.innerHTML = '<div class="list-placeholder"><span class="spinner"></span>読み込み中…</div>';
+  overlay.style.display = 'flex';
+  try {
+    const rec = await fetchJSON(`/api/roast_records/${recordId}`);
+    label.textContent = `${rec.profile_name || '(プロファイル不明)'} ・ ${fmtRoastedAt(rec.roasted_at) || ''}`;
+  } catch(e){ label.textContent = ''; }
+  try {
+    linkBeanCache = await fetchJSON('/api/bean_purchases');
+  } catch(e){
+    listEl.innerHTML = '<div class="list-placeholder">豆の一覧を読めませんでした。</div>';
+    return;
+  }
+  renderLinkBeanList('');
+}
+
+function renderLinkBeanList(query){
+  const listEl = document.getElementById('linkBeanList');
+  const q = (query || '').trim().toLowerCase();
+  const items = linkBeanCache.filter(b => !q || _beanLabel(b).toLowerCase().includes(q));
+  if(!items.length){
+    listEl.innerHTML = '<div class="list-placeholder">'
+      + (linkBeanCache.length ? '見つかりません。' : '登録された豆がありません。') + '</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  for(const b of items){
+    const row = document.createElement('button');
+    row.className = 'btn small ghost';
+    row.style.cssText = 'width:100%; text-align:left; margin-bottom:4px;';
+    row.textContent = _beanLabel(b);
+    row.onclick = () => linkRecordToBean(b.id);
+    listEl.appendChild(row);
+  }
+}
+
+async function linkRecordToBean(beanId){
+  if(!linkBeanTargetId) return;
+  await fetch(`${API}/api/roast_records/${linkBeanTargetId}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({bean_purchase_id: beanId}),
+  });
+  closeLinkBeanPicker();
+  logNotice('焙煎記録を豆に紐付けました。');
+  loadRoastHistoryTab();
+  loadTimelineRecords();
+}
+
+function closeLinkBeanPicker(){
+  linkBeanTargetId = null;
+  document.getElementById('linkBeanOverlay').style.display = 'none';
+}
+
+document.getElementById('btnLinkBeanCancel').onclick = closeLinkBeanPicker;
+document.getElementById('linkBeanOverlay').onclick = (e) => {
+  if(e.target === document.getElementById('linkBeanOverlay')) closeLinkBeanPicker();
+};
+document.getElementById('linkBeanSearch').addEventListener('input', (e) => {
+  renderLinkBeanList(e.target.value);
+});
+
+// 「＋ 過去の焙煎記録を追加」に、まだどの豆にも紐付いていない記録の件数を出す。
+async function showUnlinkedCountOnAddButton(){
+  const btn = document.getElementById('btnAddManualRoastRecord');
+  if(!btn) return;
+  try {
+    const records = await fetchJSON('/api/roast_records?unlinked=true');
+    if(!document.body.contains(btn)) return;      // 別の豆に移っていたら触らない
+    btn.textContent = records.length
+      ? `＋ 過去の焙煎記録を追加(未紐付け ${records.length}件)`
+      : '＋ 過去の焙煎記録を追加';
+  } catch(e){ /* 出せなくても、押せば一覧は見られる */ }
 }
 
 async function unlinkRoastRecordFromBean(recordId){
@@ -2884,12 +3842,18 @@ async function saveBeanPurchase(id){
   status.textContent = res.ok ? '保存しました' : (data && data.error ? data.error : '保存に失敗しました');
   setTimeout(() => { status.textContent = ''; }, res.ok ? 2000 : 5000);
   if(!res.ok) return;
-  await populateBeanFilters();
-  loadRecordsList(document.getElementById('recordsSearchBox').value);
+  // 「豆を選ぶ」から来ていれば、保存したらそこへ戻す。直したかったのは
+  // 豆の中身で、行きたい先は豆選びの続きだから。
+  if(beanDetailReturnTo === 'picker'){
+    beanDetailReturnTo = null;
+    logNotice('保存しました。豆を選ぶ画面に戻ります。');
+    openBeanPicker();
+    return;
+  }
   // 保存後は画面を再読み込みする(新規作成時だけでなく、既存の編集時も)。
   // 編集時にこれを省くと、フォームに残ったままの古いdataを参照するボタン
   // (「別の購入日で登録」等)が更新前の値のまま古くなってしまうため。
-  if(res.ok) openBeanPurchaseDetail(data.id);
+  openBeanPurchaseDetail(data.id);
 }
 
 async function deleteBeanPurchase(id){
@@ -2899,8 +3863,6 @@ async function deleteBeanPurchase(id){
   document.getElementById('recordsTitle').textContent = '記録を選択してください';
   currentRecordOpenBeanId = null;
   currentRecordOpenBeanGroupKey = null;
-  await populateBeanFilters();
-  loadRecordsList(document.getElementById('recordsSearchBox').value);
 }
 
 // ------------------------------------------------------------
@@ -2979,7 +3941,7 @@ async function renderManualRoastRecordForm(beanId){
         </select>
       </label>
       <label class="bean-info-field"><span>プロファイル</span><select id="mrrProfileId"></select></label>
-      <label class="bean-info-field"><span>焙煎日時</span><input type="datetime-local" id="mrrRoastedAt" value="${new Date().toISOString().slice(0, 16)}"></label>
+      <label class="bean-info-field"><span>焙煎日時</span><input type="datetime-local" id="mrrRoastedAt" value="${toDateTimeLocalValue(new Date().toISOString())}"></label>
       <label class="bean-info-field">
         <span>評価</span>
         <select id="mrrRating">
@@ -3036,8 +3998,40 @@ async function saveManualRoastRecord(beanId){
   setTimeout(() => { if(document.getElementById('manualRoastRecordSaveStatus')) document.getElementById('manualRoastRecordSaveStatus').textContent = ''; }, 2000);
 }
 
+// 焙煎ログの編集画面を開く。豆が紐付いていればその豆の下に、無ければ単独で。
+//
+// 入口はいくつもある(豆の情報タブ、焙煎履歴タブの行、グラフに重ねたときのバー)。
+// 重量やハゼ時刻を入れると豆温度モデルの学習に使われるので、思い立ったときに
+// すぐ入れられるほうがよい。どこから開いても同じ編集画面に行き着く。
+async function openRoastRecordEditor(id){
+  try {
+    const rec = await fetchJSON(`/api/roast_records/${id}`);
+    if(rec.bean_purchase_id){
+      await openBeanPurchaseDetail(rec.bean_purchase_id);
+      await showRoastRecordInline(id);
+      const el = document.getElementById('beanRoastRecordDetail');
+      if(el) el.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    } else {
+      await openStandaloneRoastRecord(id);
+    }
+  } catch(e){
+    logNotice('焙煎記録を開けませんでした: ' + e, 'error');
+  }
+}
+
 // 紐づく豆がまだ無い焙煎記録を、豆の枠なしで単独表示する
 // (プロファイル側の焙煎履歴タブから、豆未設定の記録を開いた場合のフォールバック)
+// 「購入豆」の画面は、豆の一覧を出す使い方と、1件の焙煎記録を開く使い方の
+// 両方に使っている。静的な案内は前者向けなので、後者の間は隠す。
+function setRecordsHintForStandalone(on){
+  // 案内は「左の一覧から豆を選んでください」という内容。何か開いている間
+  // (豆の詳細・単独の焙煎記録)は用が済んでいるので隠す。
+  const hint = document.querySelector('#recordsMain .hint');
+  if(hint) hint.style.display = on ? 'none' : '';
+}
+
+
+
 async function openStandaloneRoastRecord(id){
   // この記録を削除した際、購入豆タブ(豆が未設定のため何も表示できない)に
   // 留まってしまわないよう、元のプロファイル・タブを覚えておいて戻れるようにする。
@@ -3045,13 +4039,25 @@ async function openStandaloneRoastRecord(id){
   const returnProfileId = currentProfile ? currentProfile.id : null;
   switchTab('records');
   currentRecordOpenBeanId = null;
+  // この画面は「一覧から豆を選ぶ」ためのものではなく、1件の焙煎記録を開いている。
+  // 静的な案内(豆の選び方)はこの間だけ隠し、記録に合った見出しにする。
+  setRecordsHintForStandalone(true);
   document.getElementById('recordsTitle').textContent = '焙煎記録(豆は未設定です)';
   document.getElementById('recordsContent').innerHTML = '<div id="standaloneRoastRecordDetail"></div>';
   // 豆を紐付けて保存すると、紐付け元のプロファイルの「焙煎履歴」タブの一覧
   // (bean_label表示)が古いまま残ってしまうため、保存のたびに更新する。
   await renderRoastRecordDetail(
     id, document.getElementById('standaloneRoastRecordDetail'),
-    () => loadRoastHistoryTab(),
+    async () => {
+      // 豆を紐付けて保存しても見出しが「豆は未設定です」のままだったので、
+      // 保存のたびに読み直して反映する。
+      try {
+        const rec = await fetchJSON(`/api/roast_records/${id}`);
+        document.getElementById('recordsTitle').textContent =
+          rec.bean_label ? `焙煎記録: ${rec.bean_label}` : '焙煎記録(豆は未設定です)';
+      } catch(e){ /* 見出しが古いままでも、保存自体は済んでいる */ }
+      loadRoastHistoryTab();
+    },
     () => {
       // 削除後は、元のプロファイルの「焙煎履歴」タブ表示に戻す。
       if(returnSource){
@@ -3076,7 +4082,7 @@ async function renderRoastRecordDetail(id, container, onSaved, onDeleted){
   const metricsHtml = (data.duration || data.max_temp || data.dev_time) ? `
     <div class="metrics-row" style="margin:10px 0;">
       <div class="metric-card"><div class="metric-label">焙煎時間</div><div class="metric-value mono small">${data.duration ? fmtMMSS(data.duration) : '--'}</div></div>
-      <div class="metric-card"><div class="metric-label">最高温度</div><div class="metric-value mono small">${data.max_temp ?? '--'}℃</div></div>
+      <div class="metric-card"><div class="metric-label">最高温度</div><div class="metric-value mono small">${data.max_temp ?? '--'}°C</div></div>
       <div class="metric-card"><div class="metric-label">Development Time</div><div class="metric-value mono small" id="rrDevTimeValue">${data.dev_time ? fmtMMSS(data.dev_time) : '--'}</div></div>
     </div>` : '';
   // 現在Development Timeの計算に使われている1ハゼ時刻(手動記録・自動推定を問わず)を
@@ -3084,20 +4090,59 @@ async function renderRoastRecordDetail(id, container, onSaved, onDeleted){
   const fcStart = devTimeStartForRecord(data.roast_curve || [], data);
   const fcTimeValue = fcStart ? fmtMMSS(fcStart.t) : '';
   const scTimeValue = data.sc_time != null ? fmtMMSS(data.sc_time) : '';
+  const greenValue = data.green_g != null ? data.green_g : '';
+  const roastedValue = data.roasted_g != null ? data.roasted_g : '';
+  // この記録が豆温度モデルの学習に使えるか。使えない場合は何が足りないかを出す。
+  // (判定はサーバー側 roastlib/learning.py と揃える)
+  const lackFc = !fcStart || data.fc_time_inferred;
+  const lackWeight = !(Number(data.green_g) > 0 && Number(data.roasted_g) > 0);
+  const learnNote = (!(data.roast_curve || []).length) ? '実測カーブが無いため学習には使えません'
+    : lackFc ? '1ハゼは「ハゼた!」ボタンの実測が要ります(自動推定は学習に使いません)'
+    : lackWeight ? '焙煎前後の重量を入れると、この焙煎が豆温度モデルの学習に使われます'
+    : 'この焙煎は豆温度モデルの学習に使われています';
+  const learnOk = !((data.roast_curve || []).length === 0 || lackFc || lackWeight);
 
-  const hasProfileLink = data.profile_source && data.profile_id != null;
+  // プロファイルは消されていることがある(ログは残す作りのため)。その場合は
+  // リンクにせず、消えている旨を添える。ログのグラフと数値はこの画面で見られる。
+  const hasProfileLink = data.profile_source && data.profile_id != null && data.profile_available !== false;
+  const goneNote = (data.profile_source && data.profile_id != null && data.profile_available === false)
+    ? ' <span class="rr-profile-gone">(このプロファイルは削除済み。このログは残ります)</span>' : '';
   const profileNameHtml = hasProfileLink
     ? `<h4 class="rr-profile-link" style="margin:14px 0 8px;" onclick="selectProfileFromRoastRecord('${data.profile_source}', '${data.profile_id}')" title="クリックしてこのプロファイルを選択・送信可能な状態にします">${escapeHtml(data.profile_name || '(プロファイル不明)')} ›</h4>`
-    : `<h4 style="margin:14px 0 8px; color:var(--text);">${escapeHtml(data.profile_name || '(プロファイル不明)')}</h4>`;
+    : `<h4 style="margin:14px 0 8px; color:var(--text);">${escapeHtml(data.profile_name || '(プロファイル不明)')}${goneNote}</h4>`;
 
   container.innerHTML = `
-    ${profileNameHtml}
+    <!-- この画面を開く目的は、まず実測値を入れること(「詳細」から来る)。
+         入れる欄を一番上に置き、保存・キャンセルも同じ枠に入れる。
+         以前は実測値が中ほどにあり、保存はグラフの下だった。 -->
+    <div class="rr-meas rr-meas-primary">
+      <div class="rr-meas-head">
+        <div class="rr-meas-title">実測値(入れると豆温度モデルの学習に使われます)</div>
+        <span class="spacer"></span>
+        <span id="roastRecordInlineSaveStatus" class="bean-info-save-status"></span>
+        <button class="btn small primary" id="btnSaveRoastRecordInline">保存</button>
+        <button class="btn small" id="btnCancelRoastRecordInline"
+                title="入力を捨てて、保存されている内容に戻します">キャンセル</button>
+      </div>
+      <!-- 実測値は4つとも短い数値なので、横一列に詰める。1つずつ広い欄に並べると
+           間延びして、どれが実測でどれが設定なのかも分かりにくかった。 -->
+      <div class="rr-meas-grid">
+        <label><span>1ハゼ</span><span class="rr-meas-field"><input type="text" data-field="fc_time_mmss" value="${fcTimeValue}" placeholder="6:40" title="「ハゼた!」ボタンの実測。空欄にすると自動推定に戻ります"><i>m:ss</i></span></label>
+        <label><span>2ハゼ</span><span class="rr-meas-field"><input type="text" data-field="sc_time_mmss" value="${scTimeValue}" placeholder="9:10" title="2ハゼの手前で終わるプロファイルなら空欄で構いません"><i>m:ss</i></span></label>
+        <label><span>焙煎前</span><span class="rr-meas-field"><input type="number" step="0.1" min="0" data-field="green_g" value="${greenValue}" placeholder="50"><i>g</i></span></label>
+        <label><span>焙煎後</span><span class="rr-meas-field"><input type="number" step="0.1" min="0" data-field="roasted_g" value="${roastedValue}" placeholder="42.0" title="冷めてから量った重量"><i>g</i></span></label>
+      </div>
+      <div class="rr-learn-note ${learnOk ? 'ok' : ''}">${learnNote}</div>
+    </div>
+    <div class="record-actions record-actions-top">
+      ${profileNameHtml}
+      <span class="spacer"></span>
+      <button class="btn small record-delete" id="btnDeleteRoastRecordInline">この記録を削除</button>
+    </div>
     <div class="bean-info-edit-grid">
       <label class="bean-info-field"><span>豆</span><select data-field="bean_purchase_id">${beanOptions}</select></label>
       <label class="bean-info-field"><span>焙煎日時</span><input type="datetime-local" data-field="roasted_at" value="${whenValue}"></label>
       <label class="bean-info-field"><span>評価</span><select data-field="rating">${ratingOptions}</select></label>
-      <label class="bean-info-field"><span>1ハゼ時間(m:ss)</span><input type="text" data-field="fc_time_mmss" value="${fcTimeValue}" placeholder="例: 6:40" title="空欄にすると、1ハゼ設定温度からの自動推定に戻ります"></label>
-      <label class="bean-info-field"><span>2ハゼ時間(m:ss)</span><input type="text" data-field="sc_time_mmss" value="${scTimeValue}" placeholder="例: 9:10" title="焙煎中に「2ハゼ確認」を押していれば自動で入ります。豆温度モデルの学習に使われます"></label>
     </div>
     ${metricsHtml}
     <label class="bean-info-field bean-info-note">
@@ -3109,13 +4154,11 @@ async function renderRoastRecordDetail(id, container, onSaved, onDeleted){
     <div class="record-mini-chart" id="recordMiniChartWrap" style="display:none;">
       <canvas id="recordMiniChart" height="80"></canvas>
     </div>
-    <div class="record-actions">
-      <button class="btn small primary" id="btnSaveRoastRecordInline">保存</button>
-      <span id="roastRecordInlineSaveStatus" class="bean-info-save-status"></span>
-      <button class="btn small record-delete" id="btnDeleteRoastRecordInline">この記録を削除</button>
-    </div>
   `;
   document.getElementById('btnSaveRoastRecordInline').onclick = () => saveRoastRecordInline(id, container, onSaved, data);
+  // キャンセルは、保存されている内容で組み直す(入力中の値を捨てる)。
+  document.getElementById('btnCancelRoastRecordInline').onclick =
+    () => renderRoastRecordDetail(id, container, onSaved, onDeleted);
   document.getElementById('btnDeleteRoastRecordInline').onclick = () => deleteRoastRecordInline(id, container, onDeleted || onSaved);
   if(data.roast_curve && data.roast_curve.length){
     renderRecordMiniChart(data.roast_curve, data);
@@ -3146,13 +4189,38 @@ function timeAtTempCrossing(curve, temp){
 // ①「ハゼた!」ボタン実測(fc_time かつ fc_time_inferred=false)を最優先。
 // ②それが無ければ、fc_time(1ハゼ設定温度からの推定)、
 // ③さらに無ければ、その場で1ハゼ設定温度(guideTemps.firstCrack)への到達時刻で代用。
+// 1ハゼ時刻。「ハゼた!」ボタンの実測があればそれを使う。無ければ推し量る。
+//
+// 推し量り方を、吸入温度の横切りから豆温度モデルに変えた(2026-09)。
+// 吸入温度が設定値を横切った時刻で見ていたが、同じ吸入温度でもプロファイルの
+// 形で豆の状態は全く違う。実測5本で比べると、吸入温度方式は2本で「到達せず」
+// (浅煎り用は222℃までしか上がらないが7分12秒に爆ぜている)、残る2本も45〜94秒
+// 外した。モデルは全て20秒以内だった。
+//
+// 循環の心配はない。自動で入った値(inferred)は学習に使わないので、モデルが
+// 自分の予測を学び直す経路は無い。推定に使うのは安全で、学習に使うのが危険。
 function devTimeStartForRecord(curve, record){
   const rec = record || {};
   if(rec.fc_time != null && !rec.fc_time_inferred) return {t: rec.fc_time, inferred: false};
   if(rec.fc_time != null) return {t: rec.fc_time, inferred: true};
+  const modelled = modelCrackStart(curve, rec);
+  if(modelled != null) return {t: modelled, inferred: true};
+  // モデルが1ハゼに届かない場合だけ、従来どおり吸入温度の横切りで見る
   const crossed = timeAtTempCrossing(curve, guideTemps.firstCrack);
   if(crossed != null) return {t: crossed, inferred: true};
   return null;
+}
+
+// 実測カーブを豆温度モデルに通し、1ハゼ(細胞の5%が壊れる時点)の時刻を出す。
+function modelCrackStart(curve, rec){
+  if(!curve || curve.length < 2) return null;
+  try {
+    const roast = curve.map(p => [p[0], p[1]]);
+    const fan = (rec && rec.fan_curve && rec.fan_curve.length)
+      ? rec.fan_curve.map(p => [p[0], p[1]]) : null;
+    const r = estimateRoastEnergy(roast, fan);
+    return (r && r.crackStart != null) ? r.crackStart : null;
+  } catch(e){ return null; }
 }
 
 // 焙煎記録のグラフ。RoR・風量の表示/非表示は凡例クリックで切り替える(焙煎グラフ
@@ -3168,8 +4236,7 @@ function renderRecordMiniChart(curve, record = null){
   const rorData = computeRoR(curve).map(p => ({x: p[0], y: p[1]}));
   const fanData = (record && record.fan_curve) ? record.fan_curve.map(p => ({x: p[0], y: p[1]})) : [];
   // 実測の吸入温度・風量から豆温度を推定する。1秒刻みだと点が多すぎるので5秒ごとに間引く。
-  const recordBeanTempData = beanTempSeriesFrom(curve, record && record.fan_curve,
-                                                record && record.altitude_bucket);
+  const recordBeanTempData = beanTempSeriesFrom(curve, record && record.fan_curve);
   const showRoR = recordRorVisible && rorData.length > 0;
   // 風量の記録が無い記録では、前の記録での表示状態が残っていても軸を出さない。
   const showFan = recordFanVisible && fanData.length > 0;
@@ -3273,6 +4340,11 @@ async function saveRoastRecordInline(id, container, onSaved, recordData){
     if(el.dataset.field === 'sc_time_mmss'){ scTimeEl = el; return; }
     let v = el.value;
     if(el.dataset.field === 'rating') v = v ? Number(v) : null;
+    // 重量は数値。空欄は「未記録」として null にする(0gと区別する)
+    if(el.dataset.field === 'green_g' || el.dataset.field === 'roasted_g'){
+      v = (v === '' || v === null) ? null : Number(v);
+      if(v !== null && !(v > 0)) v = null;
+    }
     body[el.dataset.field] = v;
   });
   if(body.roasted_at) body.roasted_at = new Date(body.roasted_at).toISOString();
@@ -3420,6 +4492,8 @@ async function autoCreateRoastRecord(){
         fc_time_inferred: fcTimeIsInferred, sc_time: actualScTime, error_spans: errorSpans,
         // 焙煎前に選んでおいた豆。選んでいなければサーバー側が今までどおり推測する。
         bean_purchase_id: selectedBeanId,
+        // 焼く前に入れておいた重量(空欄なら送らない)
+        green_g: weighValue('roastGreenG'), roasted_g: weighValue('roastRoastedG'),
         roast_curve: curve, fan_curve: fanCurve,
       }),
     });
@@ -3427,6 +4501,7 @@ async function autoCreateRoastRecord(){
     const data = await res.json();
     lastAutoRoastRecordId = data.id;
     logNotice('焙煎記録を自動保存しました(下のバナーから豆・コメントを入力できます)');
+    showRoastedWeighRow(true);   // 冷めてから量った重量を入れられるようにする
     document.getElementById('recordSavedBanner').style.display = '';
     if(ws && ws.readyState === WebSocket.OPEN){
       try { sendWS({action: 'roast_record_saved', id: data.id}); } catch(e){ /* 同期は失敗しても致命的ではない */ }
@@ -3497,31 +4572,110 @@ document.getElementById('btnOpenSavedRecord').onclick = () => {
 // ------------------------------------------------------------
 // プロファイル側の「焙煎履歴」タブ
 // ------------------------------------------------------------
+// 焙煎履歴タブの表示。3つある。
+//   profile このプロファイルの記録(これまでどおり。グラフに重ねる用)
+//   all     豆やプロファイルを問わず、焼いた順(実測値を入れていく用)
+//   todo    そのうち実測値がまだ入っていないものだけ
+let historyScope = 'profile';
+
+function switchHistoryScope(scope){
+  historyScope = scope;
+  for(const [id, k] of [['rhScopeProfile', 'profile'], ['rhScopeAll', 'all'],
+                        ['rhScopeTodo', 'todo']]){
+    const el = document.getElementById(id);
+    if(el) el.classList.toggle('active', scope === k);
+  }
+  const byProfile = scope === 'profile';
+  document.getElementById('roastHistoryContent').style.display = byProfile ? '' : 'none';
+  document.getElementById('roastTimelineContent').style.display = byProfile ? 'none' : '';
+  if(byProfile) loadRoastHistoryTab(); else loadTimelineRecords();
+}
+
+// 焼いた順の一覧。実測値が入っているかを左端の帯と数値で示し、その場で入れられる。
+async function loadTimelineRecords(){
+  const el = document.getElementById('roastTimelineContent');
+  if(!el || historyScope === 'profile') return;
+  el.innerHTML = '<div class="bean-info-empty">読み込み中…</div>';
+  try {
+    const qs = historyScope === 'todo' ? '?learnable=no' : '';
+    const records = await fetchJSON(`/api/roast_records${qs}`);
+    if(!records.length){
+      el.innerHTML = historyScope === 'todo'
+        ? '<div class="bean-info-empty">実測値の未入力はありません。すべて学習に使われています。</div>'
+        : '<div class="bean-info-empty">焙煎記録がまだありません。</div>';
+      return;
+    }
+    const ids = records.map(r => r.id);
+    const rows = records.map(r => {
+      const when = fmtRoastedAt(r.roasted_at) || '';
+      const bean = r.bean_label ? escapeHtml(r.bean_label) : '(豆は未設定)';
+      const miss = (label, ok) => ok ? label : `<span class="miss">${label}—</span>`;
+      const g = (r.green_g && r.roasted_g)
+        ? `${r.green_g}g→${r.roasted_g}g` : '<span class="miss">重量—</span>';
+      const fc = (r.fc_time != null && !r.fc_time_inferred)
+        ? `1ハゼ ${fmtMMSS(r.fc_time)}` : '<span class="miss">1ハゼ—</span>';
+      const sc = r.sc_time != null ? `2ハゼ ${fmtMMSS(r.sc_time)}` : '2ハゼ—';
+      return `<div class="tl-item ${r.learnable ? 'ok' : 'todo'}"
+           onclick="openQuickInput('${r.id}', ${JSON.stringify(ids).replace(/"/g, '&quot;')})">
+        <div class="tl-head">
+          <span class="tl-when">${escapeHtml(when)}</span>
+          <span class="tl-name">${escapeHtml(r.profile_name || '(プロファイル不明)')} ・ ${bean}</span>
+          ${r.bean_purchase_id ? '' : `<button class="btn small" title="この記録を購入豆に紐付けます"
+            onclick="event.stopPropagation(); openLinkBeanPicker('${r.id}')">豆に紐付ける</button>`}
+          <button class="btn small ghost" title="詳しく編集します"
+            onclick="event.stopPropagation(); openRoastRecordEditor('${r.id}')">詳細</button>
+        </div>
+        <div class="tl-vals">${g} ・ ${fc} ・ ${sc}</div>
+      </div>`;
+    }).join('');
+    const todo = records.filter(r => !r.learnable).length;
+    el.innerHTML = `<div class="bean-info-sub">`
+      + `${records.length}件`
+      + (historyScope === 'all' && todo ? ` ・ うち実測値の未入力 ${todo}件` : '')
+      + ` ・ クリックすると実測値をその場で入れられます(入れると豆温度モデルの学習に使われます)`
+      + `</div>${rows}`;
+  } catch(e){
+    el.innerHTML = '<div class="bean-info-empty">読み込みに失敗しました。</div>';
+  }
+}
+
 async function loadRoastHistoryTab(){
   const el = document.getElementById('roastHistoryContent');
   // 未選択のまま開くとパネルが真っ白になり、読み込み中なのか記録が無いのか
   // 分からなかったため、豆の情報タブと同じように理由を明示する。
   if(!currentProfile || !currentProfileSource){
-    el.innerHTML = '<div class="bean-info-empty">プロファイルが選択されていません</div>';
+    el.innerHTML = emptyWithAction('プロファイルが選択されていません', 'プロファイルを選ぶ',
+                                   "document.getElementById('btnOpenProfileSelect').click()");
     return;
   }
   el.innerHTML = '<div class="bean-info-empty">読み込み中…</div>';
   try {
     const records = await fetchJSON(`/api/roast_records?profile_source=${currentProfileSource}&profile_id=${currentProfile.id}`);
     if(!records.length){
-      el.innerHTML = '<div class="bean-info-empty">このプロファイルでの焙煎記録はまだありません。</div>';
+      // このプロファイルでは無くても、他のプロファイルの記録は見たいことがある。
+      el.innerHTML = emptyWithAction(
+        'このプロファイルでの焙煎記録はまだありません。', 'すべての焙煎記録を見る',
+        "switchHistoryScope('all')");
       return;
     }
     const rows = records.map(r => {
       const stars = ratingStars(r.rating);
       const when = fmtRoastedAt(r.roasted_at);
       const bean = r.bean_label ? escapeHtml(r.bean_label) : '(豆は未設定です)';
+      // 学習に使える記録かどうかを印で出す。足りない記録は編集を促す。
+      const learn = r.learnable
+        ? '<span class="rr-badge ok" title="豆温度モデルの学習に使われています">学習◯</span>'
+        : '<span class="rr-badge" title="重量かハゼ時刻を入れると学習に使われます">学習—</span>';
       return `<div class="roast-history-item" onclick="openRoastRecordFromHistory('${r.id}')">
-        <div class="level-label">${escapeHtml(when)} ${stars}</div>
+        <div class="level-label">${escapeHtml(when)} ${stars}${learn}
+          <button class="btn small ghost rr-edit" title="重量・ハゼ時刻などを編集します"
+            onclick="event.stopPropagation(); openRoastRecordEditor('${r.id}')">編集</button></div>
         <div>${bean}${r.cup_comment ? ' ・ ' + escapeHtml(r.cup_comment) : ''}</div>
       </div>`;
     }).join('');
-    el.innerHTML = `<div class="bean-info-sub">このプロファイルの焙煎記録(${records.length}件)・クリックすると焙煎グラフに実測ログを重ねて表示します</div>${rows}`;
+    el.innerHTML = `<div class="bean-info-sub">このプロファイルの焙煎記録(${records.length}件)`
+      + `・クリックで焙煎グラフに実測ログを重ねます。「編集」で重量やハゼ時刻を入れられます`
+      + `(入れると豆温度モデルの学習に使われます)</div>${rows}`;
   } catch(e){
     el.innerHTML = '<div class="bean-info-empty">読み込みに失敗しました。</div>';
   }
@@ -3572,6 +4726,205 @@ function endHistoryOverlay(){
   beanLink.onclick = null;
   renderChart();
 }
+// ------------------------------------------------------------
+// 実測値の簡易入力
+// ------------------------------------------------------------
+// 焙煎ログの重量とハゼ時刻だけを、その場で手早く入れる。編集画面まで行かずに
+// 済ませたいときのため。入れると豆温度モデルの学習に使われる。
+// 未入力のログを順に送れるようにして、まとめて埋められるようにしている。
+let quickInputQueue = [];   // 未入力のログの一覧(前後に送る用)
+let quickInputIndex = -1;
+let quickInputRecord = null;
+
+async function openQuickInput(id, queue){
+  try {
+    quickInputRecord = await fetchJSON(`/api/roast_records/${id}`);
+  } catch(e){ logNotice('焙煎記録を開けませんでした: ' + e, 'error'); return; }
+  if(Array.isArray(queue) && queue.length){
+    quickInputQueue = queue;
+    quickInputIndex = queue.indexOf(id);
+  } else if(!quickInputQueue.includes(id)){
+    quickInputQueue = [id]; quickInputIndex = 0;
+  } else {
+    quickInputIndex = quickInputQueue.indexOf(id);
+  }
+  renderQuickInput();
+  document.getElementById('quickInputBackdrop').style.display = '';
+  document.getElementById('qiGreen').focus();
+}
+
+function renderQuickInput(){
+  const r = quickInputRecord || {};
+  const when = fmtRoastedAt(r.roasted_at) || '';
+  document.getElementById('qiSub').textContent =
+    `${r.profile_name || '(プロファイル不明)'} ・ ${when}`
+    + (r.bean_label ? ` ・ ${r.bean_label}` : '');
+  const set = (id, v) => { document.getElementById(id).value = v ?? ''; };
+  set('qiGreen', r.green_g);
+  set('qiRoasted', r.roasted_g);
+  // 1ハゼは実測(ボタンを押した値)だけを入れる。自動で入った値は空欄にして、
+  // 「まだ実測が無い」と分かるようにする。
+  set('qiFc', (r.fc_time != null && !r.fc_time_inferred) ? fmtMMSS(r.fc_time) : '');
+  set('qiSc', r.sc_time != null ? fmtMMSS(r.sc_time) : '');
+  const pos = quickInputQueue.length > 1
+    ? `${quickInputIndex + 1} / ${quickInputQueue.length}件` : '';
+  document.getElementById('qiStatus').textContent = pos;
+  document.getElementById('qiPrev').disabled = quickInputIndex <= 0;
+  document.getElementById('qiNext').disabled =
+    quickInputIndex < 0 || quickInputIndex >= quickInputQueue.length - 1;
+  updateQuickInputNote();
+}
+
+// いま入っている値で、学習に使える状態かを出す。何を足せばよいかが分かる。
+function updateQuickInputNote(){
+  const v = id => document.getElementById(id).value.trim();
+  const w = Number(v('qiGreen')) > 0 && Number(v('qiRoasted')) > 0
+    && Number(v('qiRoasted')) < Number(v('qiGreen'));
+  const c = parseMMSS(v('qiFc')) !== null;
+  const note = document.getElementById('qiNote');
+  const parts = [];
+  if(w) parts.push('質量');
+  if(c) parts.push('1ハゼ豆温度');
+  if(c && parseMMSS(v('qiSc')) !== null) parts.push('2ハゼの分解割合');
+  if(parts.length){
+    note.className = 'qi-note ok';
+    note.textContent = `この記録は豆温度モデルの学習に使われます(${parts.join(' ・ ')})。`;
+  } else {
+    note.className = 'qi-note';
+    note.textContent = '焙煎前後の重量か、1ハゼの時刻のどちらかを入れると、'
+      + 'この記録が豆温度モデルの学習に使われます。';
+  }
+}
+
+async function saveQuickInput(){
+  if(!quickInputRecord) return false;
+  const v = id => document.getElementById(id).value.trim();
+  const num = x => (x === '' ? null : (Number(x) > 0 ? Number(x) : null));
+  const body = {green_g: num(v('qiGreen')), roasted_g: num(v('qiRoasted'))};
+  const fc = parseMMSS(v('qiFc'));
+  if(fc !== null){
+    body.fc_time = fc;
+    body.fc_time_inferred = false;
+    const d = quickInputRecord.duration;
+    if(d != null) body.dev_time = Math.max(0, d - fc);
+  }
+  body.sc_time = parseMMSS(v('qiSc'));
+  const st = document.getElementById('qiStatus');
+  st.textContent = '保存中…';
+  const res = await fetch(`${API}/api/roast_records/${quickInputRecord.id}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  st.textContent = res.ok ? '保存しました' : '保存に失敗しました';
+  if(res.ok){
+    loadRoastHistoryTab();
+    loadLearningState();
+    if(typeof loadTimelineRecords === 'function') loadTimelineRecords();
+  }
+  return res.ok;
+}
+
+async function quickInputGo(step){
+  if(!(await saveQuickInput())) return;
+  const i = quickInputIndex + step;
+  if(i < 0 || i >= quickInputQueue.length) return;
+  await openQuickInput(quickInputQueue[i], quickInputQueue);
+}
+
+function closeQuickInput(){
+  document.getElementById('quickInputBackdrop').style.display = 'none';
+  quickInputRecord = null;
+}
+
+document.getElementById('qiClose').onclick = closeQuickInput;
+document.getElementById('quickInputBackdrop').onclick = (e) => {
+  if(e.target.id === 'quickInputBackdrop') closeQuickInput();
+};
+document.getElementById('qiSave').onclick = async () => {
+  if(await saveQuickInput()) setTimeout(closeQuickInput, 400);
+};
+document.getElementById('qiPrev').onclick = () => quickInputGo(-1);
+document.getElementById('qiNext').onclick = () => quickInputGo(1);
+for(const id of ['qiGreen', 'qiRoasted', 'qiFc', 'qiSc']){
+  document.getElementById(id).addEventListener('input', updateQuickInputNote);
+}
+document.addEventListener('keydown', (e) => {
+  if(document.getElementById('quickInputBackdrop').style.display === 'none') return;
+  if(e.key === 'Escape') closeQuickInput();
+});
+
+// ------------------------------------------------------------
+// 焙煎前後の重量(送信ボタンの下)
+// ------------------------------------------------------------
+// 焼く前に生豆を量って入れておくと、焙煎記録に一緒に保存される。焙煎が終わったら
+// 焙煎後の重量の欄が出るので、冷めてから量って入れる。どちらも空欄のままでよく、
+// 入れなくても焙煎はできる。入れた分だけ豆温度モデルの学習に使われる。
+function weighValue(id){
+  const el = document.getElementById(id);
+  if(!el) return null;
+  const v = el.value.trim();
+  if(v === '') return null;
+  const n = Number(v);
+  return n > 0 ? n : null;
+}
+
+// 焙煎後の重量の欄は、焙煎が終わってから出す(焼く前に出しても入れようがない)。
+function showRoastedWeighRow(show){
+  const row = document.getElementById('roastRoastedRow');
+  if(row) row.style.display = show ? '' : 'none';
+  updateWeighNote();
+}
+
+function updateWeighNote(){
+  const note = document.getElementById('roastWeighNote');
+  if(!note) return;
+  const g = weighValue('roastGreenG'), r = weighValue('roastRoastedG');
+  if(g && r && r < g){
+    note.className = 'weigh-note ok';
+    const idx = g / r;
+    note.textContent = `減少 ${(100 * (g - r) / g).toFixed(1)}% ・ 焙煎指数 ${idx.toFixed(3)}`
+      + ' ・ 豆温度モデルの学習に使われます';
+  } else if(g || r){
+    note.className = 'weigh-note';
+    note.textContent = g
+      ? '焙煎後の重量も入れると、豆温度モデルの学習に使われます'
+      : '焙煎前の重量も入れると、豆温度モデルの学習に使われます';
+  } else {
+    note.className = 'weigh-note';
+    note.textContent = '入れておくと焙煎記録に残り、豆温度モデルの学習に使われます';
+  }
+}
+
+// 焙煎後に重量を入れたら、自動保存した記録に後から足す。
+async function pushRoastedWeightToRecord(){
+  if(!lastAutoRoastRecordId) return;
+  const body = {green_g: weighValue('roastGreenG'), roasted_g: weighValue('roastRoastedG')};
+  if(body.green_g === null && body.roasted_g === null) return;
+  try {
+    await fetch(`${API}/api/roast_records/${lastAutoRoastRecordId}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    loadLearningState();
+  } catch(e){ /* 重量の反映に失敗しても焙煎自体には影響しない */ }
+}
+
+for(const id of ['roastGreenG', 'roastRoastedG']){
+  const el = document.getElementById(id);
+  if(el){
+    el.addEventListener('input', updateWeighNote);
+    el.addEventListener('change', pushRoastedWeightToRecord);
+  }
+}
+
+document.getElementById('btnOpenRoastBeanRecords').onclick = () => {
+  if(selectedBeanId) openBeanPurchaseDetail(selectedBeanId);
+};
+
+document.getElementById('btnEditHistoryRecord').onclick = () => {
+  if(historyOverlayRecord && historyOverlayRecord.id) openRoastRecordEditor(historyOverlayRecord.id);
+};
+
 document.getElementById('btnEndHistoryOverlay').onclick = endHistoryOverlay;
 
 // プリセット/保存済みタブで使う追加フィルタのセレクトID。
@@ -3700,7 +5053,6 @@ async function populateCategoryFilter(tab, selectId){
 // 何かで絞り込んでいる時は、そのプルダウンを色付きにし、まとめて解除できる
 // ボタンを出す(6個を1つずつ読み返さなくても、効いている絞り込みが分かるように)。
 const PROFILE_FILTER_IDS = ['categoryFilter','roasterFilter','roastLevelFilter','altitudeFilter','varietyFilter','processFilter'];
-const BEAN_FILTER_IDS = ['beanCountryFilter','beanProcessFilter','beanVarietyFilter','beanCropYearFilter'];
 
 // ------------------------------------------------------------
 // 絞り込み状態の保持(タブごと)
@@ -3745,7 +5097,6 @@ function updateFilterActiveStates(ids, clearBtnId){
   if(btn) btn.style.display = anyActive ? '' : 'none';
 }
 function updateProfileFilterStates(){ updateFilterActiveStates(PROFILE_FILTER_IDS, 'btnClearFilters'); }
-function updateBeanFilterStates(){ updateFilterActiveStates(BEAN_FILTER_IDS, 'btnClearBeanFilters'); }
 
 document.getElementById('btnClearFilters').onclick = () => {
   for(const id of PROFILE_FILTER_IDS){ const el = document.getElementById(id); if(el) el.value = ''; }
@@ -3753,12 +5104,6 @@ document.getElementById('btnClearFilters').onclick = () => {
   saveProfileFilterState(currentTab);  // 解除した状態を控える(他タブから戻っても解除のまま)
   searchProfiles(document.getElementById('searchBox').value, 'profileList', currentTab);
   refreshProfileFilterOptions();
-};
-document.getElementById('btnClearBeanFilters').onclick = () => {
-  for(const id of BEAN_FILTER_IDS){ const el = document.getElementById(id); if(el) el.value = ''; }
-  updateBeanFilterStates();
-  loadRecordsList(document.getElementById('recordsSearchBox').value);
-  populateBeanFilters();
 };
 
 // 絞り込みを変えたら、一覧の再取得に加えて、他のプルダウンの候補も
@@ -3773,14 +5118,81 @@ document.getElementById('categoryFilter').addEventListener('change', onProfileFi
 for(const id of ['roasterFilter','roastLevelFilter','altitudeFilter','varietyFilter','processFilter']){
   document.getElementById(id).addEventListener('change', onProfileFilterChanged);
 }
-for(const id of BEAN_FILTER_IDS){
-  document.getElementById(id).addEventListener('change', updateBeanFilterStates);
-}
 document.getElementById('sortFilter').addEventListener('change', () => {
+  // 箱で並べ替えを選んだら、概要欄のボタンによる並べ替えは解除する。
+  metricSort = null;
+  if(typeof updateMetricSortButtons === 'function') updateMetricSortButtons();
   searchProfiles(document.getElementById('searchBox').value, 'profileList', currentTab);
 });
 
+// 概要欄の数値ボタンで指定した並び。押した時点のタブ(プリセット・保存済み等)に
+// だけ効かせる。タブを移ると別の集まりなので、そのまま持ち越さない。
+let metricSort = null;        // {key, dir, tab}
+
+function metricSortForTab(){
+  return (metricSort && metricSort.tab === currentTab) ? metricSort : null;
+}
+
+function updateMetricSortButtons(){
+  const active = metricSortForTab();
+  document.querySelectorAll('.metric-sort .ms-btn').forEach(btn => {
+    const key = btn.parentElement.dataset.sortKey;
+    btn.classList.toggle('active',
+      !!active && active.key === key && active.dir === btn.dataset.dir);
+  });
+}
+
+// 並べ替えても、いま選んでいるプロファイルは見失わないようにする。
+// 位置が大きく動くので、画面内に入るまで一覧を送る。
+function keepSelectedInView(){
+  const el = document.querySelector('#profileList .profile-item.active');
+  if(!el) return;
+  const list = el.closest('.profile-list');
+  if(!list) return;
+  const top = el.offsetTop - list.offsetTop;
+  if(top < list.scrollTop || top + el.offsetHeight > list.scrollTop + list.clientHeight){
+    list.scrollTop = Math.max(0, top - list.clientHeight / 2 + el.offsetHeight / 2);
+  }
+}
+
+function applyMetricSort(key, dir){
+  // 同じものをもう一度押したら、並べ替えをやめて元の順に戻す。
+  if(metricSort && metricSort.tab === currentTab
+     && metricSort.key === key && metricSort.dir === dir){
+    metricSort = null;
+  } else {
+    metricSort = {key, dir, tab: currentTab};
+  }
+  updateMetricSortButtons();
+  searchProfiles(document.getElementById('searchBox').value, 'profileList', currentTab);
+}
+
+document.querySelectorAll('.metric-sort .ms-btn').forEach(btn => {
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    applyMetricSort(btn.parentElement.dataset.sortKey, btn.dataset.dir);
+  };
+});
+
 function sortItems(items, sortKey){
+  // 概要欄の数値ボタンが押されていれば、そちらを優先する。
+  const m = metricSortForTab();
+  if(m){
+    const sign = m.dir === 'asc' ? 1 : -1;
+    // 値が無いものは、昇順・降順どちらでも末尾へ回す(先頭に空欄が並ぶと
+    // 「並べ替えが効いていない」ように見えるため)。
+    return [...items].sort((a, b) => {
+      const av = a[m.key], bv = b[m.key];
+      if(av == null && bv == null) return 0;
+      if(av == null) return 1;
+      if(bv == null) return -1;
+      return (av - bv) * sign;
+    });
+  }
+  return sortItemsByBox(items, sortKey);
+}
+
+function sortItemsByBox(items, sortKey){
   const arr = [...items];
   if(sortKey === 'duration_desc'){
     arr.sort((a,b) => (b.duration ?? -1) - (a.duration ?? -1));
@@ -3798,6 +5210,8 @@ function sortItems(items, sortKey){
     arr.sort((a,b) => (a.end_bean_temp ?? Infinity) - (b.end_bean_temp ?? Infinity));
   } else if(sortKey === 'roast_count_desc'){
     arr.sort((a,b) => (b.roast_count ?? 0) - (a.roast_count ?? 0));
+  } else if(sortKey === 'name_asc'){
+    arr.sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   }
   // favorite優先(既定値)はサーバー側の並び順をそのまま使う
   return arr;
@@ -3831,11 +5245,36 @@ async function searchProfiles(q, listElId, source){
     if(varietyVal) params.set('variety', varietyVal);
     if(processVal) params.set('process', processVal);
   }
-  const res = await fetch(`${API}${endpoint}?${params.toString()}`, {cache: 'no-store'});
-  let items = await res.json();
-  items = sortItems(items, document.getElementById('sortFilter').value);
-
   const list = document.getElementById(listElId);
+  // 一覧が空のまま黙って待たされると、壊れているのか読み込み中なのか分からない。
+  // すぐ返るときにちらつかせないよう、200ms経ってから出す。
+  let placeholder = null;
+  const showLoading = setTimeout(() => {
+    if(list.children.length) return;      // すでに前回の結果が出ているなら触らない
+    placeholder = document.createElement('div');
+    placeholder.className = 'list-placeholder';
+    placeholder.innerHTML = '<span class="spinner"></span>読み込み中…';
+    list.appendChild(placeholder);
+  }, 200);
+  let items;
+  try {
+    const res = await fetch(`${API}${endpoint}?${params.toString()}`, {cache: 'no-store'});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    items = await res.json();
+  } catch(e){
+    // 読めなかったことを伝える。黙って空にすると「該当なし」と区別がつかない。
+    clearTimeout(showLoading);
+    list.innerHTML = '';
+    const err = document.createElement('div');
+    err.className = 'list-placeholder';
+    err.textContent = '一覧を読み込めませんでした。接続を確認してください。';
+    list.appendChild(err);
+    return;
+  }
+  clearTimeout(showLoading);
+  items = sortItems(items, document.getElementById('sortFilter').value);
+  updateMetricSortButtons();
+
   list.innerHTML = '';
   for(const p of items){
     const div = document.createElement('div');
@@ -3872,7 +5311,11 @@ async function searchProfiles(q, listElId, source){
       : '';
     main.innerHTML = `${escapeHtml(title)}${sheetMark}<div class="roaster">`
       + `${subParts.map(s => `<span class="nb">${escapeHtml(s)}</span>`).join(' ・ ')}</div>${metaLine}`;
+    // 1クリックは選ぶだけ(上の概要欄に数値が出る)。一覧を見比べながら
+    // 数字を確かめられるよう、ここではグラフへ移らない。
+    // ダブルクリックで焙煎グラフへ移る(選ぶのは先行するクリックで済んでいる)。
     main.onclick = () => { selectProfile(p.id, source, div); };
+    main.ondblclick = () => { switchGraphView('graph'); };
     div.appendChild(main);
 
     const actions = document.createElement('div');
@@ -3944,6 +5387,9 @@ async function searchProfiles(q, listElId, source){
     div.appendChild(actions);
     list.appendChild(div);
   }
+  // 並べ替えると位置が大きく動く。選んでいるものが画面の外へ出ないよう送る。
+  if(listElId === 'profileList') highlightProfileInList(currentProfile ? currentProfile.id : null);
+  keepSelectedInView();
 }
 
 async function toggleFavorite(source, id, makeFavorite){
@@ -3963,7 +5409,18 @@ async function fetchProfileDetail(id, source){
   // 別の焙煎度のプロファイルへ切り替えた際に古い内容のまま同期しないことがあるため、
   // 明示的にキャッシュを使わないようにする。
   const res = await fetch(`${API}${endpoint}/${id}`, {cache: 'no-store'});
-  return await res.json();
+  // 消したプロファイルを指しているログから来ることがある。404の中身をそのまま
+  // 返すと、呼び出し側が data.roast を触って画面ごと止まる。無いときは null。
+  if(!res.ok) return null;
+  const data = await res.json();
+  return (data && Array.isArray(data.roast)) ? data : null;
+}
+
+// 消えたプロファイルを開こうとしたときの案内。ログ自体は残っているので、
+// そのことも伝える(グラフと数値は焙煎記録の画面で見られる)。
+function noticeProfileGone(){
+  logNotice('このプロファイルは削除されています。焙煎ログのグラフと数値は、'
+    + '焙煎記録の画面でそのまま確認できます。', 'error');
 }
 
 // 「豆の情報」タブのボタンに、生豆紹介シートありの印(◆)を出す/消す。
@@ -3995,6 +5452,7 @@ async function selectProfile(id, source, el, opts = {}){
   document.querySelectorAll('#profileList .profile-item').forEach(e => e.classList.remove('active'));
   if(el) el.classList.add('active');
   const data = await fetchProfileDetail(id, source);
+  if(!data){ noticeProfileGone(); return; }
   currentProfileSource = source;
   updateBeanSheetTabMark(source === 'preset' && !!data.has_bean_sheet);
   document.getElementById('tabBeanInfoView').style.display = source === 'ikawa' ? 'none' : '';
@@ -4053,6 +5511,9 @@ function switchGraphView(view){
   // プロファイル概要欄(予熱温度・焙煎時間・最終温度・DevTime)は焙煎履歴ビューでは
   // 対象外なので、ビュー切り替えのたびに表示/非表示を再評価する。
   updateProfileOverviewVisibility();
+  // 「プロファイル選択」はタブではなく見出しの右のボタンなので、押している間は
+  // ボタン側を目立たせる(いまどれを見ているかが分かるように)。
+  document.getElementById('btnOpenProfileSelect').classList.toggle('primary', view === 'select');
   document.getElementById('tabGraphView').classList.toggle('active', view === 'graph');
   document.getElementById('tabBeanInfoView').classList.toggle('active', view === 'beaninfo');
   document.getElementById('tabRoastHistoryView').classList.toggle('active', view === 'history');
@@ -4066,6 +5527,10 @@ function switchGraphView(view){
   // ウィンドウの残り高さを受け取るようにするため(中身が空でも枠が残っていると
   // 豆の情報・焙煎履歴タブの高さがその分だけ削られてしまう)。
   document.getElementById('tasteLayoutWrap').style.display = graphLikeView ? '' : 'none';
+  document.getElementById('profileSelectPanel').style.display = view === 'select' ? '' : 'none';
+  profileSelectViewOpen = (view === 'select');
+  updateHeaderPicks();
+  if(view === 'select') updateGoGraphButton();
   document.getElementById('beanInfoPanel').style.display = view === 'beaninfo' ? '' : 'none';
   document.getElementById('roastHistoryPanel').style.display = view === 'history' ? '' : 'none';
   // カーブ編集・保存のボタン群(温度ガイド線設定・温度オフセット・浅め/深めに調整・
@@ -4405,7 +5870,7 @@ async function recalcGeneratorTasteFromCurve(){
   try {
     const res = await fetch(`${API}/api/infer_taste_profile`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({roast: editedRoast}),
+      body: JSON.stringify({roast: editedRoast, fan: editedFan || []}),
     });
     if(!res.ok) return;
     const data = await res.json();
@@ -4534,12 +5999,21 @@ buildTasteAxesUI();
 async function initAbcMode(){
   const warn = document.getElementById('abcNotReady');
   const form = document.getElementById('abcForm');
+  const loading = document.getElementById('abcLoading');
   lastGenEditMode = 'abc';  // 開いた直後はABC取り込み由来なので軸ではなくABC基準
+  // 待つ間は何も出ないのではなく、待っていることが分かるようにする。
+  // すぐ返るときに一瞬ちらつかせないよう、200ms経ってから出す。
+  warn.style.display = 'none';
+  form.style.display = 'none';
+  const showLoading = setTimeout(() => { loading.style.display = ''; }, 200);
   try {
     const res = await fetch(`${API}/api/abc_defaults`, {cache: 'no-store'});
     abcDefaults = await res.json();
   } catch(e){
     abcDefaults = null;
+  } finally {
+    clearTimeout(showLoading);
+    loading.style.display = 'none';
   }
   if(!abcDefaults || !abcDefaults.ready){
     // 温度ガイド線(カラーチェンジ・1ハゼ)が未設定 → パネル全体を使えないので案内のみ。
@@ -4553,8 +6027,16 @@ async function initAbcMode(){
   warn.style.display = 'none';
   form.style.display = '';
   document.getElementById('genUnifiedHint').style.display = '';
-  document.getElementById('abcCcTemp').textContent = abcDefaults.guide_temps.colorChange;
-  document.getElementById('abcFcTemp').textContent = abcDefaults.guide_temps.firstCrack;
+  // どの温度で境界を決めているかを、いまの判定の基準に合わせて出す。
+  // 豆温度モードでは1ハゼをモデルが判定するので、しきい値ではなく由来を書く。
+  const gtA = abcDefaults.guide_temps || {};
+  if(gtA.mode === 'bean'){
+    document.getElementById('abcCcTemp').textContent = `豆${gtA.beanColorChange ?? 132}°C`;
+    document.getElementById('abcFcTemp').textContent = '豆温度モデル';
+  } else {
+    document.getElementById('abcCcTemp').textContent = `吸入${gtA.colorChange}℃`;
+    document.getElementById('abcFcTemp').textContent = `吸入${gtA.firstCrack}℃`;
+  }
   buildAbcRorButtons();
 
   // 表示中のカーブからA/B/C・RoRを取り込めれば、それを初期値にする
@@ -4571,7 +6053,7 @@ async function initAbcMode(){
     try {
       const res = await fetch(`${API}/api/infer_taste_profile`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({roast: editedRoast}),
+        body: JSON.stringify({roast: editedRoast, fan: editedFan || []}),
       });
       if(res.ok){
         const data = await res.json();
@@ -4908,9 +6390,19 @@ let beanTasteRadarChart = null;
 const BEAN_TASTE_AXES = ['香り', '酸味', '苦味', '後味', 'ボディ'];
 const BEAN_TASTE_LABELS = { '香り': '香り', '酸味': '酸味', '苦味': '苦味', '後味': '後味', 'ボディ': 'ボディ' };
 
+// 「何も無い」とだけ出して終わると、次に何をすればよいのか画面から分からない。
+// 進む先のあるものには、その場に押せるボタンを添える。
+function emptyWithAction(text, label, onclickJs){
+  return `<div class="bean-info-empty">${escapeHtml(text)}`
+    + `<div style="margin-top:12px;"><button class="btn small" style="width:auto;"`
+    + ` onclick="${onclickJs}">${escapeHtml(label)}</button></div></div>`;
+}
+
 function loadBeanInfo(){
   if(!currentProfile){
-    document.getElementById('beanInfoContent').innerHTML = '<div class="bean-info-empty">プロファイルが選択されていません</div>';
+    document.getElementById('beanInfoContent').innerHTML =
+      emptyWithAction('プロファイルが選択されていません', 'プロファイルを選ぶ',
+                      "document.getElementById('btnOpenProfileSelect').click()");
     return;
   }
   if(currentProfileSource === 'preset') return loadPresetBeanInfo();
@@ -5095,6 +6587,7 @@ async function saveCustomBeanInfo(pid){
 // 同じ豆の別焙煎度プロファイルへ切り替える(焙煎グラフ/豆の情報の表示は切り替えない)。
 async function selectSiblingProfile(profileId){
   const data = await fetchProfileDetail(profileId, 'preset');
+  if(!data){ noticeProfileGone(); return; }
   updateBeanSheetTabMark(!!data.has_bean_sheet);
   loadProfileIntoEditor(data);
   loadBeanInfo();
@@ -5292,6 +6785,7 @@ document.getElementById('btnAdjustDeeper').onclick = () => applyRoastAdjust('dee
 // ------------------------------------------------------------
 async function selectCompareProfile(id, source){
   const data = await fetchProfileDetail(id, source);
+  if(!data){ noticeProfileGone(); return; }
   compareProfile = { id, source, name: data.name, roast: data.roast, fan: data.fan };
   document.getElementById('compareBar').classList.add('show');
   document.getElementById('compareName').textContent = data.name;
@@ -5345,6 +6839,7 @@ document.getElementById('btnEndCompare').onclick = endCompare;
 document.getElementById('btnSwitchToCompare').onclick = async () => {
   if(!compareProfile) return;
   const data = await fetchProfileDetail(compareProfile.id, compareProfile.source);
+  if(!data){ noticeProfileGone(); return; }
   compareProfile = null;
   document.getElementById('compareBar').classList.remove('show');
   updateCompareHighlight();
@@ -5655,7 +7150,8 @@ document.getElementById('btnOverwriteSave').onclick = async () => {
 // localStorageだと、Macアプリ(WKWebView)を再起動した際に保持される保証が
 // ないため、他の設定(favorites.json等)と同じくファイル保存にしている。
 // ------------------------------------------------------------
-let guideTemps = { colorChange: null, firstCrack: null, secondCrack: null };
+let guideTemps = { colorChange: null, firstCrack: null, secondCrack: null,
+                   mode: 'air', beanColorChange: 132 };
 
 async function loadGuideTemps(){
   try {
@@ -5676,6 +7172,15 @@ function applyGuideTempsToInputs(){
   document.getElementById('guideColorChange').value = guideTemps.colorChange ?? '';
   document.getElementById('guideFirstCrack').value = guideTemps.firstCrack ?? '';
   document.getElementById('guideSecondCrack').value = guideTemps.secondCrack ?? '';
+  const bean = guideTemps.mode === 'bean';
+  document.getElementById('phaseModeSelect').value = bean ? 'bean' : 'air';
+  document.getElementById('beanColorChange').value = guideTemps.beanColorChange ?? 132;
+  document.getElementById('beanCcRow').style.display = bean ? '' : 'none';
+  // 吸入のガイド線は、吸入モードでしか効かないので隠す
+  document.getElementById('guideTempRows').style.display = bean ? 'none' : '';
+  document.getElementById('phaseModeNote').textContent = bean
+    ? '1ハゼ・2ハゼはモデルが判定します。'
+    : '下のガイド線を上向きに横切った時刻で決めます(従来)。';
 }
 
 function onGuideInputChange(){
@@ -5683,11 +7188,15 @@ function onGuideInputChange(){
     const v = document.getElementById(id).value;
     return v === '' ? null : Math.round(Number(v));
   };
+  const beanCc = Number(document.getElementById('beanColorChange').value);
   guideTemps = {
     colorChange: readVal('guideColorChange'),
     firstCrack: readVal('guideFirstCrack'),
     secondCrack: readVal('guideSecondCrack'),
+    mode: document.getElementById('phaseModeSelect').value === 'bean' ? 'bean' : 'air',
+    beanColorChange: Number.isFinite(beanCc) ? beanCc : 132,
   };
+  applyGuideTempsToInputs();
   if(chart) chart.update('none');
   // 1ハゼ温度はDevelopment Time(見込み)の計算に使う。これはブラウザ側だけで完結する
   // ので、保存の完了を待たずにその場で計算し直す(待つと、ガイド線だけ動いて数値が
@@ -5704,7 +7213,8 @@ function onGuideInputChange(){
     scheduleProfileHealth();
   });
 }
-for(const id of ['guideColorChange','guideFirstCrack','guideSecondCrack']){
+for(const id of ['guideColorChange','guideFirstCrack','guideSecondCrack',
+                 'phaseModeSelect','beanColorChange']){
   document.getElementById(id).addEventListener('change', onGuideInputChange);
 }
 document.getElementById('btnOffsetToggle').onclick = () => {
@@ -5748,86 +7258,6 @@ function applyCalibrationToEnergy(overrides){
   beanTempSeriesCache = {key: null, result: []};
 }
 
-// 焙煎ログからの学習結果を出す。件数とばらつきも一緒に出して、
-// どれくらい当てにしてよいかが分かるようにする。
-async function loadCalibrationFromLogs(){
-  const el = document.getElementById('calLogsResult');
-  if(!el) return;
-  try {
-    const res = await fetch(`${API}/api/calibration/from_logs`, {cache: 'no-store'});
-    if(!res.ok){ el.textContent = '集計できませんでした。'; return; }
-    const d = await res.json();
-    const lines = [];
-    const fmt = (s, name, def) => s.n === 0
-      ? `${name}: 使える記録がまだありません`
-      : `${name}: <b>${s.median}℃</b>(${s.n}件・ばらつき±${s.sd}℃・`
-        + `${s.min}〜${s.max}℃) モデルの既定は${def}℃`;
-    lines.push(fmt(d.fc, '1ハゼの豆温度', d.current.modelDefaultFc));
-    lines.push(fmt(d.sc, '2ハゼの豆温度', d.current.modelDefaultSc));
-    const skipped = Object.entries(d.skipped || {}).filter(([, v]) => v > 0)
-      .map(([k, v]) => `${k} ${v}件`).join(' / ');
-    if(skipped) lines.push(`使わなかった記録: ${skipped}`);
-    // 標高による差。1つの標高帯に固まっていると傾きか基準値のずれか区別が付かないので、
-    // 帯が2つ以上そろうまでは出さない。
-    const alt = d.altitude || {};
-    if(alt.slope !== null && alt.slope !== undefined){
-      lines.push(`標高による差: <b>${alt.slope >= 0 ? '+' : ''}${alt.slope}℃/1000m</b>`
-               + `(標高の分かる記録${alt.n}件・${alt.buckets}区分)`);
-    } else if(alt.n > 0){
-      lines.push(`標高による差: まだ出せません(標高の分かる記録${alt.n}件・`
-               + `${alt.buckets}区分。違う標高の豆が4件以上そろうと出ます)`);
-    } else {
-      lines.push('標高による差: 豆情報に標高が入った記録がまだありません。');
-    }
-    const ap = d.applied || {};
-    if(ap.fcBeanTemp !== undefined || ap.scBeanTemp !== undefined){
-      const p = [];
-      if(ap.fcBeanTemp !== undefined) p.push(`1ハゼ ${ap.fcBeanTemp}℃(${ap.fcN}件)`);
-      if(ap.scBeanTemp !== undefined) p.push(`2ハゼ ${ap.scBeanTemp}℃(${ap.scN}件)`);
-      if(ap.altitudeSlope !== undefined){
-        p.push(`標高 ${ap.altitudeSlope >= 0 ? '+' : ''}${ap.altitudeSlope}℃/1000m`);
-      }
-      lines.push(`<b>採用中</b>: ${p.join(' / ')}`);
-    } else {
-      lines.push('まだ採用していません(モデルの既定値で計算しています)。');
-    }
-    el.innerHTML = lines.join('<br>');
-    // 学んだ値を画面側の推定にも反映する(サーバー側の推定と食い違わせない)。
-    applyLearnedFcBeanTemp(
-      (d.applied || {}).fcBeanTemp, (d.current || {}).altitudeSlope);
-  } catch(e){ el.textContent = '集計できませんでした。'; }
-}
-
-async function refreshAfterCalibrationChange(){
-  await loadCalibration();
-  await loadCalibrationFromLogs();   // 学んだ1ハゼ豆温度・標高の傾きもここで入る
-  refreshEstimateDatasets();
-  if(chart) chart.update('none');
-  updateStaticMetrics();
-}
-
-document.getElementById('btnCalLogsApply').onclick = async () => {
-  const btn = document.getElementById('btnCalLogsApply');
-  btn.disabled = true;
-  try {
-    const res = await fetch(`${API}/api/calibration/from_logs`, {
-      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: '{}',
-    });
-    const d = await res.json();
-    if(!res.ok){ log(`採用できませんでした: ${d.error || ''}`); return; }
-    await refreshAfterCalibrationChange();
-    log('焙煎ログの実測を、豆温度モデルに採用しました。');
-  } catch(e){ log('採用できませんでした。'); }
-  finally { btn.disabled = false; }
-};
-
-document.getElementById('btnCalLogsClear').onclick = async () => {
-  try {
-    await fetch(`${API}/api/calibration/from_logs`, {method: 'DELETE'});
-    await refreshAfterCalibrationChange();
-    log('焙煎ログからの採用をやめ、モデルの既定値に戻しました。');
-  } catch(e){ log('戻せませんでした。'); }
-};
 
 async function loadCalibration(){
   try {
@@ -5878,6 +7308,401 @@ function renderCalibrationResult(data){
   }
   for(const n of (data.notes || [])) lines.push(`<span style="color:var(--danger);">★ ${n}</span>`);
   el.innerHTML = lines.join('<br>');
+}
+
+// ------------------------------------------------------------
+// 豆温度モデルの学習と、構造の見直し
+// ------------------------------------------------------------
+// 学習(補正)は焙煎ログが増えるたびに少しずつ効く。構造の見直し(どの定数を
+// 当てはめるか)は時間がかかり、ハゼ時刻や焙煎指数の意味も変わるので、
+// 押したときだけ走らせる。判定はAICcと焙煎1本抜きの交差検証の両方を通す。
+let structurePoll = null;
+
+async function loadLearningState(){
+  try {
+    const [lr, st] = await Promise.all([
+      fetchJSON('/api/bean_temp_learning'),
+      fetchJSON('/api/model_structure'),
+    ]);
+    const el = document.getElementById('learnCount');
+    el.innerHTML = `学習に使えた焙煎 <b>${lr.n}本</b>`
+      + `(うち基準 ${lr.seed}本 ・ 焙煎ログ ${lr.logs}本) ／ 観測 <b>${st.n}点</b>`;
+    const need = document.getElementById('learnNeed');
+    const parts = Object.entries(lr.need || {}).map(([k, v]) => `${k} ${v}件`);
+    need.innerHTML = parts.length
+      ? `あと少しで使えるログ: ${parts.join(' ・ ')}`
+      : '';
+    // 構造の見直しを勧めるか
+    const box = document.getElementById('structureBox');
+    const hint = document.getElementById('structureHint');
+    box.style.display = '';
+    const cost = st.costOfOneMore;
+    // 節目を越えたら強調する。越えた時点で通知も飛ぶ(節目ごとに1回だけ)。
+    const notified = st.notifiedThreshold === st.nextThreshold;
+    hint.innerHTML = st.due
+      ? `<span class="learn-grown">観測が${st.nextThreshold}点の節目を越えました。</span>`
+        + `いま定数を1つ増やすには残差が${cost}%下がる必要があります(観測が増えるほど緩みます)。`
+        + (notified ? '<br>この節目はお知らせ済みです。' : '')
+      : (st.nextThreshold
+          ? `次の節目は観測${st.nextThreshold}点(いま${st.n}点、あと${st.nextThreshold - st.n}点)。`
+            + `越えたらお知らせします。いま定数を1つ増やすには残差が${cost}%下がる必要があります。`
+          : `観測が十分に貯まっています。`);
+    box.classList.toggle('due', !!st.due);
+    // 採用済みの構造があれば出す
+    const g = document.getElementById('learnGrowth');
+    if(st.applied && st.applied.free){
+      g.style.display = '';
+      g.innerHTML = `いまの構造: <b>${st.applied.free.join(' / ')}</b>`
+        + `(${st.applied.free.length}個の定数 ・ 観測${st.applied.n}点で採用 ${st.applied.at})`;
+      document.getElementById('btnStructureRevert').style.display = '';
+    } else {
+      g.style.display = '';
+      g.textContent = `いまの構造: ${['U0','K_PYRO','K_DRY'].join(' / ')}(既定の3個)`;
+      document.getElementById('btnStructureRevert').style.display = 'none';
+    }
+    renderStructureRun(st.run, st.history);
+  } catch(e){
+    document.getElementById('learnCount').textContent = '学習の状態を読めませんでした: ' + e;
+  }
+}
+
+function renderStructureRun(run, history){
+  const pg = document.getElementById('structureProgress');
+  const rs = document.getElementById('structureResult');
+  const btn = document.getElementById('btnStructureRun');
+  run = run || {};
+  if(run.state === 'running'){
+    pg.style.display = '';
+    const mmss = (v) => v == null ? '--:--'
+      : `${Math.floor(v / 60)}:${String(Math.round(v) % 60).padStart(2, '0')}`;
+    const bar = run.total ? ` [${run.step}/${run.total}]` : '';
+    const el = run.elapsed != null ? ` ・ 経過 ${mmss(run.elapsed)}` : '';
+    pg.textContent = `${run.message || '見直し中'}${bar}${el}`;
+    btn.disabled = true;
+    // 段階が変わったら表示に反映されるよう、定期的に見に行く
+    if(!structurePoll) structurePoll = setInterval(loadLearningState, 3000);
+    return;
+  }
+  btn.disabled = false;
+  if(structurePoll){
+    // 見ていなくても分かるよう、終わった瞬間にログにも残す(通知の受け皿)
+    clearInterval(structurePoll); structurePoll = null;
+    log(run.state === 'error' ? '豆温度モデルの見直しに失敗しました'
+      : (history || []).slice(-1)[0]?.adopted
+        ? '豆温度モデルの見直しが終わりました。モデルが育ちました'
+        : '豆温度モデルの見直しが終わりました。いまの構造のままが最良でした');
+  }
+  if(run.state === 'error'){
+    pg.style.display = '';
+    pg.innerHTML = `<span style="color:var(--danger)">見直しに失敗しました: `
+      + `${escapeHtml(run.error || '')}</span><br>`
+      + `いまの構造はそのままです。もう一度押すか、焙煎ログを増やしてから試してください。`;
+    return;
+  }
+  pg.style.display = 'none';
+  const last = (history || []).slice(-1)[0];
+  if(!last){ rs.style.display = 'none'; return; }
+  rs.style.display = '';
+  const grown = last.adopted;
+  rs.className = 'learn-result' + (grown ? ' grown' : '');
+  const cv = (v) => v == null ? '--' : v.toFixed(1);
+  rs.innerHTML = (grown
+      ? `<span class="learn-grown"><b>モデルが育ちました。</b>`
+        + `定数が${last.free.length}個になりました。</span>`
+      : `見直しました。<b>いまの構造のままが最良</b>でした。`)
+    + `<table>`
+    + `<tr><td>選ばれた構造</td><td>${last.free.join(' / ')}</td></tr>`
+    + `<tr><td>残差</td><td>${last.rss.toFixed(2)}</td></tr>`
+    + `<tr><td>AICc</td><td>${last.aicc.toFixed(2)}</td></tr>`
+    + `<tr><td>交差検証(新/今)</td><td>${cv(last.cvNew)} / ${cv(last.cvCurrent)}</td></tr>`
+    + `<tr><td>観測</td><td>${last.n}点</td></tr>`
+    + `<tr><td>使った焙煎</td><td>${last.usedRoasts ?? '--'}本`
+    + `${last.thinned ? ` (${last.thinned}本は間引き)` : ''}`
+    + `${(last.outliers || []).length ? ` ・ 外れ値として除外: ${last.outliers.join(', ')}` : ''}</td></tr>`
+    + `<tr><td>実行</td><td>${last.at}${last.seconds ? ` (${Math.floor(last.seconds / 60)}分${last.seconds % 60}秒)` : ''}</td></tr>`
+    + `</table>`
+    + (grown ? '' : `<div class="settings-note" style="margin-top:4px;">`
+        + `新しい構造は当てはまりは良くても、見せていない焙煎の予測では今より`
+        + `悪かったので採りませんでした。焙煎ログが増えれば通ることがあります。</div>`);
+}
+
+document.getElementById('btnStructureRun').onclick = async () => {
+  if(!confirm('モデル構造を見直します。数分から十数分かかります。よろしいですか?')) return;
+  const r = await fetch('/api/model_structure/evaluate', {method: 'POST'});
+  if(!r.ok){ log('見直しを始められませんでした(すでに実行中かもしれません)'); return; }
+  loadLearningState();
+};
+
+document.getElementById('btnStructureRevert').onclick = async () => {
+  if(!confirm('モデル構造を既定(定数3個)に戻します。よろしいですか?')) return;
+  await fetch('/api/model_structure/revert', {method: 'POST'});
+  log('モデル構造を既定に戻しました。');
+  loadLearningState();
+};
+
+document.getElementById('btnLearnReset').onclick = async () => {
+  if(!confirm('豆温度の学習データを初期化します。焙煎記録は消えません。よろしいですか?')) return;
+  const r = await fetch('/api/bean_temp_learning/reset', {method: 'POST'});
+  const d = await r.json();
+  log(`豆温度の学習データを初期化しました(基準${d.seed}本の状態に戻りました)。`);
+  loadLearningState();
+};
+
+loadLearningState();
+
+// ------------------------------------------------------------
+// 書き出し・取り込み
+// ------------------------------------------------------------
+// 保存先のフォルダを選べるようにする。showSaveFilePicker が使える環境
+// (Chrome系)ではその場でフォルダを選ばせ、使えない環境(Safari・WKWebView)
+// では通常のダウンロードにする。後者でもブラウザの設定で保存先は選べる。
+async function exportData(scope, ids){
+  const note = document.getElementById('ioNote');
+  const label = scope === 'profiles' ? 'プロファイル' : '一式';
+  const query = ids && ids.length
+    ? `?scope=${scope}&ids=${ids.map(encodeURIComponent).join(',')}` : `?scope=${scope}`;
+  if(hasNativeNotifyBridge()){
+    // Macアプリ(WKWebView)。blobにdownload属性を付けたリンクは押しても
+    // 何も起きない。サーバーが添付として返すので、そのURLを開けば
+    // アプリ側が受け取って保存パネルを出す。中身を先に取りに行かないのは、
+    // 同じものを2回作らせないため(ファイル名もサーバーが決めている)。
+    const frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.src = `${API}/api/export${query}`;
+    document.body.appendChild(frame);
+    setTimeout(() => frame.remove(), 20000);
+    note.textContent = `${label}を書き出します。保存先を選んでください。`;
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/api/export${query}`, {cache: 'no-store'});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    // ファイル名の日時も画面と同じローカル時刻にする(UTCだと、日本では
+    // 朝に書き出したファイルが前日の日付になり、探すときに戸惑う)。
+    const stamp = toDateTimeLocalValue(new Date().toISOString())
+      .replace(/[-:]/g, '').replace('T', '-');
+    // ファイル名はサーバーが決めている(1件だけならその名前が入る)。それに合わせる。
+    // 日本語の名前は filename*= の側にしか入らない(HTTPヘッダはASCIIのため)。
+    const disposition = res.headers.get('content-disposition') || '';
+    const utf8 = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const plain = disposition.match(/filename="([^"]+)"/);
+    let name = `roast-studio-${scope === 'profiles' ? 'profiles' : 'all'}-${stamp}.json`;
+    if(utf8){ try { name = decodeURIComponent(utf8[1]); } catch(e){ /* 壊れていれば既定名 */ } }
+    else if(plain){ name = plain[1]; }
+    if(window.showSaveFilePicker){
+      const handle = await window.showSaveFilePicker({
+        suggestedName: name,
+        types: [{description: 'Roast Studio のデータ', accept: {'application/json': ['.json']}}],
+      });
+      const w = await handle.createWritable();
+      await w.write(blob);
+      await w.close();
+      note.textContent = `${label}を書き出しました(${name})。`;
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      note.textContent = `${label}を書き出しました(${name})。保存先はブラウザの設定に従います。`;
+    }
+  } catch(e){
+    if(e && e.name === 'AbortError'){ return; }   // 保存先の選択をやめただけ
+    note.textContent = '書き出せませんでした: ' + e;
+  }
+}
+
+// インポート・エクスポートの窓。設定からも、Macのメニューからもここへ来る。
+function openIoDialog(){
+  document.getElementById('exportPickPanel').style.display = 'none';
+  document.getElementById('ioOverlay').style.display = 'flex';
+}
+
+function closeIoDialog(){
+  document.getElementById('ioOverlay').style.display = 'none';
+}
+
+document.getElementById('btnOpenIo').onclick = openIoDialog;
+document.getElementById('btnIoClose').onclick = closeIoDialog;
+document.getElementById('ioOverlay').onclick = (e) => {
+  if(e.target === document.getElementById('ioOverlay')) closeIoDialog();
+};
+
+document.getElementById('btnExportAll').onclick = () => exportData('all');
+
+// 書き出すプロファイルを選ぶ。開いた時点で全部にチェックを入れておく
+// (「全部書き出す」が一番よくある使い方なので、そのまま押せば済む)。
+async function openExportPicker(){
+  const panel = document.getElementById('exportPickPanel');
+  const list = document.getElementById('exportPickList');
+  const note = document.getElementById('ioNote');
+  if(panel.style.display !== 'none'){ panel.style.display = 'none'; return; }
+  list.innerHTML = '<div class="sub">読み込み中…</div>';
+  panel.style.display = '';
+  let items = [];
+  try {
+    const res = await fetch(`${API}/api/custom_profiles`, {cache: 'no-store'});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    items = await res.json();
+  } catch(e){
+    list.innerHTML = '';
+    note.textContent = 'プロファイルの一覧を読めませんでした: ' + e;
+    panel.style.display = 'none';
+    return;
+  }
+  if(!items.length){
+    list.innerHTML = '<div class="sub">保存したプロファイルがありません。</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for(const p of items){
+    const row = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox'; box.value = p.id; box.checked = true;
+    const text = document.createElement('span');
+    const detail = [p.country, p.roast_level].filter(Boolean).join(' / ');
+    text.innerHTML = escapeHtml(p.name || p.id)
+      + (detail ? ` <span class="sub">${escapeHtml(detail)}</span>` : '');
+    row.appendChild(box); row.appendChild(text);
+    list.appendChild(row);
+  }
+}
+
+function exportPickedIds(){
+  return Array.from(document.querySelectorAll('#exportPickList input:checked'))
+    .map(el => el.value);
+}
+
+function setExportPickAll(checked){
+  document.querySelectorAll('#exportPickList input[type=checkbox]')
+    .forEach(el => { el.checked = checked; });
+}
+
+document.getElementById('btnExportProfiles').onclick = openExportPicker;
+
+
+document.getElementById('btnExportPickAll').onclick = () => setExportPickAll(true);
+document.getElementById('btnExportPickNone').onclick = () => setExportPickAll(false);
+document.getElementById('btnExportPickCancel').onclick = () => {
+  document.getElementById('exportPickPanel').style.display = 'none';
+};
+document.getElementById('btnExportPickRun').onclick = async () => {
+  const ids = exportPickedIds();
+  if(!ids.length){
+    document.getElementById('ioNote').textContent = '書き出すプロファイルを選んでください。';
+    return;
+  }
+  document.getElementById('exportPickPanel').style.display = 'none';
+  await exportData('profiles', ids);
+};
+document.getElementById('btnImport').onclick = () => document.getElementById('importFile').click();
+document.getElementById('importFile').addEventListener('change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = '';                 // 同じファイルを選び直せるようにする
+  if(!file) return;
+  await importFromText(await file.text(), file.name);
+});
+
+// 取り込むファイルの中に、いま持っているのと同じidのプロファイルが
+// あるか調べる。名前は「いまの名前 → 取り込む側の名前」で見せる。
+async function findImportClashes(body){
+  const incoming = body && body.data && body.data.custom_profiles;
+  if(!incoming || typeof incoming !== 'object') return [];
+  let current = [];
+  try {
+    const res = await fetch(`${API}/api/custom_profiles`, {cache: 'no-store'});
+    if(!res.ok) return [];
+    current = await res.json();
+  } catch(e){ return []; }             // 調べられなければ、これまで通り確認する
+  const byId = new Map(current.map(p => [p.id, p]));
+  return Object.keys(incoming)
+    .filter(id => byId.has(id))
+    .map(id => ({
+      id,
+      now: byId.get(id).name || id,
+      incoming: (incoming[id] && incoming[id].name) || id,
+    }));
+}
+
+// 上書きするか、重ならないものだけ取り込むか、やめるかを尋ねる。
+// 選ばれたものを返す('overwrite' / 'skip' / null)。
+function askImportConflict(clashes, fileName, scope){
+  const overlay = document.getElementById('importConflictOverlay');
+  document.getElementById('importConflictBody').textContent =
+    `「${fileName}」(${scope})の中に、いま持っているのと同じプロファイルが`
+    + `${clashes.length}件あります。上書きすると、いまの中身は失われます`
+    + '(取り込む前に控えは作られます)。';
+  const list = document.getElementById('importConflictList');
+  list.innerHTML = '';
+  for(const c of clashes){
+    const row = document.createElement('div');
+    row.style.padding = '3px 2px';
+    row.style.fontSize = '12px';
+    row.innerHTML = escapeHtml(c.now)
+      + (c.now === c.incoming ? '' : ` <span class="sub">→ ${escapeHtml(c.incoming)}</span>`);
+    list.appendChild(row);
+  }
+  overlay.style.display = 'flex';
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      overlay.style.display = 'none';
+      overlay.onclick = null;
+      resolve(value);
+    };
+    document.getElementById('btnImportConflictOverwrite').onclick = () => finish('overwrite');
+    document.getElementById('btnImportConflictSkip').onclick = () => finish('skip');
+    document.getElementById('btnImportConflictCancel').onclick = () => finish(null);
+    overlay.onclick = (e) => { if(e.target === overlay) finish(null); };
+  });
+}
+
+// ファイルの中身を受け取って取り込む。画面のファイル選択からも、
+// Macアプリのメニュー(ネイティブのファイル選択)からも、ここに来る。
+async function importFromText(text, fileName){
+  const note = document.getElementById('ioNote');
+  let body;
+  try { body = JSON.parse(text); }
+  catch(e){ note.textContent = 'このファイルは読めませんでした(JSONではありません)。'; return; }
+  const file = {name: fileName || '選んだファイル'};
+  const scope = body && body.scope === 'profiles' ? 'プロファイルだけ' : '一式';
+  // 同じプロファイルが入っていないか先に調べる。黙って上書きすると、
+  // 手を入れた自分のプロファイルが消えてしまう。
+  const clashes = await findImportClashes(body);
+  let onConflict = 'overwrite';
+  if(clashes.length){
+    const choice = await askImportConflict(clashes, file.name, scope);
+    if(!choice) return;                 // やめた
+    onConflict = choice;
+  } else if(!confirm(`「${file.name}」を取り込みます(${scope})。\n\n`
+    + '設定・較正・モデル構造は丸ごと差し替わります。'
+    + '取り込む前に、いまのデータの控えが自動で作られます。\n\n'
+    + 'よろしいですか?')) return;
+  note.textContent = '取り込み中…';
+  try {
+    const res = await fetch(`${API}/api/import`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({}, body, {on_conflict: onConflict})),
+    });
+    const d = await res.json();
+    if(!res.ok){ note.textContent = '取り込めませんでした: ' + (d.error || res.status); return; }
+    const merged = Object.entries(d.merged || {})
+      .map(([k, v]) => {
+        const extra = v['上書き'] ? `・${v['上書き']}件上書き`
+          : v['残した'] ? `・${v['残した']}件はそのまま` : '';
+        return `${k} ${v['増えた']}件追加(計${v['合計']})${extra}`;
+      }).join(' ・ ');
+    note.textContent = `取り込みました。${merged}`
+      + (d.replaced && d.replaced.length ? ` ・ 差し替え: ${d.replaced.join(', ')}` : '')
+      + ` ・ 控え: ${d.backup}`;
+    logNotice('取り込みました。表示を作り直します。');
+    closeIoDialog();
+    // 取り込んだ内容で画面を作り直す
+    await loadGuideTemps();
+    await initAppSettings();
+    searchProfiles('', 'profileList', currentTab === 'records' ? 'preset' : currentTab);
+    loadRoastHistoryTab();
+  } catch(e){ note.textContent = '取り込めませんでした: ' + e; }
 }
 
 document.getElementById('btnCalOpen').onclick = () => {
@@ -6069,7 +7894,6 @@ document.getElementById('btnCalReset').onclick = async () => {
 
 switchCalKind('deep');   // 説明文と入力欄の出し分けを初期化してから読む
 loadCalibration();
-loadCalibrationFromLogs();
 
 // ------------------------------------------------------------
 // モバイル版アクセス用のLANアドレス表示 + QRコード
@@ -6082,8 +7906,9 @@ async function loadServerInfo(){
     const info = await res.json();
     mobileAccessInfo = info;
     // アドレス自体はQRダイアログ側で表示するため、ここではボタンを出すだけ。
+    // 枠(topUtilityRow)は設定ボタンと共用なので常に出しておき、QRボタンだけ足す。
     if(info.host){
-      document.getElementById('mobileAccess').style.display = '';
+      document.getElementById('btnMobileQR').style.display = '';
     }
     // nhm.sqlite(プリセットの情報源)・ikawa_profiles.jsonの有無。無い場合はタブを
     // 出しても一覧が空にしかならないため、設定に関わらず非表示にする。
@@ -6222,26 +8047,31 @@ document.getElementById('mobileQrOverlay').onclick = (e) => {
 // モデルの誤差ではなく、observableの取り方の違い。
 // (2026-08: 当初はモデルの前半が高すぎる疑いとして扱っていたが、ガイド線を
 //  保守的に=明らかに変わった時点で決めている、と確認できたため解消した。)
-// 豆温度の帯。3つで出どころが違うので、ラベルで区別する。
+// 豆温度の帯。3つとも、アプリが実際に使っている値に合わせる。
 //
-//  ・1ハゼだけがモデルの計算そのもの。細胞の5%が壊れる温度(=設定した1ハゼ豆温度)から
-//    95%が壊れる温度(+6×ばらつき)まで。既定では196.0〜206.8℃。以前は190〜208℃と
-//    目分量で置いていて、モデルの言う範囲とずれていた。
-//  ・カラーチェンジはモデルに存在しない(入力でも較正点でもない)。一般に言われる
-//    豆温度の目安をそのまま置いている。
-//  ・2ハゼもモデルには無い。較正が仮定として置いている225℃の前後を目安として出す。
+//  ・1ハゼ: モデルの計算そのもの。細胞の5%が壊れる温度(=設定した1ハゼ豆温度)から
+//    95%が壊れる温度(+6×ばらつき)まで。既定では196.0〜205.7℃。
+//  ・カラーチェンジ: 「フェーズ境界の決め方」で豆温度モードのときに使うしきい値
+//    (設定 beanColorChange、既定132℃)の前後。以前は一般に言われる140〜150℃を
+//    置いていたが、判定に使う値と重ならず、同じ事象に2つの数字が出ていた
+//    (2026-09修正)。132℃は利用者のガイド線(吸入170℃)を横切る瞬間の豆温度の
+//    実測(焙煎ログ23件で中央131.9℃・プリセット174本で132.0℃)。
+//  ・2ハゼ: モデルは温度ではなく乾物の分解量(SC_DRY_FRAC)で判定する。その瞬間の
+//    豆温度をプリセット35本で測ると233.3〜236.8℃(中央234.9℃)に収まるので、その
+//    範囲を出す。以前は215〜225℃で、モデルが2ハゼと言う温度と重なっていなかった。
 //
 // なお帯はプロファイルごとには変わらない。豆が爆ぜる温度はカーブによらずほぼ一定
 // (実測で195.8〜196.2℃)なので、変えても全部同じ絵になる。プロファイルごとに
 // 変わるのは時刻のほうで、それは概要欄の1ハゼの見込み時刻で出している。
 function beanTempBands(){
   const fc = ENERGY.T_FC_BEAN;
+  const cc = Number(guideTemps.beanColorChange) || 132;
   return [
     // ラベルは短く。「計算」=モデルが出した値、「目安」=一般に言われる値、の区別だけ残す
     // (帯がグラフに重なるので、長いと肝心のカーブが読めない)。詳しくは操作マニュアル。
-    {lo: 140, hi: 150, label: 'カラーチェンジ(豆・目安)', color: cssVar('--guide-cc')},
+    {lo: cc - 5, hi: cc + 5, label: 'カラーチェンジ(豆・設定)', color: cssVar('--guide-cc')},
     {lo: fc, hi: fc + 6 * ENERGY.CRACK_SPREAD, label: '1ハゼ(豆・計算)', color: cssVar('--guide-fc')},
-    {lo: 215, hi: 225, label: '2ハゼ(豆・目安)', color: cssVar('--guide-sc')},
+    {lo: 233, hi: 237, label: '2ハゼ(豆・計算)', color: cssVar('--guide-sc')},
   ];
 }
 // 推定豆温度の線を出している時だけ帯を描く(線が無いと読みようがないため)。
@@ -6503,8 +8333,7 @@ function renderChart(){
   // 焙煎ログを重ねている時は、そのログの実測値からも豆温度を推定する。
   const historyBeanTempData = historyOverlayRecord
     ? beanTempSeriesFrom(historyOverlayRecord.roast.map(p => [p[0], p[1]]),
-                         (historyOverlayRecord.fan || []).map(p => [p[0], p[1]]),
-                         historyOverlayRecord.altitude_bucket) : [];
+                         (historyOverlayRecord.fan || []).map(p => [p[0], p[1]])) : [];
   const liveData = liveSamples.map(s => ({x:s.t, y:s.bt}));
   const liveFanData = liveSamples
     .filter(s => s.fan !== null && s.fan !== undefined)
@@ -6535,10 +8364,14 @@ function renderChart(){
   // 肝心のカーブが数十pxに潰れて読めなくなる。
   const compact = chartIsCompact();
   lastChartCompact = compact;
+  // 焙煎中は、見たいのは実測のほう。設計の線は機械がほぼなぞるので2本が重なり、
+  // 太い実線と大きな制御点が細い実測線を覆ってしまう。焙煎中だけ設計側を細く・
+  // 点を小さくして下がらせる(重なり順は既に実測が手前だが、太さで負けていた)。
+  const tracing = liveData.length > 1;
   const pointColors = editedRoast.map((_, i) =>
     isSelected('roast', i) ? cssVar('--point-selected') : (i === fcIndex ? cssVar('--sage') : cssVar('--line-edit')));
   const pointRadii = editedRoast.map((_, i) =>
-    (isSelected('roast', i) ? 8 : (i === fcIndex ? 7 : 5)) * ps);
+    (isSelected('roast', i) ? 8 : (i === fcIndex ? 7 : 5)) * ps * (tracing ? 0.45 : 1));
   const fanPointColors = editedFan.map((_, i) => isSelected('fan', i) ? cssVar('--point-selected') : cssVar('--line-fan'));
   const fanPointRadii = editedFan.map((_, i) => (isSelected('fan', i) ? 8 : 4) * ps);
 
@@ -6576,7 +8409,9 @@ function renderChart(){
           pointRadius:0, borderWidth:1.5, tension:0, yAxisID:'yTemp' },
         { label:'吸入温度', data:editData, borderColor:cssVar('--line-edit'), backgroundColor:cssVar('--line-edit'),
           pointBackgroundColor:pointColors, pointRadius:pointRadii, pointHoverRadius:8,
-          borderWidth:3, tension:0, yAxisID:'yTemp' },
+          // 焙煎中は破線の細線にして、実測(太い実線)を前に出す
+          borderWidth:tracing ? 1.4 : 3, borderDash:tracing ? [5, 4] : [],
+          tension:0, yAxisID:'yTemp' },
         // 2026-07再訂正: 当初「制御点間はステップ状(手前の値を保持)」と推定し
         // stepped:'after'にしていたが、実機ログの実測風量と突き合わせたところ
         // 明確に否定された(1プロファイルの(6,75%)→(520,58%)区間で、実測値は
@@ -6591,7 +8426,7 @@ function renderChart(){
         { label:'風量', data:fanData, borderColor:cssVar('--line-fan'), pointBackgroundColor:fanPointColors,
           pointRadius:fanPointRadii, borderWidth:1.6, borderDash:[2,2], tension:0, yAxisID:'yFan' },
         { label:'実測', data:liveData, borderColor:cssVar('--line-live'), pointRadius:0,
-          borderWidth:2.5, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
+          borderWidth:3, tension:0.15, cubicInterpolationMode:'monotone', yAxisID:'yTemp',
           // 容器エラー等が発生していた区間は、線の色を変えて一目で分かるようにする。
           segment: { borderColor: (ctx) => isTimeInErrorSpan((ctx.p0.parsed.x + ctx.p1.parsed.x) / 2) ? cssVar('--line-error') : undefined } },
         { label: compareProfile ? `比較: ${compareProfile.name}` : '比較', data:compareData,
@@ -6960,38 +8795,11 @@ function layoutShrinkFactor(){
 // そのぶんグラフを描く面積が減る。縮小率のまま2.4倍にすると、凡例が何行にも
 // 折り返してグラフ本体を押しつぶすので、上限を設けて控えめにする。
 // 1.8倍だと画面上7〜9px相当で、読めて、かつ場所を取りすぎない。
-// ------------------------------------------------------------
-// 標高による1ハゼ豆温度の補正
-// ------------------------------------------------------------
-// 標高は「焙煎する豆」の性質なので、豆情報(購入した豆)の標高だけを見る。
-// プロファイル側の標高は使わない。産地標高の合わないプロファイルで焼くことがあり、
-// 実際に爆ぜる温度を決めるのは焙煎機に入っている豆のほうだからである。
-// したがって標高が効くのは焙煎ログの推定豆温度だけで、プロファイルの推定には効かない
-// (どの豆を焼くかは、焙煎するまで決まらない)。
-//
-// 傾きは手で設定しない。焙煎ログの「1ハゼ確認」の実測から学んだ値があればそれを使い、
-// 無ければ0(=補正しない)。手で決めるだけの根拠が無いので、実測で決まるまで効かせない。
-const ENERGY_BASE_T_FC_BEAN = 196.0;   // モデルの既定値(何も学んでいないとき)
-let learnedFcBeanTemp = null;          // 焙煎ログから学んで採用中の1ハゼ豆温度
-let altitudeFcSlope = 0.0;             // 焙煎ログから学んだ傾き(℃/1000m)
-
-// 基準標高での1ハゼ豆温度。標高の分からない豆はこの値で計算する。
-function baseFcBeanTemp(){
-  return learnedFcBeanTemp === null ? ENERGY_BASE_T_FC_BEAN : learnedFcBeanTemp;
-}
-
-// 焙煎ログから学んだ値をモデルへ反映する(サーバー側の推定と揃える)。
-function applyLearnedFcBeanTemp(fcBeanTemp, slope){
-  const f = Number(fcBeanTemp);
-  learnedFcBeanTemp = Number.isFinite(f) && f >= 170 && f <= 225 ? f : null;
-  const sl = Number(slope);
-  altitudeFcSlope = Number.isFinite(sl) && sl >= -10 && sl <= 10 ? sl : 0.0;
-  ENERGY.T_FC_BEAN = baseFcBeanTemp();
-  // 前提が変わったので覚えている推定は捨てる
-  energyCache = {key: null, result: null};
-  beanTempSeriesCache = {key: null, result: []};
-}
-
+// 1ハゼ豆温度と、標高・生産国・品種・精製方法による補正は、サーバー側の
+// 学習(roastlib/learning.py)が済ませた値がENERGYに載って届く。以前ここに
+// あった learnedFcBeanTemp / altitudeFcSlope / applyLearnedFcBeanTemp は、
+// それらを配っていた /api/calibration/from_logs ごと無くなり、呼ぶ場所が
+// 一つも残っていなかった(常に既定の196℃・傾き0のまま動いていた)。
 const CHART_TEXT_MAX_SCALE = 1.8;
 function chartTextScale(){
   return Math.min(layoutShrinkFactor(), CHART_TEXT_MAX_SCALE);
@@ -7325,7 +9133,8 @@ async function runProfileHealthCheck(){
   try {
     const res = await fetch(`${API}/api/profile_health`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({roast: editedRoast, roast_level: currentRoastLevelForHealth()}),
+      body: JSON.stringify({roast: editedRoast, fan: editedFan || [],
+                            roast_level: currentRoastLevelForHealth()}),
     });
     if(!res.ok){ el.style.display = 'none'; return; }
     renderProfileHealth(await res.json());
@@ -7418,11 +9227,21 @@ function updateProfileOverviewVisibility(){
   const show = !!currentProfile && !roastingSessionActive && currentGraphView !== 'history';
   document.getElementById('profileOverviewRow').style.display = show ? '' : 'none';
   updateEditHintVisibility();
+  // 「焙煎グラフへ」も、選んでいるかどうかで決まる。ここは選択・ビュー切り替えの
+  // どちらでも通るので、まとめて面倒を見る(selectProfile の途中で呼ぶと、
+  // currentProfile がまだ入っておらず出ないことがあった)。
+  updateGoGraphButton();
 }
 
 // グラフ編集操作の説明は、実際にカーブを編集できる状態(プロファイル選択済みで、
 // グラフが見えているビュー)の時だけ出す。未選択のうちは編集対象が無く、
 // 画面上で一番目立つ長文が読む必要のない案内になってしまうため。
+// 選んでいるプロファイルがあるときだけ「焙煎グラフへ」を出す。
+function updateGoGraphButton(){
+  const btn = document.getElementById('btnGoGraphFromSelect');
+  if(btn) btn.style.display = currentProfile ? '' : 'none';
+}
+
 function updateEditHintVisibility(){
   const el = document.getElementById('editHint');
   if(!el) return;
@@ -7434,9 +9253,11 @@ function updateProfileOverview(){
   updateProfileOverviewVisibility();
   if(!currentProfile || editedRoast.length < 2) return;
   const first = editedRoast[0], last = editedRoast[editedRoast.length - 1];
-  document.getElementById('ovPreheatTemp').textContent = first[1] + '℃';
+  // 単位は ℃(U+2103) ではなく °C と書く。IBM Plex Mono に ℃ の字形が無く、
+  // 全角のCJKフォントに落ちて数字の1.7倍の幅になり、桁が揃わないため。
+  document.getElementById('ovPreheatTemp').textContent = first[1] + '°C';
   document.getElementById('ovRoastTime').textContent = fmtMMSS(last[0]);
-  document.getElementById('ovFinalTemp').textContent = `吸入 ${last[1]}℃`;
+  document.getElementById('ovFinalTemp').textContent = `吸入 ${last[1]}°C`;
   // 推定入熱・推定焙煎指数(温度カーブと風量カーブから計算した推定値)
   const est = currentEnergyEstimate();
   document.getElementById('ovEnergy').textContent = est ? `${est.totalKcal.toFixed(1)} kcal` : '--';
@@ -7445,7 +9266,7 @@ function updateProfileOverview(){
   if(est){
     const diff = est.endBeanTemp - last[1];
     document.getElementById('ovEndBeanTemp').textContent =
-      `豆 ${est.endBeanTemp.toFixed(1)}℃ (${diff >= 0 ? '+' : ''}${diff.toFixed(1)})`;
+      `豆 ${est.endBeanTemp.toFixed(1)}°C (${diff >= 0 ? '+' : ''}${diff.toFixed(1)})`;
   } else {
     document.getElementById('ovEndBeanTemp').textContent = '豆 --';
   }
@@ -8120,7 +9941,9 @@ function updateFcConsistencyNote(){
   const air = at.air;
   let msg = `いまのプロファイルだと、豆${ENERGY.T_FC_BEAN}℃に達するのは`
           + `${fmtMMSS(est.crackStart)}、そのときの吸入温度は${air.toFixed(1)}℃の見込みです。`;
-  if(guide !== null && guide !== undefined){
+  // ガイド線との突き合わせは、境界を吸入温度で決めているときだけ意味がある。
+  // 豆温度モードではガイド線を使わないので、差を出しても直しようがない。
+  if(guideTemps.mode !== 'bean' && guide !== null && guide !== undefined){
     const d = air - guide;
     msg += `（ガイド線の1ハゼは${guide}℃で、差は${d >= 0 ? '+' : ''}${d.toFixed(1)}℃）`;
     if(Math.abs(d) > 8) msg += ' 差が大きいので、どちらかの設定を見直してください。';
@@ -8553,15 +10376,34 @@ document.getElementById('btnExit').onclick = async () => {
 };
 // 設定の開け閉め。開くたびに、他の画面での操作で古くなりうる表示を作り直す
 // (ガイド線との辻褄・焙煎ログからの学習結果は、焙煎したり豆情報を直すと変わる)。
-document.getElementById('btnSettings').onclick = () => {
-  settingsOpen = !settingsOpen;
+function toggleSettings(open){
+  settingsOpen = (open === undefined) ? !settingsOpen : open;
   applySidebarView();
   if(settingsOpen){
-    document.querySelector('.sidebar').scrollTop = 0;
+    document.querySelector('.main').scrollTop = 0;
     updateFcConsistencyNote();
-    loadCalibrationFromLogs();
+    loadLearningState();     // 学習の件数と節目を開くたびに読み直す
   }
+}
+
+// 最初の画面へ戻る。奥に入った画面(設定・豆選び・記録の編集)を閉じて、
+// 焙煎グラフに戻すだけ。プロファイルや豆の選択は消さない。
+function goHome(){
+  if(settingsOpen) toggleSettings(false);
+  if(beanPickerOpen) closeBeanPicker();
+  if(currentTab === 'records') switchTab(lastProfileSourceTab || 'preset');
+  leaveGeneratorTo('graph');
+  const main = document.querySelector('.main');
+  if(main) main.scrollTop = 0;
+}
+
+document.getElementById('btnHome').onclick = goHome;
+document.getElementById('btnHome').onkeydown = (e) => {
+  if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); goHome(); }
 };
+
+document.getElementById('btnSettings').onclick = () => toggleSettings();
+document.getElementById('btnSettingsClose').onclick = () => toggleSettings(false);
 
 let filterOptionsRefreshTimer = null;
 document.getElementById('searchBox').addEventListener('input', (e) => {
@@ -8577,6 +10419,9 @@ applySidebarView();          // 設定は畳んだ状態から始める
 setSearchBoxVisibility('searchBox', 'preset');
 populateCategoryFilter('preset', 'categoryFilter');
 searchProfiles('', 'profileList', 'preset');
+// まだ何も選んでいないので、プロファイル選択のタブから始める
+// (見出しも「プロファイルを選択してください」になっている)。
+switchGraphView('select');
 renderChart();
 fetchLastSentProfile();
 

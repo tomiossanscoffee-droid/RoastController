@@ -20,6 +20,8 @@ NOT_USER_DATA = {
     "ROAST_VAPID_KEY_PATH",   # 通知用の鍵
     # 配布版だけにある同梱サンプル(読み取り専用。初回起動時に保存済みへ複製する)
     "ROAST_SAMPLE_PROFILES_PATH",
+    # 保存先ではなく、先読みを裏で走らせるかどうかの切り替え(conftestが切る)
+    "ROAST_NO_BACKGROUND_WARMUP",
 }
 
 

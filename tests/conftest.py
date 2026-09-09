@@ -26,7 +26,10 @@ SANDBOX_ENV_VARS = (
     "ROAST_FAVORITES_PATH",
     "ROAST_GUIDE_TEMPS_PATH",
     "ROAST_LAST_SENT_PROFILE_PATH",
+    "ROAST_LEARNED_CACHE_PATH",
+    "ROAST_ESTIMATE_CACHE_PATH",
     "ROAST_MOBILE_HOST_PATH",
+    "ROAST_MODEL_STRUCTURE_PATH",
     "ROAST_PUSH_SUBSCRIPTIONS_PATH",
     "ROAST_RECORDS_PATH",
     "ROAST_SELECTED_BEAN_PATH",
@@ -43,13 +46,19 @@ def srv(tmp_path, monkeypatch):
     """保存先をすべてtmp_pathに向けた app.server を返す。"""
     for env_var in SANDBOX_ENV_VARS:
         monkeypatch.setenv(env_var, str(sandbox_path(tmp_path, env_var)))
+    # 先読みを裏で走らせない。reload はモジュールを作り直さず中身を入れ替える
+    # ので、前のテストが始めたスレッドが「今のテストの保存先」に書き込み、
+    # 覚えている値が実行ごとに変わってしまう(実際に検査が揺れた)。
+    monkeypatch.setenv("ROAST_NO_BACKGROUND_WARMUP", "1")
     import app.server as server
     importlib.reload(server)
+    assert not server._BACKGROUND_WARMUP, "先読みが止まっていません"
     # 差し替えが効いていることを、実際のパスで確かめてから渡す。
     # (名前を間違えるとリポジトリ直下のファイルを指したままになる)
     for attr in ("APP_SETTINGS_PATH", "BEAN_PURCHASES_PATH", "CALIBRATION_PATH",
                  "CUSTOM_PATH", "FAVORITES_PATH", "GUIDE_TEMPS_PATH",
-                 "LAST_SENT_PROFILE_PATH", "MOBILE_HOST_PATH",
+                 "ESTIMATE_CACHE_PATH", "LAST_SENT_PROFILE_PATH",
+                 "LEARNED_CACHE_PATH", "MOBILE_HOST_PATH",
                  "PUSH_SUBSCRIPTIONS_PATH", "ROAST_RECORDS_PATH",
                  "SELECTED_BEAN_PATH", "UNSAVED_ROAST_COUNTS_PATH"):
         p = getattr(server, attr)

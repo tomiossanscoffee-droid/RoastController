@@ -271,14 +271,20 @@ def test_途中重量が1点だけだと当てはめが暴れる():
 
 
 def test_ずらした定数を当てはめで戻せる():
-    true = {"U0": 1.15, "CRACK_SPREAD": 1.40, "H_ENDO": 0.85,
-            "K_PYRO": 1.30, "K_DRY": 0.75}
+    """当てはめる4つの定数を、ずらした状態から元に戻せること。
+
+    H_ENDO は当てはめの対象から外した(2026-09)。2ハゼを乾物の分解量で判定する
+    ように直した結果、2ハゼは焙煎後の重量と同じものを測ることになり、H_ENDO を
+    決める手がかりが無くなったため。詳しくは roastlib/calibration.py 参照。
+    """
+    true = {"U0": 1.15, "CRACK_SPREAD": 1.40, "K_PYRO": 1.30, "K_DRY": 0.75}
     cal = {
         "U0": E.U0 * true["U0"], "CRACK_SPREAD": E.CRACK_SPREAD * true["CRACK_SPREAD"],
-        "H_ENDO": E.H_ENDO * true["H_ENDO"], "K_PYRO": E.K_PYRO * true["K_PYRO"],
+        "K_PYRO": E.K_PYRO * true["K_PYRO"],
         "K_SURFACE": E.K_SURFACE * true["K_DRY"], "K_INNER": E.K_INNER * true["K_DRY"],
     }
     got = C.fit(observe(cal))["scale"]
+    assert "H_ENDO" not in got, "H_ENDOは当てはめないはず"
     for k, want in true.items():
         # 乾燥の速さ(K_DRY)だけは緩めに見る。水の大半が1ハゼ前後まで豆の中に
         # 残るようになったので、途中の重量は乾燥の速さにあまり反応せず、元の値を
@@ -394,129 +400,150 @@ def test_seriesに残存重量が入っている():
     assert all(b["mass"] <= a["mass"] + 1e-12 for a, b in zip(s, s[1:]))
 
 
-# ---- 焙煎ログから学ぶ ----
-
-def _fake_record(fc_t, sc_t=None, inferred=False, curve=None):
-    r = E.estimate(P["roast"], P["fan"])
-    return {
-        "roast_curve": curve if curve is not None else [[p["t"], p["air"]] for p in r["series"]],
-        "fan_curve": P["fan"],
-        "fc_time": fc_t, "fc_time_inferred": inferred, "sc_time": sc_t,
-    }
-
-
-def test_1ハゼ確認を押した記録だけを使う():
-    """ガイド温度からの推定値で較正すると、モデルの入力で自分を較正することになる。"""
-    res = C.learn_from_logs([
-        _fake_record(400.0),                    # 実測 → 使う
-        _fake_record(400.0, inferred=True),     # 推定 → 使わない
-        _fake_record(None),                     # 未記録 → 使わない
-        _fake_record(400.0, curve=[]),          # カーブなし → 使わない
-    ])
-    assert res["fc"]["n"] == 1
-    assert res["skipped"]["推定値のみ"] == 1
-    assert res["skipped"]["1ハゼ未記録"] == 1
-    assert res["skipped"]["カーブなし"] == 1
+# ------------------------------------------------------------
+# 焙煎ログからの学習(roastlib/learning.py)
+# ------------------------------------------------------------
+def _log(fc=440.0, sc=620.0, green=50.0, roasted=41.0, inferred=False, curve=None):
+    """学習に使える形の焙煎記録を作る。"""
+    prof = C.CALIBRATION_PROFILE
+    if curve is None:
+        r = E.estimate(prof["roast"], prof["fan"], moisture=0.11)
+        curve = [[p["t"], p["air"]] for p in r["series"]]
+    return {"roast_curve": curve, "fan_curve": [list(x) for x in prof["fan"]],
+            "fc_time": fc, "fc_time_inferred": inferred, "sc_time": sc,
+            "green_g": green, "roasted_g": roasted, "bean_purchase_id": "b1"}
 
 
-def test_2ハゼも実測から集められる():
-    res = C.learn_from_logs([_fake_record(400.0, 560.0), _fake_record(410.0, 570.0)])
-    assert res["fc"]["n"] == 2 and res["sc"]["n"] == 2
-    # 2ハゼは1ハゼより高い温度になる
-    assert res["sc"]["median"] > res["fc"]["median"]
+def test_学習に使える記録の条件():
+    """カーブがあり、重量か実測の1ハゼのどちらかがあれば使う。
+
+    あるものだけを学び、無いものは学ばない。重量だけの記録は質量の補正に、
+    1ハゼだけの記録は1ハゼ豆温度の補正に効く。
+    """
+    import roastlib.learning as L
+    assert L.is_learnable(_log())
+    # 重量が無くても、実測の1ハゼがあれば使う
+    bad = _log(); bad["roasted_g"] = None
+    assert L.is_learnable(bad)
+    # 1ハゼが無くても、重量があれば使う
+    assert L.is_learnable(_log(inferred=True))
+    # どちらも無ければ使わない
+    none = _log(inferred=True); none["green_g"] = None; none["roasted_g"] = None
+    assert not L.is_learnable(none)
+    # 焙煎後が生豆より重いのはあり得ない。1ハゼも自動入力なら使えない
+    bad = _log(roasted=51.0, inferred=True)
+    assert not L.is_learnable(bad)
+    # カーブが無ければ何も測れない
+    nocurve = _log(); nocurve["roast_curve"] = []
+    assert not L.is_learnable(nocurve)
 
 
-def test_2ハゼが1ハゼより前なら使わない():
-    res = C.learn_from_logs([_fake_record(400.0, 300.0)])
-    assert res["fc"]["n"] == 1 and res["sc"]["n"] == 0
+def test_あるものだけを学ぶ():
+    """記録に含まれる項目に応じて、学べるものだけを返すこと。"""
+    import roastlib.learning as L
+    full = L.observe(_log(), moisture=0.11)
+    assert all(full[k] is not None for k in ("fcBeanTemp", "scDryFrac", "indexRatio"))
+    only_w = _log(inferred=True)          # 1ハゼは自動入力 = 信用しない
+    o = L.observe(only_w, moisture=0.11)
+    assert o["indexRatio"] is not None and o["fcBeanTemp"] is None
+    only_c = _log(); only_c["green_g"] = None; only_c["roasted_g"] = None
+    o = L.observe(only_c, moisture=0.11)
+    assert o["fcBeanTemp"] is not None and o["indexRatio"] is None
 
 
-def test_記録が増えるほどばらつきが出る():
-    """1件だけならばらつき0。複数集めて初めて確からしさが見える。"""
-    one = C.learn_from_logs([_fake_record(400.0)])
-    assert one["fc"]["n"] == 1 and one["fc"]["sd"] == 0.0
-    many = C.learn_from_logs([_fake_record(t) for t in (380.0, 400.0, 420.0)])
-    assert many["fc"]["n"] == 3 and many["fc"]["sd"] > 0
-    assert many["fc"]["min"] < many["fc"]["median"] < many["fc"]["max"]
+def test_2ハゼ未記録でも1ハゼと重量は学習に使う():
+    import roastlib.learning as L
+    o = L.observe(_log(sc=None), moisture=0.11)
+    assert o is not None
+    assert o["fcBeanTemp"] is not None
+    assert o["indexRatio"] is not None
+    assert o["scDryFrac"] is None
 
 
-def test_範囲外の時刻は使わない():
-    res = C.learn_from_logs([_fake_record(99999.0), _fake_record(-5.0)])
-    assert res["fc"]["n"] == 0
-    assert res["skipped"]["時刻が範囲外"] >= 1
+def test_品種が複数並んでいても1件ずつ数える():
+    import roastlib.learning as L
+    assert L.split_axis("ブルボン、ティピカ") == ["ブルボン", "ティピカ"]
+    assert L.split_axis("SL28 / SL34") == ["SL28", "SL34"]
+    assert L.split_axis("ゲイシャ") == ["ゲイシャ"]
+    assert L.split_axis("") == ["未分類"]
+    assert L.split_axis(None) == ["未分類"]
 
 
-def test_記録が無ければ空で返る():
-    res = C.learn_from_logs([])
-    assert res["fc"]["n"] == 0 and res["fc"]["median"] is None
-    assert res["sc"]["n"] == 0
-    assert res["altitude"]["n"] == 0 and res["altitude"]["slope"] is None
+def test_未知の項目は全体の値から始まり件数で育つ():
+    """新しい生産国や品種が増えても壊れず、件数が増えるほどその項目自身へ寄る。"""
+    import roastlib.learning as L
+    base = 200.0
+    assert L._shrunk([], base) == base                    # 0件は全体そのもの
+    one = L._shrunk([205.0], base)
+    many = L._shrunk([205.0] * 30, base)
+    assert base < one < many < 205.0                      # 件数とともに近づく
+    assert abs(one - 201.25) < 0.01                       # n/(n+3)の重み
 
 
-# ---- 標高による差を学ぶ ----
-# 標高は「焙煎した豆」の性質なので、豆情報(購入した豆)の標高だけを見る。
-# プロファイル側の標高は使わない(産地の合わないカーブで焼くことがある)。
-
-def _alt_record(fc_t, bucket):
-    r = _fake_record(fc_t)
-    r["_alt"] = bucket
-    return r
-
-
-def _learn_alt(records):
-    return C.learn_from_logs(records, altitude_of=lambda r: r.get("_alt", ""))
+def test_学習は初期データから始まる():
+    """ログが1件も無くても、較正5本を初期値として補正が出る。"""
+    import roastlib.learning as L
+    r = L.learn([], moisture=0.11, axis_of=lambda ax, rec: "")
+    assert r["n"] == len(L.SEED_ROASTS) and r["logs"] == 0
+    # 初期データから出る値が、モデルの既定値とかけ離れていないこと
+    assert abs(r["global"]["fcBeanTemp"] - E.T_FC_BEAN) < 2.0
+    assert abs(r["global"]["scDryFrac"] - E.SC_DRY_FRAC) < 0.005
 
 
-def test_標高は豆情報から渡された分だけ数える():
-    res = _learn_alt([_alt_record(400.0, "1000m未満"), _alt_record(410.0, "")])
-    assert res["altitude"]["n"] == 1          # 標高未入力の豆は数に入らない
-    assert res["fc"]["n"] == 2                # 1ハゼの集計そのものには入る
+def test_重量が無い記録も構造の見直しに使える():
+    """is_learnable が「重量かハゼのどちらか」で通すので、変換も同じでなければ
+    実際のログで例外になる(2026-09にそれで落ちた)。"""
+    import roastlib.learning as L
+    only_crack = _log(); only_crack["green_g"] = None; only_crack["roasted_g"] = None
+    r = L.record_to_roast(only_crack, 0.11)
+    assert r is not None
+    assert "fcStart" in r["meas"] and "roastedG" not in r["meas"]
+    only_weight = _log(inferred=True)      # 1ハゼは自動入力 = 使わない
+    r = L.record_to_roast(only_weight, 0.11)
+    assert r is not None
+    assert "roastedG" in r["meas"] and "fcStart" not in r["meas"]
+    # どちらも無ければ変換もしない
+    none = _log(inferred=True); none["green_g"] = None; none["roasted_g"] = None
+    assert L.record_to_roast(none, 0.11) is None
 
 
-def test_同じ標高帯だけなら傾きは出さない():
-    """傾きなのか基準値のずれなのか区別が付かないため。"""
-    res = _learn_alt([_alt_record(t, "1500-2000m") for t in (380.0, 400.0, 420.0, 440.0)])
-    assert res["altitude"]["n"] == 4 and res["altitude"]["buckets"] == 1
-    assert res["altitude"]["slope"] is None
+def test_実際の焙煎記録で構造の見直しの前準備が通る():
+    """手元の記録をそのまま流して、例外が出ないこと。"""
+    import json, pathlib
+    import roastlib.learning as L
+    p = pathlib.Path(__file__).resolve().parent.parent / "roast_records.json"
+    if not p.exists():
+        return
+    recs = json.loads(p.read_text(encoding="utf-8"))
+    n = 0
+    for rec in recs.values():
+        r = L.record_to_roast(rec, 0.11)
+        if r is not None:
+            assert r["meas"], "観測が空の変換結果を返しています"
+            n += 1
+    assert n >= 0
 
 
-def test_件数が足りなければ傾きは出さない():
-    res = _learn_alt([_alt_record(400.0, "1000m未満"), _alt_record(420.0, "2000m以上")])
-    assert res["altitude"]["buckets"] == 2 and res["altitude"]["slope"] is None
+def test_標高も生産国や品種と同じ軸として学ぶ():
+    """標高は4つの補正軸の1つ。件数が増えるほどその標高帯自身の値へ寄る。
 
-
-def test_標高が違う記録がそろうと傾きが出る():
-    """高地の豆ほど高い温度で爆ぜていれば、正の傾きになる。"""
-    res = _learn_alt([
-        _alt_record(390.0, "1000m未満"), _alt_record(395.0, "1000m未満"),
-        _alt_record(430.0, "2000m以上"), _alt_record(435.0, "2000m以上"),
-    ])
-    a = res["altitude"]
-    assert a["buckets"] == 2 and a["n"] == 4
-    assert a["slope"] > 0
-    # 基準標高(1750m)での値は、低地と高地の実測の間に収まる
-    assert res["fc"]["min"] < a["base"] < res["fc"]["max"]
-
-
-def test_逆向きでも学べる():
-    res = _learn_alt([
-        _alt_record(430.0, "1000m未満"), _alt_record(435.0, "1000m未満"),
-        _alt_record(390.0, "2000m以上"), _alt_record(395.0, "2000m以上"),
-    ])
-    assert res["altitude"]["slope"] < 0
-
-
-def test_傾きは行き過ぎないよう頭を押さえる():
-    """記録が偏っていても、モデルが壊れる値までは動かさない。"""
-    res = _learn_alt([
-        _alt_record(300.0, "1000m未満"), _alt_record(300.0, "1000m未満"),
-        _alt_record(600.0, "1000-1500m"), _alt_record(600.0, "1000-1500m"),
-    ])
-    assert -10.0 <= res["altitude"]["slope"] <= 10.0
-
-
-def test_標高を渡さなければ学ばない():
-    """豆情報を繋いでいない使い方でも、今までどおり1ハゼだけ学べること。"""
-    res = C.learn_from_logs([_fake_record(t) for t in (390.0, 400.0, 410.0, 420.0)])
-    assert res["fc"]["n"] == 4
-    assert res["altitude"]["n"] == 0 and res["altitude"]["slope"] is None
+    以前は energy.py の ALTITUDE_FC_SLOPE(線形の傾き1本)で表していたが、
+    傾きを配る経路が無くなって常に0のまま動いていた。いまは生産国・品種・
+    精製方法と同じ縮小推定で扱う。
+    """
+    import roastlib.learning as L
+    assert L.AXES == ("altitude", "country", "variety", "process")
+    axis_of = lambda ax, rec: rec.get(ax, "")
+    recs = [dict(_log(), altitude="2000m以上") for _ in range(6)]
+    st = L.learn(recs, 0.11, axis_of=axis_of)
+    hi = st["axes"]["altitude"]["2000m以上"]
+    assert hi["n"] == 6
+    # 初期データ(SEED_ROASTS)は1500-2000m帯なので、別の帯として立つ
+    assert "1500-2000m" in st["axes"]["altitude"]
+    # 標高を入れていない記録は「未分類」に落ちるだけで、捨てられない
+    st2 = L.learn([dict(_log()) for _ in range(3)], 0.11, axis_of=axis_of)
+    assert st2["axes"]["altitude"]["未分類"]["n"] == 3
+    # 未知の標高帯は「補正なし」ではなく、全体の値から始まって件数で育つ
+    assert L._shrunk([], 200.0) == 200.0
+    one, many = L._shrunk([205.0], 200.0), L._shrunk([205.0] * 30, 200.0)
+    assert 200.0 < one < many < 205.0

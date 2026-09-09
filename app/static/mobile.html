@@ -269,7 +269,7 @@
      確かめられるようにするためだけに出す(未選択でも焙煎はできる)。 -->
 <!-- 焙煎する豆。PC版と同じものを見て・選べる。新しい豆の登録はPC版だけ。 -->
 <div class="roast-bean-line" id="roastBeanLine">
-  焙煎する豆:<b id="roastBeanName">選んでいません(選ばなくても焙煎できます)</b>
+  焙煎する豆(任意):<b id="roastBeanName">選んでいません</b>
   <div class="rb-actions">
     <button class="btn small" id="btnPickRoastBean">豆を選ぶ</button>
     <button class="btn small" id="btnClearRoastBean" style="display:none;">外す</button>
@@ -1501,8 +1501,8 @@ function applySelectedBean(payload){
   const clear = document.getElementById('btnClearRoastBean');
   const pick = document.getElementById('btnPickRoastBean');
   if(!name) return;
-  name.textContent = selectedBeanId ? selectedBeanLabel
-                                    : '選んでいません(選ばなくても焙煎できます)';
+  // 「(任意)」は見出しに入れてあるので、ここは状態だけにする(PC版と同じ)。
+  name.textContent = selectedBeanId ? selectedBeanLabel : '選んでいません';
   if(clear) clear.style.display = selectedBeanId ? '' : 'none';
   if(pick) pick.textContent = selectedBeanId ? '別の豆にする' : '豆を選ぶ';
   if(beanPickerOpen){ loadBeanPickerList(); }

@@ -21,6 +21,7 @@ bean_purchases.json
 last_sent_profile.json
 unsaved_roast_counts.json
 calibration.json
+model_structure.json
 selected_bean.json
 mobile_host.json
 
