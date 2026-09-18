@@ -179,6 +179,13 @@ _continuous_sending: bool = False
 CONTINUOUS_ROAST_RESTART_DELAY = 10.0   # 既定値
 CONTINUOUS_ROAST_DELAY_MIN = 5.0
 CONTINUOUS_ROAST_DELAY_MAX = 600.0
+# 再送を何回まで試すか、失敗したら何秒待ってから次を試すか。
+# 2026-09: 排出のあと焙煎機がBLEのリンクを一度切るため、待ち時間の直後に送ると
+# 書き込みの途中で切断されることがある(実機ログで確認)。同じ状況から手で送り直すと
+# 成功しているので、つなぎ直して送り直せば繋がる。機械が次を受け付けられるように
+# なるまでの待ちとして、間に少し置く。
+CONTINUOUS_SEND_ATTEMPTS = 3
+CONTINUOUS_SEND_RETRY_DELAY = 10.0
 # 焙煎完了後、どの端末からも保存要求が来ないと判断するまでの猶予(秒)
 UNHANDLED_ROAST_COUNT_DELAY = 20.0
 _last_fc_time: Optional[float] = None          # 1ハゼを記録した経過時間(秒)。新しい焙煎開始時にリセット。
@@ -3176,6 +3183,31 @@ def _stop_continuous_roast(reason: str) -> None:
         }))
 
 
+async def _reconnect_for_continuous(attempt: int) -> bool:
+    """連続焙煎の再送のために、焙煎機につなぎ直す。
+
+    排出のあとは焙煎機がリンクを切っているのが普通なので、ここで切れているのは
+    異常ではない。つなぎ直せたらTrue。
+    """
+    global _session
+    await _broadcast({
+        "type": "status",
+        "message": f"連続焙煎: 焙煎機につなぎ直しています"
+                   f"({attempt}/{CONTINUOUS_SEND_ATTEMPTS})...",
+    })
+    if _session is None:
+        _session = RoasterSession(
+            on_telemetry=_on_telemetry, on_status=_on_status, on_state=_on_state,
+        )
+    try:
+        ok = await _session.connect()
+    except Exception as e:  # noqa: BLE001
+        await _broadcast({"type": "status", "message": f"連続焙煎: つなぎ直しに失敗しました: {e!r}"})
+        return False
+    await _broadcast({"type": "connected", "ok": ok})
+    return bool(ok)
+
+
 async def _continuous_restart_after_delay() -> None:
     """排出完了から一定時間待って、直前と同じプロファイルを再送する。
 
@@ -3194,9 +3226,6 @@ async def _continuous_restart_after_delay() -> None:
         await asyncio.sleep(remaining)
         if not _continuous_roast:
             return
-        if _session is None or not _session.is_connected:
-            _stop_continuous_roast("焙煎機と接続されていないため、連続焙煎を終了しました。")
-            return
         # サーバーを再起動した直後などメモリ上に無い場合は、ディスクに保存してある
         # 「前回送信したプロファイル」(「前回のプロファイルを送信」ボタンと同じもの)を使う。
         p = _last_sent_profile or _load_last_sent_profile()
@@ -3210,25 +3239,89 @@ async def _continuous_restart_after_delay() -> None:
             cooldown_point=tuple(p["cooldown"]),
             uuid_ascii=p["uuid"],
         )
-        # 送り始める直前にもう一度確かめる。待っている間や、この直前に
-        # チェックを外された場合は、ここで止める(外したのに次が始まる、が
-        # 一番困る)。
-        if not _continuous_roast:
-            return
-        await _broadcast({"type": "status",
-                          "message": f"連続焙煎: 同じプロファイル({p.get('display_name') or p.get('name')})を再送します..."})
-        _continuous_sending = True
-        try:
-            await _session.send_profile(profile)
-        finally:
-            _continuous_sending = False
-        await _broadcast({"type": "sent", "ok": _session.is_connected, "profile": p})
+        # 排出のあと、焙煎機はBLEのリンクを一度切る(実機ログ2026-09: 排出完了の
+        # 5秒後に再送を始めたところ、書き込みの途中で機械側から切断された)。
+        # 少し待って手で送り直すと成功するので、こちらでもつなぎ直して送り直す。
+        name = p.get("display_name") or p.get("name")
+        for attempt in range(1, CONTINUOUS_SEND_ATTEMPTS + 1):
+            # 送り始める直前にもう一度確かめる。待っている間や、この直前に
+            # チェックを外された場合は、ここで止める(外したのに次が始まる、が
+            # 一番困る)。
+            if not _continuous_roast:
+                return
+            if _session is None or not _session.is_connected:
+                if not await _reconnect_for_continuous(attempt):
+                    if attempt >= CONTINUOUS_SEND_ATTEMPTS:
+                        _stop_continuous_roast("焙煎機につなぎ直せなかったため、連続焙煎を終了しました。")
+                        return
+                    await asyncio.sleep(CONTINUOUS_SEND_RETRY_DELAY)
+                    continue
+            await _broadcast({"type": "status",
+                              "message": f"連続焙煎: 同じプロファイル({name})を再送します..."})
+            _continuous_sending = True
+            try:
+                await _session.send_profile(profile)
+            finally:
+                _continuous_sending = False
+            # send_profile()は書き込みに失敗しても例外を出さず、切断扱いにして戻る。
+            # つながっているかどうかで成否を見る。
+            if _session.is_connected:
+                await _broadcast({"type": "sent", "ok": True, "profile": p})
+                return
+            if attempt >= CONTINUOUS_SEND_ATTEMPTS:
+                _stop_continuous_roast(
+                    f"{CONTINUOUS_SEND_ATTEMPTS}回試しても再送できなかったため、連続焙煎を終了しました。")
+                return
+            await _broadcast({
+                "type": "status",
+                "message": f"連続焙煎: 送信中に切断されました。つなぎ直して再送します"
+                           f"({attempt + 1}/{CONTINUOUS_SEND_ATTEMPTS})...",
+            })
+            await asyncio.sleep(CONTINUOUS_SEND_RETRY_DELAY)
     except asyncio.CancelledError:
         pass
     except Exception as e:  # noqa: BLE001
         _stop_continuous_roast(f"連続焙煎の再送に失敗したため終了しました: {e!r}")
     finally:
         _continuous_task = None
+
+
+# 焙煎の節目でスマホに送る通知。ここに無い状態(ペアリング中・再接続中など、
+# 焙煎の進み方ではなく通信の様子を表す状態)では何も送らない。
+ROASTER_STATE_NOTIFICATIONS = {
+    "豆投入操作中": "予熱が完了しました。豆を投入してください。",
+    "焙煎完了・冷却中": "焙煎が完了し、冷却を開始しました。",
+    "冷却完了(容器交換待ち)": "冷却が完了しました。容器を交換してください。",
+    "排出待ち: ガラス容器を外して豆を回収してください":
+        "強制冷却が完了しました。ガラス容器を外して豆を回収してください。",
+    "排出完了": "排出が完了しました。お疲れ様でした。",
+}
+# 最後に通知した焙煎の節目。通信の状態(ペアリング完了など)では更新しない。
+_last_notified_state: Optional[str] = None
+
+
+def _notify_for_roaster_state(state: str) -> None:
+    """焙煎の節目が変わったときだけ通知する。
+
+    2026-09: 冷却中に接続が切れて再接続すると、そのたびに直前の推定状態
+    (「焙煎完了・冷却中」)を出し直す作りになっている。実機ログでは冷却の
+    2分間に5回の再接続があり、そのたびに同じ通知が飛んでいた。状態が
+    実際に次の節目へ進んだときだけ送るようにする。
+
+    再接続では「ペアリング完了」→「焙煎完了・冷却中」と出し直されるため、
+    「直前の状態と違うか」では防げない(間に別の状態が挟まる)。通知の対象に
+    している節目だけを覚えておき、それが変わったときだけ送る。
+    """
+    global _last_notified_state
+    if state == "焙煎中":
+        _last_notified_state = None   # 次の焙煎の分として出し直す
+    message = ROASTER_STATE_NOTIFICATIONS.get(state)
+    if not message:
+        return
+    if state == _last_notified_state:
+        return
+    _last_notified_state = state
+    asyncio.create_task(_send_push_to_all("Roast Studio", message))
 
 
 def _on_state(state: str):
@@ -3282,8 +3375,9 @@ def _on_state(state: str):
         #   → 焙煎完了・冷却中(0x24) → 冷却完了(容器交換待ち) → 排出完了
         #
         # 最後の2つは温度ではなく通知パターンで判定している。
-        #   ・冷却完了(容器交換待ち): 「ほぼ全て0」の18〜19byte通知。
-        #     ただし焙煎完了・冷却中に入ってから30秒以上経っていることが条件。
+        #   ・冷却完了(容器交換待ち): 「ほぼ全て0」の18〜19byte通知。ただしこの形の
+        #     通知は冷却専用ではなく焙煎中にも届くため、吸入温度が60℃(焙煎機自身が
+        #     冷却完了とする閾値)まで下がっていることが条件。
         #   ・排出完了: 確認要求(0x13 00 + トークン)への応答後。この通知は冷却中にも
         #     約60秒周期で届くため、冷却完了を検出済みのとき(phaseがcooling_done以降)
         #     に限って排出完了とみなす。
@@ -3293,7 +3387,17 @@ def _on_state(state: str):
         if _continuous_task is None or _continuous_task.done():
             _continuous_task = asyncio.create_task(_continuous_restart_after_delay())
     elif state == "未接続":
-        _stop_continuous_roast("焙煎機との接続が切れたため、連続焙煎を終了しました。")
+        # 2026-09: 排出のあと焙煎機はBLEのリンクを一度切る。その切断で連続焙煎を
+        # 終了させてしまうと、次の焙煎が始まらない(実機ログでは、再送の書き込み中に
+        # 切断され、そこで連続焙煎が終わっていた)。再送の待ち・送信を担当する
+        # タスクが動いている間は、そちらがつなぎ直して仕切り直すので、ここでは終了しない。
+        if _continuous_task is not None and not _continuous_task.done():
+            asyncio.create_task(_broadcast({
+                "type": "status",
+                "message": "連続焙煎: 接続が切れました。次の焙煎のためにつなぎ直します...",
+            }))
+        else:
+            _stop_continuous_roast("焙煎機との接続が切れたため、連続焙煎を終了しました。")
     elif is_error:
         # 容器が正しくセットされていない等のエラー中は、勝手に次を始めない。
         _cancel_continuous_restart("エラーが発生したため、次の焙煎の自動開始を取り消しました。")
@@ -3303,18 +3407,9 @@ def _on_state(state: str):
         # 追従できるようにブロードキャストする
         asyncio.create_task(_broadcast({"type": "disconnected"}))
     # 画面ロック中でもスマホに気づいてもらえるよう、クライアント側の
-    # notifyForRoasterState(mobile.html/index.html)と同じ4状態でサーバーからも
+    # notifyForRoasterState(mobile.html/index.html)と同じ状態でサーバーからも
     # Web Pushを送る(ブラウザのタブが生きていなくても、ここは必ず実行される)。
-    if state == "豆投入操作中":
-        asyncio.create_task(_send_push_to_all("Roast Studio", "予熱が完了しました。豆を投入してください。"))
-    elif state == "焙煎完了・冷却中":
-        asyncio.create_task(_send_push_to_all("Roast Studio", "焙煎が完了し、冷却を開始しました。"))
-    elif state == "冷却完了(容器交換待ち)":
-        asyncio.create_task(_send_push_to_all("Roast Studio", "冷却が完了しました。容器を交換してください。"))
-    elif state == "排出待ち: ガラス容器を外して豆を回収してください":
-        asyncio.create_task(_send_push_to_all("Roast Studio", "強制冷却が完了しました。ガラス容器を外して豆を回収してください。"))
-    elif state == "排出完了":
-        asyncio.create_task(_send_push_to_all("Roast Studio", "排出が完了しました。お疲れ様でした。"))
+    _notify_for_roaster_state(state)
 
 
 @app.websocket("/ws")

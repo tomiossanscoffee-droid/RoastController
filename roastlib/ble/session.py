@@ -195,6 +195,25 @@ RECONNECT_CONNECT_TIMEOUT = 12.0
 # 保守的な下限として使う。
 DEFAULT_COOLDOWN_GRACE_SECONDS = 60.0
 
+# 冷却完了とみなす吸入温度(℃)と、温度が一度も取れなかった場合の代替の猶予秒数。
+#
+# 2026-09、ユーザー様のご指摘と実機ログで確定した: 焙煎機自身が「吸入温度60℃」を
+# 閾値にして冷却完了を判定している。ログでは吸入温度が60℃に下がった3秒後に
+# 冷却完了・容器交換要求の通知が届いた。
+#
+# この判定が要るのは、冷却完了の合図として使っている「ほぼ全ゼロの18〜19byte通知」が
+# 冷却専用の信号ではないため。同じ形の通知が、焙煎中(186℃)にも冷却開始直後(247℃)にも
+# 届いていることを実機ログで確認した(先頭1byteが通し番号になっており、何かの
+# イベント一般を表しているらしい)。以前は「焙煎完了・冷却中に入って30秒以上」でしか
+# ふるいに掛けていなかったため、まだ200℃近くある時点の通知を冷却完了と誤認して
+# いた。温度で見れば、焙煎機自身の判定と同じ基準になる。
+#
+# プロファイルのcooldownPoint(冷却完了予定)の目標温度も60℃で揃っており、
+# 機械側の閾値と一致している。
+COOLING_DONE_INTAKE_TEMP = 60.0
+# 温度が一度も取れていないときだけ使う代替条件(旧来の判定)。通常は使われない。
+COOLING_DONE_MIN_SECONDS = 30.0
+
 # 反応型ハートビートの最小送信間隔(秒)。実機のNotifyは約300msごとに5フラグメントの
 # バーストで届くため、「1フラグメントごとに1回応答」だと1秒あたり十数回の書き込みが
 # 走り、command_writeのキューが詰まって数十秒〜1分ハングし、最終的に切断される
@@ -462,6 +481,11 @@ class RoasterSession:
     # send_profile()で算出し、_on_disconnected()の「焙煎完了・冷却中」判定で使う。
     _planned_cooldown_sec: Optional[float] = field(default=None, init=False)
     _planned_roast_sec: Optional[float] = field(default=None, init=False)   # プロファイル上の焙煎時間
+    # 直近の吸入温度と、「冷却完了の温度まで下がった」ことの記憶(2026-09)。
+    # 温度は1.5秒おきに届くが、冷却完了の通知と同時に届くとは限らないため、
+    # 一度でも下がりきったら覚えておき、その後の通知を受け付ける。
+    _last_bt: Optional[float] = field(default=None, init=False)
+    _cooling_target_reached: bool = field(default=False, init=False)
     _acked_uuid_echo: bool = field(default=False, init=False)
     _profile_uuid_ascii: Optional[bytes] = field(default=None, init=False)
     _start_time: Optional[float] = field(default=None, init=False)
@@ -727,6 +751,8 @@ class RoasterSession:
         self._phase_estimator.reset()
         self._error_active = False
         self._error_min_bt = None
+        self._last_bt = None
+        self._cooling_target_reached = False
         # cooldownPointの時刻(roastPoints最終点からの経過秒)を、冷却予定時間として覚えておく。
         # _on_disconnected()で、「焙煎完了・冷却中」中の切断が容器交換にしては早すぎないかの
         # 判定に使う(README「現状分かっていること」参照: roastPoints最終点=焙煎終了・冷却開始、
@@ -778,6 +804,23 @@ class RoasterSession:
         except Exception as e:  # noqa: BLE001
             self._log(f"notify処理のスケジューリングに失敗: {e}")
 
+    def _cooling_done_allowed(self, dt_in_roast_done: float) -> bool:
+        """冷却完了の通知を受け付けてよいか(吸入温度が下がりきったか)。
+
+        焙煎機は吸入温度60℃を閾値に冷却完了を判定している。温度は1.5秒おきに
+        届くが、通知と同時に届くとは限らないため、一度でも下がりきっていれば
+        (_cooling_target_reached)受け付ける。切断中に下がりきった場合に備えて、
+        いまの温度も見る。
+
+        温度が一度も取れていないときだけ、旧来の「冷却に入って30秒」で判断する。
+        この経路に頼るのは通信が異常なときだけで、通常は温度で決まる。
+        """
+        if self._cooling_target_reached:
+            return True
+        if self._last_bt is not None:
+            return self._last_bt <= COOLING_DONE_INTAKE_TEMP
+        return dt_in_roast_done >= COOLING_DONE_MIN_SECONDS
+
     async def _handle_notify(self, data: bytes) -> None:
         import time as _time
 
@@ -820,16 +863,28 @@ class RoasterSession:
             # 全部0x00) = 冷却完了・容器交換要求のタイミングに対応すると、
             # ユーザー様の実機確認で判明した(2026-07)。「焙煎完了・冷却中」の間にだけ
             # 判定する(他のタイミングでの誤検出を避けるため)。
-            # 追記: 冷却開始した直後にも似た通知が来て早期誤発火することが分かったため、
-            # 「焙煎完了・冷却中」に入ってから最低30秒は無視するようにした(暫定値、要調整)。
+            #
+            # 2026-09訂正: この通知は冷却専用の信号ではなかった。実機ログで、同じ形の
+            # 通知が焙煎中(186℃)にも冷却開始直後(247℃)にも届いている。以前は
+            # 「焙煎完了・冷却中に入って30秒以上」だけを条件にしていたため、まだ
+            # 200℃近くある時点の通知で冷却完了としてしまい、通知が早く何度も出ていた。
+            # 焙煎機自身は吸入温度60℃を閾値に冷却完了を判定している(COOLING_DONE_INTAKE_TEMP)。
+            # それより前の「冷却完了に見える情報」は、すべて無視する。
             t_now_check = _time.monotonic() - (self._start_time or 0)
             dt_in_roast_done = t_now_check - (self._phase_estimator.phase_start_t or 0)
             if (
                 self._phase_estimator.phase == "roast_done"
-                and dt_in_roast_done >= 30
                 and len(data) in (18, 19)
                 and data[1:-1].count(0) >= len(data) - 3
             ):
+                if not self._cooling_done_allowed(dt_in_roast_done):
+                    self._log(
+                        "[受信] 冷却完了に似た通知を検出しましたが、吸入温度が"
+                        f"{self._last_bt if self._last_bt is not None else '不明'}℃で、"
+                        f"焙煎機が冷却完了とする{COOLING_DONE_INTAKE_TEMP:.0f}℃まで"
+                        "下がっていないため無視します"
+                    )
+                    return
                 self._log("[受信] 冷却完了・容器交換要求の通知を検出")
                 self._emit_state(STATE_COOLING_DONE)
                 t_now = _time.monotonic() - (self._start_time or 0)
@@ -982,6 +1037,13 @@ class RoasterSession:
                 self.on_telemetry(TelemetrySample(
                     t=t, bt=bt_value, fan=fan_value, elapsed_sec=elapsed_sec_value, raw_hex=data.hex(),
                 ))
+
+            if bt_value is not None:
+                # 冷却完了の判定に使うので、確認応答の前後を問わず覚えておく。
+                self._last_bt = bt_value
+                if (self._phase_estimator.phase == "roast_done"
+                        and bt_value <= COOLING_DONE_INTAKE_TEMP):
+                    self._cooling_target_reached = True
 
             if bt_value is not None and self._acked_uuid_echo:
                 # 容器エラーからの復帰判定(2026-07、ユーザー様のご提案): エラー通知

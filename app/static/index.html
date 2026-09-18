@@ -10070,18 +10070,26 @@ function setRoasterStateText(text){
 
 // 状態ごとの通知文言(スリープ・タブのバックグラウンド化からの復帰時のキャッチアップ
 // 通知でも同じ文言を使うため、onRoasterStateから切り出して共有する)
+// 焙煎の節目でだけ通知する。ペアリング完了・再接続中のような「通信の様子」は入れない。
+const ROASTER_STATE_NOTIFICATIONS = {
+  '豆投入操作中': '予熱が完了しました。豆を投入してください。',
+  '焙煎完了・冷却中': '焙煎が完了し、冷却を開始しました。',
+  '冷却完了(容器交換待ち)': '冷却が完了しました。容器を交換してください。',
+  '排出待ち: ガラス容器を外して豆を回収してください':
+    '強制冷却が完了しました。ガラス容器を外して豆を回収してください。',
+  '排出完了': '排出が完了しました。お疲れ様でした。',
+};
+// 最後に通知した節目。通信の状態では更新しないので、再接続で同じ状態が
+// 出し直されても二重に通知しない(冷却中に何度も切れると、そのたびに
+// 「焙煎完了・冷却中」が再通知されていた)。
+let lastNotifiedRoasterState = null;
 function notifyForRoasterState(state){
-  if(state === '豆投入操作中'){
-    notify('Roast Studio', '予熱が完了しました。豆を投入してください。');
-  } else if(state === '焙煎完了・冷却中'){
-    notify('Roast Studio', '焙煎が完了し、冷却を開始しました。');
-  } else if(state === '冷却完了(容器交換待ち)'){
-    notify('Roast Studio', '冷却が完了しました。容器を交換してください。');
-  } else if(state === '排出待ち: ガラス容器を外して豆を回収してください'){
-    notify('Roast Studio', '強制冷却が完了しました。ガラス容器を外して豆を回収してください。');
-  } else if(state === '排出完了'){
-    notify('Roast Studio', '排出が完了しました。お疲れ様でした。');
-  }
+  if(state === '焙煎中') lastNotifiedRoasterState = null;  // 次の焙煎の分として出し直す
+  const message = ROASTER_STATE_NOTIFICATIONS[state];
+  if(!message) return;
+  if(state === lastNotifiedRoasterState) return;
+  lastNotifiedRoasterState = state;
+  notify('Roast Studio', message);
 }
 
 // プロファイル送信後〜完了(排出完了で連続焙煎の準備ができるまで)の間は、

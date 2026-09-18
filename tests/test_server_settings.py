@@ -224,22 +224,43 @@ def test_初期値は書き換えられない(srv):
 # 連続焙煎モード: チェックを外したら次を送らない
 # ------------------------------------------------------------
 class _FakeSession:
-    """BLEの代わり。送信されたプロファイルを控えるだけ。"""
+    """BLEの代わり。送信されたプロファイルを控えるだけ。
 
-    def __init__(self, on_send=None):
+    drop_on / connect_fails は、2026-09に実機で起きた「排出のあと焙煎機が
+    リンクを切る」状況を作るためのもの。drop_onに入れた回の送信では、
+    実装と同じく例外を出さずに切断扱いで戻る。
+    """
+
+    def __init__(self, on_send=None, drop_on=(), connect_fails=0):
         self.is_connected = True
         self.sent = []
         self._on_send = on_send
+        self.drop_on = set(drop_on)
+        self.connect_fails = connect_fails
+        self.connects = 0
 
     async def send_profile(self, profile):
         if self._on_send is not None:
             await self._on_send()
+        if len(self.sent) + 1 in self.drop_on:
+            # 実装と同じ: 送っている途中で切られても例外は出さず、切断扱いにして戻る
+            self.sent.append(profile)
+            self.is_connected = False
+            return
         self.sent.append(profile)
 
+    async def connect(self):
+        self.connects += 1
+        if self.connect_fails > 0:
+            self.connect_fails -= 1
+            return False
+        self.is_connected = True
+        return True
 
-def _prepare_continuous(srv, on_send=None):
+
+def _prepare_continuous(srv, on_send=None, drop_on=(), connect_fails=0):
     """再送に必要なもの(接続・前回送ったプロファイル)を揃える。"""
-    srv._session = _FakeSession(on_send)
+    srv._session = _FakeSession(on_send, drop_on=drop_on, connect_fails=connect_fails)
     srv._last_sent_profile = {
         "name": "test", "uuid": "0000000000000001",
         "roast": [[0, 180], [600, 230]], "fan": [[0, 70], [600, 70]],
@@ -734,3 +755,162 @@ def test_手動追加の日時はUTCのISOで揃う(srv):
     when = srv._load_roast_records()[rid]["roasted_at"]
     assert when.endswith("Z"), f"UTCの形になっていない: {when}"
     assert "T" in when
+
+
+# ------------------------------------------------------------
+# 焙煎の節目の通知(2026-09)
+# ------------------------------------------------------------
+# 冷却中に接続が切れて再接続すると、そのたびに直前の推定状態を出し直す作りに
+# なっている。実機ログでは冷却の2分間に5回の再接続があり、そのたびに
+# 「焙煎が完了し、冷却を開始しました」が飛んでいた。
+def _notifications(srv, monkeypatch, states):
+    """状態の並びを流し込んで、送られた通知の本文を順に返す。"""
+    sent = []
+
+    async def fake_push(title, body):
+        sent.append(body)
+
+    def fake_create_task(coro):
+        # 通知以外(ブロードキャスト等)も来るので、コルーチンは閉じておく
+        try:
+            coro.send(None)
+        except StopIteration:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+        coro.close()
+        return None
+
+    monkeypatch.setattr(srv, "_send_push_to_all", fake_push)
+    monkeypatch.setattr(srv.asyncio, "create_task", fake_create_task)
+    srv._last_notified_state = None
+    for state in states:
+        srv._notify_for_roaster_state(state)
+    return sent
+
+
+def test_冷却中に再接続しても通知は1回だけ(srv, monkeypatch):
+    # 実機ログと同じ並び: 冷却に入る → 切断 → 再接続で状態を出し直す、を5回
+    states = ["焙煎完了・冷却中"]
+    for _ in range(5):
+        states += ["再接続中…", "ペアリング完了", "焙煎完了・冷却中"]
+    sent = _notifications(srv, monkeypatch, states)
+    assert sent == ["焙煎が完了し、冷却を開始しました。"]
+
+
+def test_次の節目に進めば通知する(srv, monkeypatch):
+    sent = _notifications(srv, monkeypatch, [
+        "豆投入操作中", "焙煎中", "焙煎完了・冷却中", "ペアリング完了",
+        "焙煎完了・冷却中", "冷却完了(容器交換待ち)", "排出完了",
+    ])
+    assert sent == [
+        "予熱が完了しました。豆を投入してください。",
+        "焙煎が完了し、冷却を開始しました。",
+        "冷却が完了しました。容器を交換してください。",
+        "排出が完了しました。お疲れ様でした。",
+    ]
+
+
+def test_通信の状態では通知しない(srv, monkeypatch):
+    assert _notifications(srv, monkeypatch, [
+        "ペアリング中", "ペアリング完了", "再接続中…", "未接続",
+        "プロファイル送信中", "予熱中", "焙煎中",
+    ]) == []
+
+
+def test_次の焙煎では同じ通知をやり直す(srv, monkeypatch):
+    """連続焙煎で2回続けて焼くと、2回目も同じ節目を通る。"""
+    sent = _notifications(srv, monkeypatch, [
+        "焙煎完了・冷却中", "排出完了",
+        "予熱中", "豆投入操作中", "焙煎中", "焙煎完了・冷却中",
+    ])
+    assert sent.count("焙煎が完了し、冷却を開始しました。") == 2
+    # 間に別の節目が挟まらなくても、焙煎が始まればやり直す
+    assert _notifications(srv, monkeypatch, [
+        "焙煎完了・冷却中", "焙煎中", "焙煎完了・冷却中",
+    ]).count("焙煎が完了し、冷却を開始しました。") == 2
+
+
+# ------------------------------------------------------------
+# 連続焙煎の再送: 排出直後の切断からの立て直し(2026-09)
+# ------------------------------------------------------------
+# 実機ログ: 排出完了の5秒後に再送を始めたところ、書き込みの途中で焙煎機側から
+# 切断され、そこで連続焙煎が終了していた(次の焙煎が始まらない)。同じ状況から
+# 手で送り直すと成功している(ログでは32秒後の手動送信が通った)ので、
+# つなぎ直して送り直す。
+def _run_restart(srv, **kwargs):
+    """再送の1回分を、待ち時間なしで最後まで走らせる。"""
+    import asyncio
+
+    sess = _prepare_continuous(srv, **kwargs)
+    srv.CONTINUOUS_SEND_RETRY_DELAY = 0
+    srv.APP_SETTINGS_PATH.write_text(
+        json.dumps({"continuousRoastDelay": srv.CONTINUOUS_ROAST_DELAY_MIN}),
+        encoding="utf-8")
+    srv._clamp_continuous_delay = lambda v: 0
+    asyncio.run(srv._continuous_restart_after_delay())
+    return sess
+
+
+def test_送信中に切られても繋ぎ直して送り直す(srv):
+    sess = _run_restart(srv, drop_on={1})
+    assert len(sess.sent) == 2, "1回目で切られたあと、送り直していません"
+    assert sess.connects == 1, "つなぎ直していません"
+    assert srv._continuous_roast is True, "連続焙煎が終了してしまっています"
+
+
+def test_排出直後に切れていても繋ぎ直してから送る(srv):
+    """排出のあと焙煎機はリンクを切る。切れている=異常、ではない。"""
+    sess = _prepare_continuous(srv)
+    sess.is_connected = False
+    srv.CONTINUOUS_SEND_RETRY_DELAY = 0
+    srv._clamp_continuous_delay = lambda v: 0
+    import asyncio
+    asyncio.run(srv._continuous_restart_after_delay())
+    assert sess.connects == 1
+    assert len(sess.sent) == 1
+    assert srv._continuous_roast is True
+
+
+def test_何度試しても駄目なら連続焙煎を終える(srv):
+    sess = _run_restart(srv, drop_on={1, 2, 3, 4, 5})
+    assert len(sess.sent) == srv.CONTINUOUS_SEND_ATTEMPTS
+    assert srv._continuous_roast is False
+
+
+def test_繋ぎ直せなければ連続焙煎を終える(srv):
+    sess = _prepare_continuous(srv, connect_fails=99)
+    sess.is_connected = False
+    srv.CONTINUOUS_SEND_RETRY_DELAY = 0
+    srv._clamp_continuous_delay = lambda v: 0
+    import asyncio
+    asyncio.run(srv._continuous_restart_after_delay())
+    assert sess.sent == []
+    assert srv._continuous_roast is False
+
+
+def test_再送を待っている間の切断では連続焙煎を終えない(srv):
+    """切断で即終了していたのが、次の焙煎が始まらない原因だった。"""
+    import asyncio
+
+    async def run():
+        _prepare_continuous(srv)
+        srv._continuous_task = asyncio.create_task(asyncio.sleep(0.05))
+        srv._on_state("未接続")
+        assert srv._continuous_roast is True, "再送の準備中なのに終了してしまった"
+        await srv._continuous_task
+
+    asyncio.run(run())
+
+
+def test_再送の予定が無いときの切断は今までどおり終える(srv):
+    """焙煎の途中で本当に切れた場合まで粘ると、いつまでも終わらない。"""
+    import asyncio
+
+    async def run():
+        _prepare_continuous(srv)
+        srv._continuous_task = None
+        srv._on_state("未接続")
+        assert srv._continuous_roast is False
+
+    asyncio.run(run())

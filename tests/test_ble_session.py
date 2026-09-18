@@ -794,3 +794,138 @@ def test_再接続は6回で諦めない(monkeypatch):
 
     attempts = asyncio.run(scenario())
     assert len(attempts) >= 20, f"6回前後で止まっている({len(attempts)}回)"
+
+
+# ------------------------------------------------------------
+# 冷却完了の判定(吸入温度60℃)
+# ------------------------------------------------------------
+# 2026-09、ユーザー様の実機ログで判明したこと:
+#   ・冷却完了の合図として使っている「ほぼ全ゼロの18byte通知」は、冷却専用の
+#     信号ではない。同じ形が焙煎中(186℃)にも冷却開始直後(247℃)にも届いていた。
+#   ・焙煎機自身は吸入温度60℃を閾値に冷却完了を判定している。ログでは60℃に
+#     下がった3秒後に本物の通知が届いた。
+# 以下は、そのログから取った実際のバイト列を使う。
+ROAST_DONE_CODE = "2400a6ab282f4108003225d944e5500b2090e024"   # 0x24 焙煎完了・冷却中
+NEAR_ZERO_EARLY = "050000000000000000000000000000000082"       # 冷却開始直後(247℃)に届いた
+NEAR_ZERO_REAL = "070000000000000000000000000000000084"        # 60℃まで下がってから届いた
+
+
+def test_冷却完了は吸入温度が60度まで下がってから(monkeypatch):
+    """まだ熱いうちに届いた「冷却完了に似た通知」で冷却完了にしないこと。"""
+    _install_fake_bleak(monkeypatch)
+
+    async def scenario():
+        states = []
+        sess = RoasterSession(on_state=states.append)
+        assert await sess.connect(timeout=0.01)
+        sess._acked_uuid_echo = True
+        await sess._handle_notify(bytes.fromhex(ROAST_DONE_CODE))
+        assert sess._phase_estimator.phase == "roast_done"
+        states.clear()
+
+        # 冷却開始直後。247℃で「ほぼ全ゼロ」の通知が届く(実機ログと同じ)。
+        await sess._handle_notify(_telemetry_packet(247))
+        await sess._handle_notify(bytes.fromhex(NEAR_ZERO_EARLY))
+        assert S.STATE_COOLING_DONE not in states
+        assert sess._phase_estimator.phase == "roast_done"
+
+        # 途中の温度でも駄目。
+        await sess._handle_notify(_telemetry_packet(120))
+        await sess._handle_notify(bytes.fromhex(NEAR_ZERO_EARLY))
+        assert S.STATE_COOLING_DONE not in states
+
+        # 60℃まで下がってからの通知が本物。
+        await sess._handle_notify(_telemetry_packet(60))
+        await sess._handle_notify(bytes.fromhex(NEAR_ZERO_REAL))
+        return states, sess
+
+    states, sess = asyncio.run(scenario())
+    assert S.STATE_COOLING_DONE in states
+    assert sess._phase_estimator.phase == "cooling_done"
+
+
+def test_一度下がりきれば通知が少し遅れても受け付ける(monkeypatch):
+    """温度は1.5秒おき、通知はそれとは別に届く。下がりきった記憶で受ける。"""
+    _install_fake_bleak(monkeypatch)
+
+    async def scenario():
+        states = []
+        sess = RoasterSession(on_state=states.append)
+        assert await sess.connect(timeout=0.01)
+        sess._acked_uuid_echo = True
+        await sess._handle_notify(bytes.fromhex(ROAST_DONE_CODE))
+        states.clear()
+        await sess._handle_notify(_telemetry_packet(60))
+        # 直後の測定が少し上に振れても、下がりきったことは変わらない
+        await sess._handle_notify(_telemetry_packet(62))
+        await sess._handle_notify(bytes.fromhex(NEAR_ZERO_REAL))
+        return states
+
+    assert S.STATE_COOLING_DONE in asyncio.run(scenario())
+
+
+def test_温度が一度も取れないときは時間で判断する(monkeypatch):
+    """通信がおかしくて温度が来ない場合の逃げ道。通常は使われない。"""
+    _install_fake_bleak(monkeypatch)
+
+    async def scenario(dt):
+        states = []
+        sess = RoasterSession(on_state=states.append)
+        assert await sess.connect(timeout=0.01)
+        sess._acked_uuid_echo = True
+        await sess._handle_notify(bytes.fromhex(ROAST_DONE_CODE))
+        states.clear()
+        # 温度を1つも渡さないまま、冷却に入ってからの経過時間だけを動かす
+        sess._phase_estimator.phase_start_t = (
+            sess._phase_estimator.phase_start_t or 0) - dt
+        await sess._handle_notify(bytes.fromhex(NEAR_ZERO_REAL))
+        return states
+
+    assert S.STATE_COOLING_DONE not in asyncio.run(scenario(5))
+    assert S.STATE_COOLING_DONE in asyncio.run(scenario(S.COOLING_DONE_MIN_SECONDS + 5))
+
+
+def test_焙煎中の似た通知では冷却完了にならない(monkeypatch):
+    """実機ログでは186℃(焙煎中)にも同じ形の通知が届いていた。"""
+    _install_fake_bleak(monkeypatch)
+
+    async def scenario():
+        states = []
+        sess = RoasterSession(on_state=states.append)
+        assert await sess.connect(timeout=0.01)
+        sess._acked_uuid_echo = True
+        await sess._handle_notify(bytes.fromhex("2400a6ab282f4108003225d944e5500b2090e023"))
+        assert sess._phase_estimator.phase == "roasting"
+        states.clear()
+        await sess._handle_notify(_telemetry_packet(186))
+        await sess._handle_notify(bytes.fromhex("02000000000000000000000000000000007c"))
+        return states, sess
+
+    states, sess = asyncio.run(scenario())
+    assert S.STATE_COOLING_DONE not in states
+    assert sess._phase_estimator.phase == "roasting"
+
+
+def test_次の焙煎を送ると冷却の記憶は消える(monkeypatch):
+    """1回目で下がりきった記憶が2回目に持ち越されると、また早発火する。"""
+    import json
+
+    import app.server as server
+
+    _install_fake_bleak(monkeypatch)
+    d = json.loads(server.get_calibration_profile().body)
+    profile = S.profile_from_points(d["name"], [tuple(p) for p in d["roast"]],
+                                    [tuple(p) for p in d["fan"]],
+                                    tuple(d["cooldown"]), d["uuid"])
+
+    async def scenario():
+        sess = RoasterSession()
+        assert await sess.connect(timeout=0.01)
+        sess._cooling_target_reached = True
+        sess._last_bt = 60
+        await sess.send_profile(profile)
+        return sess
+
+    sess = asyncio.run(scenario())
+    assert sess._cooling_target_reached is False
+    assert sess._last_bt is None
